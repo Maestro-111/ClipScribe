@@ -10,6 +10,7 @@ logging.getLogger("ppocr").setLevel(logging.WARNING)
 class OCRSystem:
     def __init__(
         self,
+        logger,
         lang="en",
         use_textline_orientation=True,
         merge_lines=True,
@@ -25,7 +26,9 @@ class OCRSystem:
             merge_method: 'hierarchical', 'dbscan', or 'simple' (the old greedy method)
         """
 
-        print(f"Loading PaddleOCR (lang={lang})...")
+        self.logger = logger
+
+        self.logger.info(f"Loading PaddleOCR (lang={lang})...")
 
         self.ocr_engine = PaddleOCR(
             use_textline_orientation=use_textline_orientation,
@@ -36,7 +39,7 @@ class OCRSystem:
 
         self.merge_lines = merge_lines
         self.merge_method = merge_method
-        print("PaddleOCR loaded.")
+        self.logger.info("PaddleOCR loaded.")
 
     def detect(self, image_cv2):
         """
@@ -69,7 +72,7 @@ class OCRSystem:
                 if len(box) == 4:
                     x_min, y_min, x_max, y_max = map(int, box)
                 else:
-                    print(f"Warning: Unexpected box format: {box}")
+                    self.logger.warning(f"Warning: Unexpected box format: {box}")
                     continue
 
                 parsed_results.append(
@@ -379,58 +382,4 @@ class OCRSystem:
 
         vis_img = self.visualize_results(image, results, **kwargs)
         cv2.imwrite(output_path, vis_img)
-        print(f"Visualization saved to: {output_path}")
-
-
-if __name__ == "__main__":
-    import cv2
-    import matplotlib.pyplot as plt
-
-    # Load test image
-    img = cv2.imread("add2.png")
-    if img is None:
-        print("Error: Could not load image")
-        exit(1)
-
-    # Test with different methods
-    methods = ["hierarchical"]
-
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    axes = axes.flatten()
-
-    # Show original image
-    axes[0].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    axes[0].set_title("Original Image")
-    axes[0].axis("off")
-
-    for idx, method in enumerate(methods, 1):
-        print(f"\n{'=' * 60}")
-        print(f"Testing with method: {method}")
-        print("=" * 60)
-
-        ocr = OCRSystem(lang="en", merge_lines=True, merge_method=method)
-
-        # Detect text
-        results = ocr.detect(img)
-
-        # Visualize
-        vis_img = ocr.visualize_results(img, results)
-
-        # Display in subplot
-        axes[idx].imshow(cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB))
-        axes[idx].set_title(f"{method.capitalize()} Method ({len(results)} boxes)")
-        axes[idx].axis("off")
-
-        # Also save to file
-        ocr.save_visualization(img, results, f"ocr_result_{method}.jpg")
-
-        print(f"\nFound {len(results)} text regions:\n")
-        for i, result in enumerate(results):
-            print(f"{i}. Text: '{result['text']}'")
-            print(f"   Box: {result['box']}")
-            print(f"   Confidence: {result['confidence']:.2f}\n")
-
-    plt.tight_layout()
-    plt.savefig("ocr_comparison.png", dpi=150, bbox_inches="tight")
-    print("\n✓ Comparison saved to: ocr_comparison.png")
-    plt.show()
+        self.logger.info(f"Visualization saved to: {output_path}")
