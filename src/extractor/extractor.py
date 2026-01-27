@@ -1,7 +1,7 @@
 import cv2
 import os
 import numpy as np
-from dino.dino_wrapper import DingoDetector
+from dino.dino_wrapper import DinoDetector
 from dino.dino_prompt import DynamicPrompter
 from ocr.paddle_wrapper import OCRSystem
 from sam2.sam.build_sam import build_sam2_video_predictor
@@ -9,6 +9,7 @@ from utils.clip_scribe_logging import logger
 from scenedetect import detect, ContentDetector
 import json
 from collections import defaultdict
+import torch
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -160,7 +161,9 @@ class InformationExtractor:
 
             iou = self._calculate_iou(new_box, active_box)
 
-            self.logger.info(f"Object {obj_id} has {iou} iou")
+            self.logger.info(
+                f"Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}"
+            )
 
             if iou > 0.5:
                 # If labels match (e.g. 'car' overlaps 'car'), it's a duplicate -> Return False
@@ -344,6 +347,8 @@ class InformationExtractor:
         self._analyze_global_features()
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
+            self.sam_model.reset_state(self.inference_state)
+
             self.active_trackers = {}
             self.current_frame = start_f
 
@@ -455,18 +460,24 @@ class InformationExtractor:
 
 
 if __name__ == "__main__":
-    dingo = DingoDetector(logger)
-    dingo_prompter = DynamicPrompter(logger)
+    dino = DinoDetector(logger)
+    dino_prompter = DynamicPrompter(logger)
+
+    device = (
+        torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
 
     ocr = OCRSystem(logger)
     sam2 = build_sam2_video_predictor(
-        "sam2_hiera_t.yaml", "checkpoints/sam2.1_hiera_tiny.pt", "cpu"
+        "sam2_hiera_t.yaml", "checkpoints/sam2.1_hiera_tiny.pt", device.type
     )
 
     info = InformationExtractor(
         sam2,
-        dingo,
-        dingo_prompter,
+        dino,
+        dino_prompter,
         ocr,
         "DODGE_qC2tIXJGDTQ - DODGE Hornet - Miroir - Tarifs - Avril.mp4",
         logger=logger,
