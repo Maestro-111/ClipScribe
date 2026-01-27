@@ -1,6 +1,6 @@
 exclude: |
   (?x)^(
-    src/(sam2|dingo)/.*|
+    src/(sam2|dino)/.*|
     checkpoints/.*|
     extractor_artifacts/.*|
     src/logs/.*|
@@ -44,7 +44,7 @@ repos:
           - "--config-file=pyproject.toml"
           - "--explicit-package-bases"
           - "--ignore-missing-imports"
-          - "--exclude=src/(sam2|dingo)/"
+          - "--exclude=src/(sam2|dino)/"
           - "--exclude=src/utils/(sam2_utils|position_encoding|misc)\\.py"
           - "src"
         additional_dependencies:
