@@ -6,6 +6,7 @@
 # ------------------------------------------------------------------------
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
+from .GroundingDINO import build_groundingdino
 
 def build_model(args):
     # we use register to maintain models from catdet6 on.

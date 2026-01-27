@@ -6,15 +6,16 @@ from dino.groundingdino.util.inference import load_model, predict
 import torchvision.ops as ops
 
 
-class DingoDetector:
+class DinoDetector:
     def __init__(
         self,
         logger,
-        config_path="src/dingo/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+        config_path="src/dino/groundingdino/config/GroundingDINO_SwinT_OGC.py",
         weights_path="checkpoints/groundingdino_swint_ogc.pth",
+        device="cpu",
     ):
         self.logger = logger
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
         self.model = load_model(config_path, weights_path, device=self.device)
 
         print(f"Grounding DINO loaded on {self.device}")

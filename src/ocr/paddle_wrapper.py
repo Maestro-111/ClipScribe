@@ -4,7 +4,7 @@ from paddleocr import PaddleOCR
 from sklearn.cluster import DBSCAN
 from scipy.cluster.hierarchy import fclusterdata
 
-logging.getLogger("ppocr").setLevel(logging.WARNING)
+logging.getLogger("ppocr").setLevel(logging.WARNING)  # suprres ocr logs?
 
 
 class OCRSystem:
