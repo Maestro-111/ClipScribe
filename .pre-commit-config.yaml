@@ -22,12 +22,6 @@ repos:
       - id: check-yaml
       - id: check-toml
 
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        language_version: python3.12
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.2.2
     hooks:

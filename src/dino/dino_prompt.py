@@ -3,10 +3,15 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 
 
 class DynamicPrompter:
-    def __init__(self, logger, device="cpu", ignore_text=True):
+    def __init__(self, logger, resolver, bert_threshold:float, device="cpu", ignore_text=True):
+
+        self.resolver = resolver
+
         self.logger = logger
         self.device = device
         self.ignore_text = ignore_text
+
+        self.bert_threshold = bert_threshold
 
         self.nlp = spacy.load("en_core_web_sm", disable=["ner"])
 
@@ -101,32 +106,50 @@ class DynamicPrompter:
 
         return " ".join(cleaned_tokens)
 
-    def generate_prompt_from_frame(self, image_rgb) -> str:
-        """
-        generate prompt from frame
-        """
+    def generate_prompt_from_frame(self, image_rgb, targets: list[str] = None) -> str:
+
+        self.logger.info("blip generating prompt")
 
         inputs = self.processor(image_rgb, return_tensors="pt").to(self.device)
-
         out = self.model.generate(**inputs, max_new_tokens=50)
-        caption = self.processor.decode(out[0], skip_special_tokens=True)
+        caption = self.processor.decode(out[0], skip_special_tokens=True).lower()
 
-        self.logger.info(f"Raw Caption: '{caption}'")
+        self.logger.info(f"Raw Dino Prompt: '{caption}'")
 
-        doc = self.nlp(caption.lower())
+        if not caption or not caption.strip():
+            raise ValueError("Generated caption is empty or whitespace only.")
+
+        doc = self.nlp(caption)
+
+        if len(doc) == 0:
+            raise ValueError(f"spaCy produced an empty Doc from caption: '{caption}'")
+
         clean_candidates = set()
+        last_valid_cleaned = None  # Track the last valid cleaned chunk
 
-        # Extract Noun Chunks
         for chunk in doc.noun_chunks:
             cleaned = self.clean_chunk(chunk)
-
-            # Filter empty strings and single characters
             if cleaned and len(cleaned) > 2:
-                if self.ignore_text and cleaned == "text":
-                    continue
+                last_valid_cleaned = cleaned  # Update our fallback candidate
 
-                clean_candidates.add(cleaned)
+                if targets:
+                    self.logger.info(f"trying to match {cleaned} with targets array")
+                    mapped = self.resolver.resolve(targets, cleaned, threshold=self.bert_threshold)
 
-        # DINO Prompt Format
+                    if mapped is not None:
+                        clean_candidates.add(mapped)
+                else:
+                    clean_candidates.add(cleaned)
+
+        if len(clean_candidates) == 0:
+            if last_valid_cleaned:
+                self.logger.warning(
+                    f"Semantic candidates list is empty. Using the last raw label '{last_valid_cleaned}' as fallback.")
+                clean_candidates.add(last_valid_cleaned)
+            else:
+                # If we never even found a valid noun chunk, fallback to the whole caption or a generic term
+                self.logger.warning("No valid noun chunks found at all. Using 'object' as extreme fallback.")
+                clean_candidates.add("object")
+
         dino_prompt = " . ".join(list(clean_candidates)) + " ."
         return dino_prompt
