@@ -4,7 +4,7 @@ PIP := uv pip install
 
 .PHONY: setup checkpoints spacy blip clean run_extractor
 
-setup: checkpoints spacy blip
+setup: checkpoints spacy blip taxonomy dinov2
 	@echo "\nProject Setup Complete! You can now run the extractor."
 
 # -------------------------------------------------------------------------
@@ -38,8 +38,30 @@ blip:
 	@echo "BLIP model cached."
 
 # -------------------------------------------------------------------------
-# Utility: Clean
+# 4. Pre-fetch BART-Large-MNLI Model (Hugging Face)
 # -------------------------------------------------------------------------
+taxonomy:
+	@echo "\n--- 4. Pre-fetching BART-Large-MNLI Model ---"
+	@$(PYTHON) -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
+		model_name = 'facebook/bart-large-mnli'; \
+		print(f'Downloading model {model_name}...'); \
+		AutoModelForSequenceClassification.from_pretrained(model_name); \
+		print('Downloading tokenizer...'); \
+		AutoTokenizer.from_pretrained(model_name)"
+	@echo "BART model cached successfully."
+
+# -------------------------------------------------------------------------
+# 5. Pre-fetch DINOv2 Model (Torch Hub)
+# -------------------------------------------------------------------------
+dinov2:
+	@echo "\n--- 5. Pre-fetching DINOv2 Model ---"
+	@$(PYTHON) -c "import ssl; ssl._create_default_https_context = ssl._create_unverified_context; \
+	import torch; \
+	print('Downloading DINOv2 to cache...'); \
+	torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')"
+	@echo "DINOv2 model cached."
+
+
 clean:
 	@echo "Cleaning up..."
 	@rm -f checkpoints/*.pth
@@ -49,8 +71,6 @@ clean:
 run_extractor:
 	@echo "Running extractor"
 	@$(PYTHON_MODULE) src.extractor.extractor
-
-
 
 
 .PHONY: help

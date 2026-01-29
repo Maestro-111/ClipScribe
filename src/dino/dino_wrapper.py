@@ -18,7 +18,7 @@ class DinoDetector:
         self.device = device
         self.model = load_model(config_path, weights_path, device=self.device)
 
-        print(f"Grounding DINO loaded on {self.device}")
+        self.logger.info(f"Grounding DINO loaded on {self.device}")
 
     def detect(self, image_cv2, text_prompt, box_threshold=0.35, text_threshold=0.25):
         """
