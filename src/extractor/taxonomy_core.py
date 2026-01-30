@@ -133,8 +133,8 @@ class TaxonomyGenerator:
         return parent_map
 
     def build_taxonomy(self, video_type: str, levels: int = 2) -> dict:
-        taxonomy_layers: dict[int, list[str]] = {}
 
+        taxonomy_layers: dict[int, list[str]] = {}
         current_items = self._get_leaves(video_type)
 
         if not current_items:

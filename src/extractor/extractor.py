@@ -60,8 +60,9 @@ class InformationExtractor:
         video_path,
         device: str,
         bert_threshold: float,
+        dino_text_conf: float,
+        dino_box_conf: float,
         logger,
-        mandatory_targets: list,
         detection_interval=10,
         active_depth: int = 2,
     ):
@@ -100,9 +101,8 @@ class InformationExtractor:
 
         self.bert_threshold = bert_threshold
 
-        # --- STORE THE MANDATORY TARGETS ---
-        self.mandatory_targets = mandatory_targets if mandatory_targets else []
-        # -----------------------------------
+        self.dino_text_conf = dino_text_conf
+        self.dino_box_conf = dino_box_conf
 
         self.artifact_path = f"extractor_artifacts/{video_path}/"
 
@@ -121,6 +121,7 @@ class InformationExtractor:
         self.state_init()
 
     def taxonomy_search_set_up(self, taxonomy_layers):
+
         self.search_terms = []
 
         for level in range(self.active_depth):
@@ -134,15 +135,6 @@ class InformationExtractor:
                 self.logger.warning(
                     f"Requested level {level} not found in taxonomy layers."
                 )
-
-        # --- ADD THIS BLOCK ---
-        # Add mandatory targets to search terms so they are valid candidates
-        if self.mandatory_targets:
-            self.logger.info(
-                f"Adding mandatory targets to search pool: {self.mandatory_targets}"
-            )
-            self.search_terms.extend(self.mandatory_targets)
-        # ----------------------
 
         self.search_terms = list(set([t.lower().strip() for t in self.search_terms]))
 
@@ -702,9 +694,6 @@ class InformationExtractor:
                 frame_rgb, self.search_terms
             )
 
-            if self.mandatory_targets:
-                scene_prompt += " . ".join(self.mandatory_targets)
-
             current_shot_prompt = scene_prompt
 
             self.logger.info(f"Final Dino Shot Prompt: {current_shot_prompt}")
@@ -721,8 +710,8 @@ class InformationExtractor:
                 detected_objects_data = self.dingo_model.detect(
                     raw_image_rgb,
                     text_prompt=current_shot_prompt,
-                    box_threshold=0.3,
-                    text_threshold=0.30,
+                    box_threshold=self.dino_box_conf,
+                    text_threshold=self.dino_text_conf,
                 )
 
                 self.logger.info(
@@ -813,12 +802,18 @@ class InformationExtractor:
 
         information = self._finalize_data()
         self._save_results_to_json(information)
+
         return information
 
 
 if __name__ == "__main__":
+
     video_type = "car ad"
-    bert_threshold = 0.8
+
+    bert_threshold = 0.85
+
+    dino_text_conf = 0.45
+    dino_box_conf = 0.4
 
     logger.info(f"bert_threshold: {bert_threshold}")
 
@@ -828,11 +823,7 @@ if __name__ == "__main__":
     gen = TaxonomyGenerator(75, profiles, logger)
     taxonomy_layers = gen.build_taxonomy(video_type, levels=3)
 
-    # --- FIX 1: Extract Brand Keywords ---
     car_profile = profiles.get_video_profile(video_type)
-    brand_terms = car_profile.brand_keywords if car_profile else []
-    logger.info(f"Mandatory Brand Terms: {brand_terms}")
-    # -------------------------------------
 
     dino = DinoDetector(logger)
     dino_prompter = DynamicPrompter(logger, taxonomy_resolver, bert_threshold)
@@ -867,10 +858,11 @@ if __name__ == "__main__":
         "CHRYSLER_jtuJbB1QXd8 - Nov 2024 Pacifica.mp4",
         dino_reid_device.type,
         bert_threshold,
+        dino_text_conf,
+        dino_box_conf,
         logger=logger,
-        mandatory_targets=brand_terms,
-        detection_interval=5,
-        active_depth=2,
+        detection_interval=10,
+        active_depth=3,
     )
 
     try:
