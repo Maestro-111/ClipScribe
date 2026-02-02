@@ -4,20 +4,32 @@ from PIL import Image
 from dino.groundingdino.datasets import transforms as T
 from dino.groundingdino.util.inference import load_model, predict
 import torchvision.ops as ops
-
+import os
 
 class DinoDetector:
     def __init__(
         self,
         logger,
-        config_path="src/dino/groundingdino/config/GroundingDINO_SwinT_OGC.py",
-        weights_path="checkpoints/groundingdino_swint_ogc.pth",
+        dino_type="tiny",
+        weights_dir="checkpoints",
         device="cpu",
     ):
         self.logger = logger
         self.device = device
-        self.model = load_model(config_path, weights_path, device=self.device)
 
+        if dino_type == "tiny":
+            config_path = "src/dino/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+            weights_path = "groundingdino_swint_ogc.pth"
+        elif dino_type == "base":
+            config_path = "src/dino/groundingdino/config/GroundingDINO_SwinB_cfg.py"
+            weights_path = "groundingdino_swinb_cogcoor.pth"
+        else:
+            raise ValueError("dino_type must be 'tiny' or 'base'")
+
+        self.logger.info(f"configured paths for {dino_type} dino")
+        self.logger.info(f"config_path {config_path}; weights_path {weights_path}")
+
+        self.model = load_model(config_path, os.path.join(weights_dir, weights_path), device=self.device)
         self.logger.info(f"Grounding DINO loaded on {self.device}")
 
     def detect(self, image_cv2, text_prompt, box_threshold=0.35, text_threshold=0.25):

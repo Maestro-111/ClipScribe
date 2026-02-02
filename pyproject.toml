@@ -22,7 +22,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "nltk>=3.9.2",
     "sentence-transformers>=5.2.2",
-    "faiss-cpu>=1.13.2",
+    "facenet-pytorch>=2.5.3",
     "paddlepaddle",
     "addict",
     "yapf",
