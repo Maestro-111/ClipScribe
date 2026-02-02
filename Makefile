@@ -12,9 +12,8 @@ setup: checkpoints spacy blip dinov2 sentence_transformers
 # -------------------------------------------------------------------------
 checkpoints:
 	@echo "\n--- 1. Downloading Checkpoints ---"
-	@chmod +x checkpoints/download_dingo_ckpts.sh
+	@$(PYTHON) checkpoints/download_dino.py
 	@chmod +x checkpoints/download_sam_ckpts.sh
-	@cd checkpoints && ./download_dingo_ckpts.sh
 	@cd checkpoints && ./download_sam_ckpts.sh
 	@echo "Checkpoints downloaded."
 

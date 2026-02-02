@@ -19,6 +19,9 @@ import torch
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
 
+from facenet_pytorch import MTCNN
+from config.config import PATHS
+
 from .taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 from .taxonomy_config import ProfilesPile
 
@@ -62,8 +65,9 @@ class InformationExtractor:
         word_similarity_threshold: float,
         dino_text_conf: float,
         dino_box_conf: float,
-        label_match_merge_threshold:float,
-        label_no_match_merge_threshold:float,
+        torch_face_cong: float,
+        label_match_merge_threshold: float,
+        label_no_match_merge_threshold: float,
         logger,
         detection_interval=10,
     ):
@@ -105,10 +109,14 @@ class InformationExtractor:
         self.dino_text_conf = dino_text_conf
         self.dino_box_conf = dino_box_conf
 
+        self.torch_face_cong = torch_face_cong
+
         self.artifact_path = f"extractor_artifacts/{video_path}/"
 
         self.label_match_merge_threshold = label_match_merge_threshold
         self.label_no_match_merge_threshold = label_no_match_merge_threshold
+
+        self.face_detection = MTCNN(keep_all=True, device="cpu")  # force to use cpu
 
         self.embedding_transform = transforms.Compose(
             [
@@ -210,7 +218,6 @@ class InformationExtractor:
 
     @staticmethod
     def _is_valid_text(text_data, frame_height, max_text_height):
-
         """
         Robust filter for OCR noise and irrelevant fine print.
         Returns True only if the text is significant.
@@ -241,7 +248,7 @@ class InformationExtractor:
             if box_height < (max_text_height * 0.20):
                 return False
 
-        clean_chars = re.sub(r'[^a-zA-Z0-9]', '', text)
+        clean_chars = re.sub(r"[^a-zA-Z0-9]", "", text)
 
         if len(clean_chars) < 2:
             return False
@@ -251,9 +258,16 @@ class InformationExtractor:
         if alpha_ratio < 0.5:
             return False
 
-        ignore_terms = [ # param?
-            "msrp", "copyright", "rights reserved", "fca us llc",
-            "visit", "www.", ".com", "license", "simulation"
+        ignore_terms = [  # param?
+            "msrp",
+            "copyright",
+            "rights reserved",
+            "fca us llc",
+            "visit",
+            "www.",
+            ".com",
+            "license",
+            "simulation",
         ]
 
         text_lower = text.lower()
@@ -317,7 +331,6 @@ class InformationExtractor:
     def save_metadata(
         self, frame_idx, obj_ids, masks, frame_text, shot_idx, current_frame_img
     ):
-
         timestamp = frame_idx / self.fps
         second_key = int(timestamp)
         masks_np = masks.cpu().numpy()
@@ -334,7 +347,6 @@ class InformationExtractor:
 
         # 2. Objects
         for i, obj_id in enumerate(obj_ids):
-
             mask_binary = masks_np[i] > 0.0
             current_box = self._mask_to_box(mask_binary)
 
@@ -343,7 +355,6 @@ class InformationExtractor:
 
                 # If this is the VERY FIRST time we see this specific ID, capture embedding
                 if obj_id not in self.object_registry:
-
                     self.object_registry[obj_id] = {
                         "label": label,
                         "shot_id": shot_idx,
@@ -370,7 +381,6 @@ class InformationExtractor:
                 self.active_trackers.pop(obj_id, None)
 
     def _calculate_metrics(self, boxes, timestamps):
-
         if len(boxes) < 2:
             # Return defaults for all 4 values if not enough data
             return 0.0, 0.0, 0.0, "unknown", 0.0
@@ -385,10 +395,12 @@ class InformationExtractor:
             dist += d
 
         duration = timestamps[-1] - timestamps[0]
-        velocity = dist / duration if duration > 0 else 0 # pixel per second
+        velocity = dist / duration if duration > 0 else 0  # pixel per second
 
         areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in boxes]
-        growth = areas[-1] / (areas[0] + 1e-6) # how much the ratio changed between start and end?
+        growth = areas[-1] / (
+            areas[0] + 1e-6
+        )  # how much the ratio changed between start and end?
 
         width, height = self.video_writer_dims
         frame_area = width * height
@@ -413,7 +425,9 @@ class InformationExtractor:
         max_possible_dist = math.sqrt(video_center[0] ** 2 + video_center[1] ** 2)
 
         for c in centroids:
-            d_center = math.sqrt((c[0] - video_center[0]) ** 2 + (c[1] - video_center[1]) ** 2)
+            d_center = math.sqrt(
+                (c[0] - video_center[0]) ** 2 + (c[1] - video_center[1]) ** 2
+            )
             avg_dist_from_center += d_center
 
         avg_dist_from_center /= len(centroids)
@@ -424,11 +438,10 @@ class InformationExtractor:
             round(growth, 2),
             round(screen_coverage, 3),
             direction,  # New
-            round(centrality_score, 2)
+            round(centrality_score, 2),
         )
 
     def _resolve_identities(self):
-
         self.logger.info("Resolving identities across shots...")
 
         id_map = {}
@@ -440,7 +453,6 @@ class InformationExtractor:
         )
 
         for i, id_a in enumerate(object_ids):
-
             if id_a in id_map:
                 continue
 
@@ -460,7 +472,6 @@ class InformationExtractor:
             end_a = obj_a["timestamps"][-1]
 
             for j in range(i + 1, len(object_ids)):
-
                 id_b = object_ids[j]
 
                 if id_b in id_map:
@@ -491,13 +502,15 @@ class InformationExtractor:
                 should_merge = False
 
                 if labels_match and visual_sim > self.label_match_merge_threshold:
-
-                    self.logger.info(f"Merge (Standard): {obj_a['label']} matches. Sim: {visual_sim:.2f}")
+                    self.logger.info(
+                        f"Merge (Standard): {obj_a['label']} matches. Sim: {visual_sim:.2f}"
+                    )
                     should_merge = True
 
                 elif visual_sim > self.label_no_match_merge_threshold:
                     self.logger.info(
-                        f"Merge (Visual Override): Labels '{obj_a['label']}'/'{obj_b['label']}' differ, but visual sim is high ({visual_sim:.2f})")
+                        f"Merge (Visual Override): Labels '{obj_a['label']}'/'{obj_b['label']}' differ, but visual sim is high ({visual_sim:.2f})"
+                    )
                     should_merge = True
 
                 if should_merge:
@@ -507,17 +520,19 @@ class InformationExtractor:
         return id_map
 
     def _finalize_data(self):
-
         global_id_map = self._resolve_identities()
         final_objects = {}
 
         for local_id, data in self.object_registry.items():
-
             g_id = global_id_map.get(local_id, -1)
 
-            velocity, growth, coverage, direction, centrality_score  = self._calculate_metrics(
-                data["boxes"], data["timestamps"]
-            )
+            (
+                velocity,
+                growth,
+                coverage,
+                direction,
+                centrality_score,
+            ) = self._calculate_metrics(data["boxes"], data["timestamps"])
 
             occurence_data = {
                 "shot_index": data["shot_id"],
@@ -528,12 +543,11 @@ class InformationExtractor:
                 "screen_coverage": coverage,
                 "velocity_px_sec": velocity,
                 "growth_factor": growth,
-                "direction":direction,
+                "direction": direction,
                 "centrality_score": centrality_score,
             }
 
             if g_id not in final_objects:
-
                 final_objects[g_id] = {
                     "global_id": g_id,
                     "label": data["label"],
@@ -647,15 +661,12 @@ class InformationExtractor:
         first_shot = shot_data[0]
         has_dynamic_start = first_shot["duration"] < 3.0
 
-
         shots_in_first_5s = [s for s in shot_data if s["start"] < 5.0]
         has_quick_pacing_start = len(shots_in_first_5s) >= 5
-
 
         rapid_fire_intervals = []
 
         for start_idx in range(len(shot_data)):
-
             window_start = shot_data[start_idx]["start"]
             window_end = window_start + 5.0  # Exactly 5 seconds from this start point
 
@@ -670,16 +681,17 @@ class InformationExtractor:
                     break
 
             if shot_count >= 5:
-                rapid_fire_intervals.append({
-                    "start_time": window_start,
-                    "end_time": window_end,
-                    "shot_count": shot_count,
-                    "duration": 5.0,
-                    "shot_indices": shot_indices,
-                })
+                rapid_fire_intervals.append(
+                    {
+                        "start_time": window_start,
+                        "end_time": window_end,
+                        "shot_count": shot_count,
+                        "duration": 5.0,
+                        "shot_indices": shot_indices,
+                    }
+                )
 
         has_quick_pacing_any = len(rapid_fire_intervals) > 0
-
 
         self.global_stats = {
             "total_shots": len(self.shot_boundaries),
@@ -705,7 +717,6 @@ class InformationExtractor:
             },
         }
 
-
         self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
     def _save_results_to_json(self, information):
@@ -717,8 +728,27 @@ class InformationExtractor:
         except Exception as e:
             self.logger.error(f"Error saving JSON: {e}")
 
-    def extract(self):
+    def _add_new_tracker(self, box, label):
+        """Helper to register the new object with SAM and internal state"""
 
+        new_id = self.get_next_obj_id()
+
+        self.logger.info(f"  + New object {new_id} ({label})")
+        self.id_to_label[new_id] = label
+
+        self.active_trackers[new_id] = {
+            "box": box,
+            "label": label,
+        }
+
+        self.sam_model.add_new_points_or_box(
+            inference_state=self.inference_state,
+            frame_idx=self.current_frame,
+            obj_id=new_id,
+            box=box,
+        )
+
+    def extract(self):
         self._analyze_global_features()
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
@@ -737,20 +767,19 @@ class InformationExtractor:
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            final_dino_prompt,raw_dino_prompt = self.dingo_prompter.generate_prompt_from_frame(
-                frame_rgb
-            )
+            (
+                final_dino_prompt,
+                raw_dino_prompt,
+            ) = self.dingo_prompter.generate_prompt_from_frame(frame_rgb)
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
-                self.video_type,
-                scene_context=raw_dino_prompt
+                self.video_type, scene_context=raw_dino_prompt
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
             self.logger.info(f"Dino Shot Prompt: {final_dino_prompt}")
 
             while self.current_frame < end_f:
-
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
                 ret, frame_bgr = self.cap.read()
 
@@ -766,33 +795,42 @@ class InformationExtractor:
                     text_threshold=self.dino_text_conf,
                 )
 
-                self.logger.info(
-                    f"Detected objects #{len(detected_objects_data)} in the current frame"
-                )
-
                 detected_text_data = self.ocr_engine.detect(raw_image_rgb)
+
+                self.logger.info(
+                    f"Detected #{len(detected_objects_data)} general objects in the current frame"
+                )
 
                 text_viz_path = os.path.join(
                     self.artifact_path,
                     f"ocr_result_{shot_idx}_{self.current_frame}.jpg",
                 )
+
+                face_viz_path = os.path.join(
+                    self.artifact_path,
+                    f"torch_face_result_{shot_idx}_{self.current_frame}.png",
+                )
+
                 object_viz_path = os.path.join(
                     self.artifact_path,
-                    f"dingo_result_{shot_idx}_{self.current_frame}.png",
+                    f"dino_general_result_{shot_idx}_{self.current_frame}.png",
                 )
+
                 self.ocr_engine.save_visualization(
                     raw_image_rgb, detected_text_data, text_viz_path
                 )
+
                 self.dingo_model.map_results(
                     raw_image_rgb, detected_objects_data, object_viz_path
                 )
 
                 for box_info in detected_objects_data:
-
                     box = box_info["box"]
                     label = box_info["label"]
 
-                    self.logger.info(f"trying to match {label} with {self.video_type} taxonomy targets")
+                    self.logger.info(
+                        f"trying to match {label} with {self.video_type} taxonomy targets"
+                    )
 
                     best_semantic = self.taxonomy_resolver.resolve(
                         label, threshold=self.word_similarity_threshold
@@ -805,23 +843,42 @@ class InformationExtractor:
                         continue
 
                     if self.is_new_object(box, best_semantic):
+                        self._add_new_tracker(box, best_semantic)
 
-                        new_id = self.get_next_obj_id()
-                        self.logger.info(f"  + New object {new_id} ({best_semantic})")
+                try:
+                    boxes, probs = self.face_detection.detect(raw_image_rgb)
+                except Exception as e:
+                    self.logger.warning(f"MTCNN Error: {e}")
+                    boxes, probs = None, None
 
-                        self.id_to_label[new_id] = best_semantic
+                if boxes is not None:
+                    mapping = []
 
-                        self.active_trackers[new_id] = {
-                            "box": box,
-                            "label": best_semantic,
-                        }
+                    for box, prob in zip(boxes, probs):
+                        if prob < self.torch_face_cong:
+                            continue
 
-                        self.sam_model.add_new_points_or_box(
-                            inference_state=self.inference_state,
-                            frame_idx=self.current_frame,
-                            obj_id=new_id,
-                            box=box,
+                        x1, y1, x2, y2 = map(int, box)
+                        tracker_box = [x1, y1, x2, y2]
+
+                        forced_label = "human face"
+
+                        mapping.append(
+                            {
+                                "box": tracker_box,
+                                "label": forced_label,
+                                "score": float(prob),
+                            }
                         )
+
+                        if self.is_new_object(tracker_box, forced_label):
+                            self._add_new_tracker(tracker_box, forced_label)
+
+                    self.logger.info(
+                        f"Detected #{len(mapping)} faces in the current frame"
+                    )
+
+                    self.dingo_model.map_results(raw_image_rgb, mapping, face_viz_path)
 
                 frames_left_in_shot = end_f - self.current_frame
                 frames_to_track = min(self.detection_interval, frames_left_in_shot)
@@ -864,13 +921,14 @@ class InformationExtractor:
 
 
 if __name__ == "__main__":
-
     video_type = "car ad"
+    models_weights_dir = PATHS["checkpoints"]
 
     word_similarity_threshold = 0.4
 
     dino_text_conf = 0.45
     dino_box_conf = 0.4
+    torch_face_cong = 0.9
 
     taxonommy_objects_num = 100
     detection_interval = 10
@@ -890,7 +948,7 @@ if __name__ == "__main__":
 
     car_profile = profiles.get_video_profile(video_type)
 
-    dino = DinoDetector(logger)
+    dino = DinoDetector(logger, dino_type="base", weights_dir=models_weights_dir)
     dino_prompter = DynamicPrompter(logger)
 
     sam2_device = (
@@ -920,11 +978,12 @@ if __name__ == "__main__":
         ocr,
         taxonomy_resolver,
         taxonomy_generator,
-        "DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4",
+        "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4",
         dino_reid_device.type,
         word_similarity_threshold,
         dino_text_conf,
         dino_box_conf,
+        torch_face_cong,
         label_match_merge_threshold=label_match_merge_threshold,
         label_no_match_merge_threshold=label_no_match_merge_threshold,
         logger=logger,
