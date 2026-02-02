@@ -1,6 +1,7 @@
 import cv2
 import os
 
+import re
 import numpy as np
 import math
 
@@ -207,6 +208,60 @@ class InformationExtractor:
         lb = label_b.lower()
         return la in lb or lb in la
 
+    @staticmethod
+    def _is_valid_text(text_data, frame_height, max_text_height):
+
+        """
+        Robust filter for OCR noise and irrelevant fine print.
+        Returns True only if the text is significant.
+        """
+
+        text = text_data["text"]
+        confidence = text_data["confidence"]
+
+        x1, y1, x2, y2 = text_data["box"]
+
+        box_height = y2 - y1
+
+        relative_height = box_height / frame_height
+
+        if relative_height < 0.02:
+            if confidence < 0.90:
+                return False
+
+        elif relative_height < 0.04:
+            if confidence < 0.80:
+                return False
+
+        else:
+            if confidence < 0.60:
+                return False
+
+        if max_text_height > 0:
+            if box_height < (max_text_height * 0.20):
+                return False
+
+        clean_chars = re.sub(r'[^a-zA-Z0-9]', '', text)
+
+        if len(clean_chars) < 2:
+            return False
+
+        alpha_ratio = len(clean_chars) / len(text)
+
+        if alpha_ratio < 0.5:
+            return False
+
+        ignore_terms = [ # param?
+            "msrp", "copyright", "rights reserved", "fca us llc",
+            "visit", "www.", ".com", "license", "simulation"
+        ]
+
+        text_lower = text.lower()
+        if any(term in text_lower for term in ignore_terms):
+            return False
+
+        return True
+
     def is_new_object(self, new_box, new_label):
         """
         Returns True if the box does NOT overlap significantly with
@@ -268,12 +323,13 @@ class InformationExtractor:
         masks_np = masks.cpu().numpy()
 
         h, w, _ = current_frame_img.shape
-        bottom_threshold = h * 0.85
 
-        # 1. Text (Grouped by Second)
+        max_text_height = 0
+        if frame_text:
+            max_text_height = max((t["box"][3] - t["box"][1]) for t in frame_text)
+
         for cur in frame_text:
-            box_y_min = cur["box"][1]
-            if cur["confidence"] > 0.6 and box_y_min < bottom_threshold:
+            if self._is_valid_text(cur, h, max_text_height):
                 self.text_registry[second_key].add(cur["text"])
 
         # 2. Objects
@@ -317,7 +373,7 @@ class InformationExtractor:
 
         if len(boxes) < 2:
             # Return defaults for all 4 values if not enough data
-            return 0.0, 0.0, 0.0, "unknown"
+            return 0.0, 0.0, 0.0, "unknown", 0.0
 
         centroids = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
         dist = 0
@@ -368,7 +424,7 @@ class InformationExtractor:
             round(growth, 2),
             round(screen_coverage, 3),
             direction,  # New
-            round(centrality_score, 2)  # New
+            round(centrality_score, 2)
         )
 
     def _resolve_identities(self):
@@ -819,8 +875,8 @@ if __name__ == "__main__":
     taxonommy_objects_num = 100
     detection_interval = 10
 
-    label_match_merge_threshold = 0.65
-    label_no_match_merge_threshold = 0.85
+    label_match_merge_threshold = 0.6
+    label_no_match_merge_threshold = 0.8
 
     logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
 
@@ -864,7 +920,7 @@ if __name__ == "__main__":
         ocr,
         taxonomy_resolver,
         taxonomy_generator,
-        "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4",
+        "DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4",
         dino_reid_device.type,
         word_similarity_threshold,
         dino_text_conf,
