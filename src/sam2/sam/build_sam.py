@@ -17,13 +17,12 @@ def build_sam2_video_predictor(
 
     with hydra.initialize_config_module(config_module="src.sam2.configs", version_base=None):
 
-        # 2. Build the Config
         cfg = compose(config_name=config_file)
 
         OmegaConf.set_struct(cfg, False)
         OmegaConf.resolve(cfg)
 
-        # 3. Post-processing Overrides (Manual logic instead of complex Hydra overrides)
+        # Post-processing Overrides (Manual logic instead of complex Hydra overrides)
         if apply_postprocessing:
             if "sam_mask_decoder_extra_args" not in cfg.model:
                 cfg.model.sam_mask_decoder_extra_args = {}
@@ -34,11 +33,9 @@ def build_sam2_video_predictor(
             cfg.model.binarize_mask_from_pts_for_mem_enc = True
             cfg.model.fill_hole_area = 8
 
-        # 4. Instantiate
         # This looks at the '_target_' keys in YAML
         model = instantiate(cfg.model, _recursive_=True)
 
-        # 5. Load Weights
         _load_checkpoint(model, ckpt_path)
         model = model.to(device)
 

@@ -1,6 +1,6 @@
 exclude: |
   (?x)^(
-    src/(sam2|dingo)/.*|
+    src/(sam2|dino)/.*|
     checkpoints/.*|
     extractor_artifacts/.*|
     src/logs/.*|
@@ -22,12 +22,6 @@ repos:
       - id: check-yaml
       - id: check-toml
 
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        language_version: python3.12
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.2.2
     hooks:
@@ -44,7 +38,7 @@ repos:
           - "--config-file=pyproject.toml"
           - "--explicit-package-bases"
           - "--ignore-missing-imports"
-          - "--exclude=src/(sam2|dingo)/"
+          - "--exclude=src/(sam2|dino)/"
           - "--exclude=src/utils/(sam2_utils|position_encoding|misc)\\.py"
           - "src"
         additional_dependencies:
