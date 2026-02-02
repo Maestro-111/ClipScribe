@@ -2,9 +2,9 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip clean run_extractor
+.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers clean run_extractor
 
-setup: checkpoints spacy blip taxonomy dinov2
+setup: checkpoints spacy blip dinov2 sentence_transformers
 	@echo "\nProject Setup Complete! You can now run the extractor."
 
 # -------------------------------------------------------------------------
@@ -38,20 +38,7 @@ blip:
 	@echo "BLIP model cached."
 
 # -------------------------------------------------------------------------
-# 4. Pre-fetch BART-Large-MNLI Model (Hugging Face)
-# -------------------------------------------------------------------------
-taxonomy:
-	@echo "\n--- 4. Pre-fetching BART-Large-MNLI Model ---"
-	@$(PYTHON) -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
-		model_name = 'facebook/bart-large-mnli'; \
-		print(f'Downloading model {model_name}...'); \
-		AutoModelForSequenceClassification.from_pretrained(model_name); \
-		print('Downloading tokenizer...'); \
-		AutoTokenizer.from_pretrained(model_name)"
-	@echo "BART model cached successfully."
-
-# -------------------------------------------------------------------------
-# 5. Pre-fetch DINOv2 Model (Torch Hub)
+# 4. Pre-fetch DINOv2 Model (Torch Hub)
 # -------------------------------------------------------------------------
 dinov2:
 	@echo "\n--- 5. Pre-fetching DINOv2 Model ---"
@@ -60,6 +47,16 @@ dinov2:
 	print('Downloading DINOv2 to cache...'); \
 	torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')"
 	@echo "DINOv2 model cached."
+
+# -------------------------------------------------------------------------
+# 5. Pre-fetch all-MiniLM-L6-v2 Sentence-Transformer
+# -------------------------------------------------------------------------
+sentence_transformers:
+	@echo "\n--- 6. Pre-fetching Sentence Transformer ---"
+	@$(PYTHON) -c "from sentence_transformers import SentenceTransformer; \
+		print('Caching all-MiniLM-L6-v2...'); \
+		SentenceTransformer('all-MiniLM-L6-v2')"
+	@echo "Sentence Transformer model cached."
 
 
 clean:

@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
 
 LOG_FILE_NAME = f"{datetime.now():%Y_%m_%d-%I_%M_%S_%p}_" + "_clip_scribe"
