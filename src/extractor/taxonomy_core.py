@@ -1,155 +1,119 @@
-from typing import List, Any
-from agents import Agent, Runner
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv, find_dotenv
-from transformers import pipeline
+import torch
+from sentence_transformers import SentenceTransformer, CrossEncoder, util
+from agents import Agent, Runner
+import re
 from .taxonomy_config import ProfilesPile
 
 load_dotenv(find_dotenv())
 
 
+class LeafItem(BaseModel):
+    """A structured object representing a canonical category."""
+    anchor: str = Field(description="The primary, canonical name (e.g., 'car')")
+
+
+class StructuredLeafList(BaseModel):
+    """The collection of generated objects."""
+    items: List[LeafItem] = Field(description="List of structured leaf objects")
+
+
 class TaxonomyResolver:
     def __init__(self, logger, device: str = "cpu"):
-        """
-        Initializes a semantic mapper using Zero-Shot Classification.
-        """
-
-        # Small, high-performance model for semantic mapping
 
         self.logger = logger
-        self.classifier = pipeline(
-            "zero-shot-classification", model="facebook/bart-large-mnli", device=device
+        self.device = device
+        self.targets: List[LeafItem] = []
+
+        self.logger.info("Loading SBERT Bi-Encoder...")
+        self.embed_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+
+        self.target_embeddings = None
+        self.active_target_names = []
+
+    def set_active_targets(self, targets: List[LeafItem]):
+
+        self.logger.info(f"Encoding {len(targets)} active targets...")
+        self.targets = targets
+        self.active_target_names = [t.anchor for t in targets]
+
+        if not self.active_target_names:
+            self.target_embeddings = None
+            return
+
+        self.target_embeddings = self.embed_model.encode(
+            self.active_target_names,
+            convert_to_tensor=True,
+            show_progress_bar=False
         )
 
-    def resolve(
-        self, targets: list[str], raw_label: str, threshold: float = 0.5
-    ) -> str | None | Any:
-        """
-        Maps a raw label to the most similar category in the taxonomy.
-        """
+    def resolve(self, raw_label: str, threshold: float = 0.35) -> Optional[str]:
 
-        if not targets:
-            return raw_label
+        clean_label = re.sub(r'[^a-zA-Z0-9 ]', '', raw_label).strip().lower()
 
-        result = self.classifier(raw_label, targets, multi_label=True)
+        if len(clean_label) < 2 or self.target_embeddings is None:
+            return None
 
-        top_label = result["labels"][0]
-        top_score = result["scores"][0]
+        query_embedding = self.embed_model.encode(clean_label, convert_to_tensor=True)
+        cos_scores = util.cos_sim(query_embedding, self.target_embeddings)[0]
 
-        self.logger.info(f"Top label: {top_label}; Top score: {top_score}")
+        best_score_tensor = torch.max(cos_scores, dim=0)
+        best_score = best_score_tensor.values.item()
+        best_idx = best_score_tensor.indices.item()
 
-        if top_score >= threshold:
-            return top_label
+        best_candidate = self.active_target_names[best_idx]
 
-        self.logger.info(f" Top score: {top_score} is < {threshold}; returning None")
+        self.logger.info(f"Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})")
+
+        if best_score < threshold:
+            for cand in self.active_target_names:
+                if f" {cand} " in f" {clean_label} " or f" {clean_label} " in f" {cand} ":
+                    self.logger.info(f"MATCH (String Fallback): '{clean_label}' mapped to '{cand}'")
+                    return cand
+
+        if best_score >= threshold:
+            self.logger.info(f"MATCH: '{clean_label}' mapped to '{best_candidate}'")
+            return best_candidate
+
         return None
 
 
-class TaxonomyList(BaseModel):
-    taxonomy: List[str] = Field(description="List of extracted taxonomies")
-
-
-class LeafList(BaseModel):
-    items: List[str] = Field(description="List of specific objects (leaves)")
-
-
-class ParentPair(BaseModel):
-    item: str = Field(description="The specific object (e.g., 'driver')")
-    parent: str = Field(description="The generic parent category (e.g., 'person')")
-
-
-class ParentMapping(BaseModel):
-    mappings: List[ParentPair] = Field(description="List of item-to-parent mappings.")
-
-
 class TaxonomyGenerator:
-    def __init__(
-        self, num_objects: int, profiles: ProfilesPile, logger, model: str = "gpt-4o"
-    ):
+    def __init__(self, num_objects: int, profiles: ProfilesPile, logger, model: str = "gpt-4o-mini"):
         self.model = model
         self.profiles = profiles
         self.logger = logger
+        self.num_objects = num_objects
 
         self.leaf_agent = Agent(
-            name="LeafGenerator",
+            name="StructuredLeafGenerator",
             instructions=(
                 "You are a computer vision expert. "
-                f"Generate EXACTLY #{num_objects} unique, specific, visible objects based strictly on the user's provided profile. "
-                "Focus on 'leaf' nodes (specific items)."
+                f"Generate EXACTLY {self.num_objects} unique visual objects likely to be in the scene. "
+                "CRITICAL: Output generic, visual classes (e.g., 'car', 'suv', 'tree', 'cellphone', 'building'), "
+                "NOT specific instances and NOT abstract concepts."
+                "IGNORE "
+
             ),
             model=self.model,
-            output_type=LeafList,
+            output_type=StructuredLeafList,
         )
 
-        self.parent_agent = Agent(
-            name="ParentGenerator",
-            instructions=(
-                "You are a taxonomy logic engine. "
-                "Given a list of words, provide the immediate 'semantic parent' for each word. "
-                "The parent should be 1 level more general."
-                "Example: 'driver' -> 'person', 'tire' -> 'car part', 'tree' -> 'nature'. "
-                "Merge distinct items into shared parents where logical."
-            ),
-            model=self.model,
-            output_type=ParentMapping,
-        )
-
-    def _get_leaves(self, video_type: str) -> List[str]:
-        self.logger.info(
-            f"--- Stage 1: Create Profile and Generating leaves for {video_type}---"
-        )
-
+    def generate_targets(self, video_type: str, scene_context: str = "") -> List[LeafItem]:
+        self.logger.info(f"Generating targets for context: '{scene_context}'")
         profile = self.profiles.get_video_profile(video_type)
 
         if not profile:
-            self.logger.error(f"no profile found for video type {video_type}")
             return []
 
         user_input = (
-            f"Generate objects for a {video_type}.\n"
-            f"{profile.get_prompt_instruction()}"
+            f"Video Type: {video_type}\n"
+            f"{profile.get_prompt_instruction()}\n"
+            f"Scene Description: {scene_context}\n"
         )
 
         result = Runner.run_sync(self.leaf_agent, user_input)
-
-        if result and result.final_output:
-            return [i.lower() for i in result.final_output.items]
-
-        return []
-
-    def _get_parents(self, items: List[str]) -> dict:
-        self.logger.info(f"--- Stage 2: Generating parents for {len(items)} items ---")
-
-        user_input = f"Find semantic parents for these items: {items}"
-
-        result = Runner.run_sync(self.parent_agent, user_input)
-
-        parent_map = {}
-
-        if result and result.final_output:
-            for pair in result.final_output.mappings:
-                parent_map[pair.item.lower()] = pair.parent.lower()
-
-        return parent_map
-
-    def build_taxonomy(self, video_type: str, levels: int = 2) -> dict:
-
-        taxonomy_layers: dict[int, list[str]] = {}
-        current_items = self._get_leaves(video_type)
-
-        if not current_items:
-            return taxonomy_layers
-
-        taxonomy_layers[0] = current_items
-
-        for i in range(1, levels):
-            parent_map = self._get_parents(current_items)
-            next_level_items = list(set(parent_map.values()))
-
-            taxonomy_layers[i] = next_level_items
-            current_items = next_level_items
-
-            if not current_items:
-                break
-
-        return taxonomy_layers
+        taxonomy = result.final_output.items if result and result.final_output else []
+        return taxonomy
