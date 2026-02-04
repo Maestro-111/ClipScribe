@@ -23,6 +23,7 @@ dependencies = [
     "nltk>=3.9.2",
     "sentence-transformers>=5.2.2",
     "facenet-pytorch>=2.5.3",
+    "openai-whisper>=20250625",
     "paddlepaddle",
     "addict",
     "yapf",

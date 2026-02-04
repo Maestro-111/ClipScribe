@@ -25,6 +25,8 @@ from config.config import PATHS
 from .taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 from .taxonomy_config import ProfilesPile
 
+import whisper
+
 from torchvision import transforms
 from dotenv import load_dotenv, find_dotenv
 
@@ -66,6 +68,7 @@ class InformationExtractor:
         dino_text_conf: float,
         dino_box_conf: float,
         torch_face_cong: float,
+        audio_confidence: float,
         label_match_merge_threshold: float,
         label_no_match_merge_threshold: float,
         logger,
@@ -117,6 +120,12 @@ class InformationExtractor:
         self.label_no_match_merge_threshold = label_no_match_merge_threshold
 
         self.face_detection = MTCNN(keep_all=True, device="cpu")  # force to use cpu
+
+        self.logger.info(f"Loading Whisper (base) on {self.device}...")
+        self.audio_model = whisper.load_model("base", device=self.device)
+
+        self.audio_registry: list[dict] = []
+        self.audio_confidence = audio_confidence
 
         self.embedding_transform = transforms.Compose(
             [
@@ -565,6 +574,7 @@ class InformationExtractor:
             "global_stats": self.global_stats if hasattr(self, "global_stats") else {},
             "visual_objects": list(final_objects.values()),
             "text_events": final_text,
+            "audio_segments": self.audio_registry,  # Add this line
         }
 
     def visualize_sam_tracking(self, frame_idx, obj_ids, masks):
@@ -628,7 +638,7 @@ class InformationExtractor:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
     def _analyze_global_features(self):
-        self.logger.info("--- Step 1: Analyzing Shots & Audio ---")
+        self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
 
         # 1. Run Scene Detection
@@ -748,8 +758,47 @@ class InformationExtractor:
             box=box,
         )
 
+    def _analyze_audio(self):
+        self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
+
+        result = self.audio_model.transcribe(
+            audio=self.video_path,
+            verbose=False,
+            no_speech_threshold=0.6,
+            condition_on_previous_text=False,
+        )
+
+        self.audio_registry = []
+
+        for segment in result["segments"]:
+            # Convert Log Probability to a 0-1 Confidence Score
+            # avg_logprob is usually negative (e.g., -0.21). exp(-0.21) ≈ 0.81 (81%)
+            confidence = math.exp(segment["avg_logprob"])
+
+            if confidence < self.audio_confidence:
+                self.logger.info(
+                    f"Skipping audio segment '{segment['text']}' (Conf: {confidence:.2f})"
+                )
+                continue
+
+            self.audio_registry.append(
+                {
+                    "start": round(segment["start"], 2),
+                    "end": round(segment["end"], 2),
+                    "text": segment["text"].strip(),
+                    "confidence": round(confidence, 2),  # Useful to save this metric
+                }
+            )
+
+        self.logger.info(
+            f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
+        )
+
     def extract(self):
         self._analyze_global_features()
+        self._analyze_audio()
+
+        self.logger.info("--- Step 3: Tracking/OCR ---")
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
             self.sam_model.reset_state(self.inference_state)
@@ -877,8 +926,10 @@ class InformationExtractor:
                     self.logger.info(
                         f"Detected #{len(mapping)} faces in the current frame"
                     )
-
-                    self.dingo_model.map_results(raw_image_rgb, mapping, face_viz_path)
+                    if mapping:
+                        self.dingo_model.map_results(
+                            raw_image_rgb, mapping, face_viz_path
+                        )
 
                 frames_left_in_shot = end_f - self.current_frame
                 frames_to_track = min(self.detection_interval, frames_left_in_shot)
@@ -936,6 +987,8 @@ if __name__ == "__main__":
     label_match_merge_threshold = 0.6
     label_no_match_merge_threshold = 0.8
 
+    audio_confidence = 0.4
+
     logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
 
     logger.info(f"dino_text_conf: {dino_text_conf}")
@@ -978,12 +1031,13 @@ if __name__ == "__main__":
         ocr,
         taxonomy_resolver,
         taxonomy_generator,
-        "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4",
+        "RAM_QT1IQtE62Uk - Ram 1500 Classic DS - Hockey - QBC FR - Jan.mp4",
         dino_reid_device.type,
         word_similarity_threshold,
         dino_text_conf,
         dino_box_conf,
         torch_face_cong,
+        audio_confidence,
         label_match_merge_threshold=label_match_merge_threshold,
         label_no_match_merge_threshold=label_no_match_merge_threshold,
         logger=logger,
