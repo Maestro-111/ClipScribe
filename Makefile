@@ -2,9 +2,9 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers clean run_extractor
+.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor
 
-setup: checkpoints spacy blip dinov2 sentence_transformers
+setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 	@echo "\nProject Setup Complete! You can now run the extractor."
 
 # -------------------------------------------------------------------------
@@ -57,6 +57,24 @@ sentence_transformers:
 		SentenceTransformer('all-MiniLM-L6-v2')"
 	@echo "Sentence Transformer model cached."
 
+# -------------------------------------------------------------------------
+# 6. Fix macOS SSL Certificates (Mac Specific)
+# -------------------------------------------------------------------------
+fix_mac_ssl:
+	@echo "\n--- Checking for macOS SSL Certificate Issue ---"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "macOS detected. Attempting to install certificates..."; \
+		CERT_CMD="/Applications/Python 3.13/Install Certificates.command"; \
+		if [ -f "$$CERT_CMD" ]; then \
+			sh "$$CERT_CMD"; \
+			echo "Certificates installed successfully."; \
+		else \
+			echo "Certificate command not found at standard path. Skipping."; \
+			echo "If you get SSL errors, please run 'Install Certificates.command' manually."; \
+		fi \
+	else \
+		echo "Not on macOS. Skipping certificate fix."; \
+	fi
 
 clean:
 	@echo "Cleaning up..."
