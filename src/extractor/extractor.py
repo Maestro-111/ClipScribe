@@ -38,6 +38,39 @@ class InformationExtractor:
     """
 
     @staticmethod
+    def merge_dino_prompts(prompts):
+        """
+        Deduplicates noun phrases across multiple DINO-formatted prompts.
+        Input:  ["car . road . tree .", "car . building ."]
+        Output: "car . road . tree . building ."
+        """
+        seen = set()
+        unique = []
+        for prompt in prompts:
+            parts = [p.strip() for p in prompt.split(".") if p.strip()]
+            for part in parts:
+                if part.lower() not in seen:
+                    seen.add(part.lower())
+                    unique.append(part)
+        return " . ".join(unique) + " ." if unique else "object ."
+
+    @staticmethod
+    def merge_raw_prompts(prompts):
+        """
+        Joins raw BLIP captions into a combined context for the LLM.
+        Input:  ["a car on a road with trees", "a car near a building"]
+        Output: "a car on a road with trees, a car near a building"
+        """
+        seen = set()
+        unique = []
+        for p in prompts:
+            normalized = p.strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique.append(p.strip())
+        return ", ".join(unique) if unique else ""
+
+    @staticmethod
     def _calculate_iou(boxA, boxB):
         # Determine intersection rectangle
         xA = max(boxA[0], boxB[0])
@@ -155,6 +188,7 @@ class InformationExtractor:
         embedding_transform,
         face_detection,
         device: str,
+        dino_reid_device: str,
         word_similarity_threshold: float,
         dino_text_conf: float,
         dino_box_conf: float,
@@ -212,6 +246,7 @@ class InformationExtractor:
         self.label_no_match_merge_threshold = label_no_match_merge_threshold
 
         self.device = device
+        self.dino_reid_device = dino_reid_device
         self.logger = logger
 
         self.audio_registry: list[dict] = []
@@ -310,7 +345,9 @@ class InformationExtractor:
         crop = frame_bgr[y1:y2, x1:x2]
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
 
-        img_tensor = self.embedding_transform(crop_rgb).unsqueeze(0).to(self.device)
+        img_tensor = (
+            self.embedding_transform(crop_rgb).unsqueeze(0).to(self.dino_reid_device)
+        )
 
         with torch.no_grad():
             features = self.reid_model.forward_features(img_tensor)
@@ -343,7 +380,6 @@ class InformationExtractor:
             if current_box:
                 label = self.id_to_label.get(obj_id, "unknown")
 
-                # If this is the VERY FIRST time we see this specific ID, capture embedding
                 if obj_id not in self.object_registry:
                     self.object_registry[obj_id] = {
                         "label": label,
@@ -354,6 +390,8 @@ class InformationExtractor:
                         "timestamps": [],
                     }
 
+                # Accumulate embeddings periodically for robust cross-shot re-identification
+                if self.object_registry[obj_id]["embedding_count"] < 5:
                     new_emb = self._extract_embedding(current_frame_img, current_box)
 
                     if new_emb is not None:
@@ -775,30 +813,6 @@ class InformationExtractor:
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
-    @staticmethod
-    def filter_prompt(prompts):
-        """
-
-        merge blip prompts into 1?
-
-        :param prompts:
-        :return:
-        """
-
-        seen_nouns = set()
-        unique_final_prompts = []
-
-        for prompt in prompts:
-            nouns = prompt.split(" ")
-            unique_nouns = [n for n in nouns if n.lower() not in seen_nouns]
-            seen_nouns.update(n.lower() for n in unique_nouns)
-            if unique_nouns:
-                unique_final_prompts.append(" . ".join(unique_nouns))
-
-        combined_context = " . ".join(unique_final_prompts)
-
-        return combined_context
-
     def extract(self):
         self._digest_video()
         self._analyze_audio()
@@ -819,11 +833,17 @@ class InformationExtractor:
             if not ret:
                 break
 
-            sample_frames = [
-                start_f,
-                start_f + (end_f - start_f) // 3,
-                start_f + 2 * (end_f - start_f) // 3,
-            ]
+            shot_duration = (end_f - start_f) / self.fps
+            num_samples = max(1, min(int(shot_duration), 5))
+            shot_length = end_f - start_f
+
+            if num_samples == 1:
+                sample_frames = [start_f]
+            else:
+                sample_frames = [
+                    start_f + i * shot_length // (num_samples - 1)
+                    for i in range(num_samples)
+                ]
 
             blip_raw_prompts = []
             blip_final_prompts = []
@@ -841,8 +861,8 @@ class InformationExtractor:
                     blip_raw_prompts.append(raw_prompt)
                     blip_final_prompts.append(final_prompt)
 
-            combined_raw_context = self.filter_prompt(blip_raw_prompts)
-            combined_final_context = self.filter_prompt(blip_final_prompts)
+            combined_raw_context = self.merge_raw_prompts(blip_raw_prompts)
+            combined_final_context = self.merge_dino_prompts(blip_final_prompts)
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
                 self.video_type, scene_context=combined_raw_context
@@ -970,6 +990,7 @@ class InformationExtractor:
                     max_frame_num_to_track=frames_to_track,
                 )
 
+                last_propagated_frame = self.current_frame
                 for frame_idx, obj_ids, video_res_masks in chunk_generator:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                     _, curr_frame = self.cap.read()
@@ -983,8 +1004,9 @@ class InformationExtractor:
                         curr_frame,
                     )
                     self.visualize_sam_tracking(frame_idx, obj_ids, video_res_masks)
+                    last_propagated_frame = frame_idx
 
-                self.current_frame += frames_to_track
+                self.current_frame = last_propagated_frame + 1
 
         self.logger.info("Video Processing Complete. Finalizing data...")
 
