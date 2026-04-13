@@ -4,7 +4,7 @@ import hydra
 from hydra import compose
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
-from utils.clip_scribe_logging import logger
+from src.utils.clip_scribe_logging import logger
 
 
 def build_sam2_video_predictor(

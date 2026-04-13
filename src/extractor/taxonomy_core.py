@@ -101,10 +101,10 @@ class TaxonomyGenerator:
             name="StructuredLeafGenerator",
             instructions=(
                 "You are a computer vision expert. "
-                f"Generate EXACTLY {self.num_objects} unique visual objects likely to be in the scene. "
+                f"Generate between 5 and {self.num_objects} unique visual objects likely to be in the scene. "
+                "Include MORE objects for complex scenes, FEWER for simple scenes. "
                 "CRITICAL: Output generic, visual classes (e.g., 'car', 'suv', 'tree', 'cellphone', 'building'), "
                 "NOT specific instances and NOT abstract concepts."
-                "IGNORE "
             ),
             model=self.model,
             output_type=StructuredLeafList,

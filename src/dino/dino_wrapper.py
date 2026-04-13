@@ -1,8 +1,8 @@
 import torch
 import cv2
 from PIL import Image
-from dino.groundingdino.datasets import transforms as T
-from dino.groundingdino.util.inference import load_model, predict
+from .groundingdino.datasets import transforms as T
+from .groundingdino.util.inference import load_model, predict
 import torchvision.ops as ops
 import os
 
