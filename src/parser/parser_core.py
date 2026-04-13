@@ -5,5 +5,5 @@ class VideoInformationParser:
     def __repr__(self) -> str:
         return "VideoInformationParser"
 
-    def parse(self):
+    def parse(self, video_metadata):
         return

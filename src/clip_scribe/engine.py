@@ -1,4 +1,9 @@
 class ClipScribeEngine:
+
+    """
+    Core
+    """
+
     def __init__(self, extractor, parser, logger):
         self.extractor = extractor
         self.parser = parser
@@ -46,7 +51,7 @@ class ClipScribeEngine:
             self.logger.info("Extraction finished successfully.")
             return parsed_metadata
         except Exception as e:
-            self.logger.error(f"\n!!! Error: {e} !!!")
+            self.logger.error(f"An unexpected error occurred: {e}", exc_info=True)
             raise e
         finally:
             self.logger.info("Done!")

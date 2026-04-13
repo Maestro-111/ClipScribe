@@ -146,6 +146,7 @@ def build_clip_scribe(
             embedding_transform,
             face_detection,
             clib_scribe_device,
+            dino_reid_device.type,
             word_similarity_threshold,
             dino_text_conf,
             dino_box_conf,
