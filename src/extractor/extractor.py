@@ -5,29 +5,12 @@ import re
 import numpy as np
 import math
 
-from dino.dino_wrapper import DinoDetector
-from dino.dino_prompt import DynamicPrompter
-
-from ocr.paddle_wrapper import OCRSystem
-
-from sam2.sam.build_sam import build_sam2_video_predictor
-from utils.clip_scribe_logging import logger
-
 import json
 import torch
 
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
 
-from facenet_pytorch import MTCNN
-from config.config import PATHS
-
-from .taxonomy_core import TaxonomyGenerator, TaxonomyResolver
-from .taxonomy_config import ProfilesPile
-
-import whisper
-
-from torchvision import transforms
 from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv())
@@ -49,139 +32,10 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 class InformationExtractor:
+
     """
     Process objects, text, moving history and record in json/csv
     """
-
-    def __init__(
-        self,
-        video_type: str,
-        sam_model,
-        dino_model,
-        dino_prompter,
-        ocr_engine,
-        taxonomy_resolver,
-        taxonomy_generator,
-        video_path,
-        device: str,
-        word_similarity_threshold: float,
-        dino_text_conf: float,
-        dino_box_conf: float,
-        torch_face_cong: float,
-        audio_confidence: float,
-        label_match_merge_threshold: float,
-        label_no_match_merge_threshold: float,
-        logger,
-        detection_interval=10,
-    ):
-        self.sam_model = sam_model
-        self.video_path = video_path
-
-        self.detection_interval = detection_interval
-
-        self.ocr_engine = ocr_engine
-        self.dingo_prompter = dino_prompter
-        self.dingo_model = dino_model
-
-        self.device = device
-        self.logger = logger
-        self.logger.info(
-            f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {self.device}..."
-        )
-
-        self.reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
-            self.device
-        )
-        self.reid_model.eval()
-
-        self.current_frame = 0
-        self.obj_id_counter = 1
-
-        self.active_trackers: dict[int, dict] = {}
-        self.id_to_label: dict[int, str] = {}
-
-        self.text_registry: dict[int, set] = defaultdict(set)
-        self.object_registry: dict[int, dict] = {}
-
-        self.taxonomy_resolver = taxonomy_resolver
-        self.taxonomy_generator = taxonomy_generator
-        self.video_type = video_type
-
-        self.word_similarity_threshold = word_similarity_threshold
-
-        self.dino_text_conf = dino_text_conf
-        self.dino_box_conf = dino_box_conf
-
-        self.torch_face_cong = torch_face_cong
-
-        self.artifact_path = f"extractor_artifacts/{video_path}/"
-
-        self.label_match_merge_threshold = label_match_merge_threshold
-        self.label_no_match_merge_threshold = label_no_match_merge_threshold
-
-        self.face_detection = MTCNN(keep_all=True, device="cpu")  # force to use cpu
-
-        self.logger.info(f"Loading Whisper (base) on {self.device}...")
-        self.audio_model = whisper.load_model("base", device=self.device)
-
-        self.audio_registry: list[dict] = []
-        self.audio_confidence = audio_confidence
-
-        self.embedding_transform = transforms.Compose(
-            [
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-
-        self.state_init()
-
-    def state_init(self):
-        if not os.path.exists(self.artifact_path):
-            os.makedirs(self.artifact_path)
-
-        self.cap = cv2.VideoCapture(self.video_path)
-
-        if not self.cap.isOpened():
-            raise ValueError(f"Could not open video: {self.video_path}")
-
-        fps = self.cap.get(cv2.CAP_PROP_FPS)
-        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        self.video_writer_dims = (width, height)
-
-        if fps <= 0:
-            fps = 30.0
-
-        self.fps = fps
-
-        output_filename = os.path.join(self.artifact_path, "tracked_output.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"avc1")
-
-        self.video_writer = cv2.VideoWriter(
-            output_filename, fourcc, fps, (width, height)
-        )
-        self.logger.info(f"Recording video to: {output_filename}")
-
-        self.inference_state = self.sam_model.init_state(video_path=self.video_path)
-        self.total_frames = self.inference_state["num_frames"]
-
-        self.logger.info(f"Video opened: {self.video_path}")
-        self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
-
-    def cleanup(self):
-        """Release resources"""
-        if hasattr(self, "cap") and self.cap is not None:
-            self.cap.release()
-
-        if hasattr(self, "video_writer") and self.video_writer is not None:
-            self.video_writer.release()
-            self.logger.info("Video writer released. Output saved.")
 
     @staticmethod
     def _calculate_iou(boxA, boxB):
@@ -284,6 +138,133 @@ class InformationExtractor:
             return False
 
         return True
+
+    def __init__(
+        self,
+        video_type: str,
+        video_path: str,
+        video_name: str,
+        sam_model,
+        dino_model,
+        dino_prompter,
+        ocr_engine,
+        taxonomy_resolver,
+        taxonomy_generator,
+        reid_model,
+        audio_model,
+        embedding_transform,
+        face_detection,
+        device: str,
+        word_similarity_threshold: float,
+        dino_text_conf: float,
+        dino_box_conf: float,
+        torch_face_cong: float,
+        audio_confidence: float,
+        label_match_merge_threshold: float,
+        label_no_match_merge_threshold: float,
+        logger,
+        detection_interval: int = 10,
+    ):
+        # helper models
+
+        self.sam_model = sam_model
+        self.ocr_engine = ocr_engine
+        self.dingo_prompter = dino_prompter
+
+        self.dingo_model = dino_model
+        self.audio_model = audio_model
+
+        self.embedding_transform = embedding_transform
+        self.reid_model = reid_model
+
+        self.face_detection = face_detection
+
+        # video params
+
+        self.video_path = video_path
+        self.video_name = video_name
+        self.video_type = video_type
+
+        self.detection_interval = detection_interval
+
+        self.current_frame = 0
+        self.obj_id_counter = 1
+
+        self.active_trackers: dict[int, dict] = {}
+        self.id_to_label: dict[int, str] = {}
+
+        self.text_registry: dict[int, set] = defaultdict(set)
+        self.object_registry: dict[int, dict] = {}
+
+        self.taxonomy_resolver = taxonomy_resolver
+        self.taxonomy_generator = taxonomy_generator
+
+        self.word_similarity_threshold = word_similarity_threshold
+
+        self.dino_text_conf = dino_text_conf
+        self.dino_box_conf = dino_box_conf
+
+        self.torch_face_cong = torch_face_cong
+
+        self.artifact_path = f"extractor_artifacts/{self.video_name}/"
+
+        self.label_match_merge_threshold = label_match_merge_threshold
+        self.label_no_match_merge_threshold = label_no_match_merge_threshold
+
+        self.device = device
+        self.logger = logger
+
+        self.audio_registry: list[dict] = []
+        self.audio_confidence = audio_confidence
+
+        self.state_init()
+
+    def __repr__(self) -> str:
+        return f"InformationExtractor: device: {self.device}"
+
+    def state_init(self):
+        if not os.path.exists(self.artifact_path):
+            os.makedirs(self.artifact_path)
+
+        self.cap = cv2.VideoCapture(self.video_path)
+
+        if not self.cap.isOpened():
+            raise ValueError(f"Could not open video: {self.video_path}")
+
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        self.video_writer_dims = (width, height)
+
+        if fps <= 0:
+            fps = 30.0
+
+        self.fps = fps
+
+        output_filename = os.path.join(self.artifact_path, "tracked_output.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")
+
+        self.video_writer = cv2.VideoWriter(
+            output_filename, fourcc, fps, (width, height)
+        )
+        self.logger.info(f"Recording video to: {output_filename}")
+
+        self.inference_state = self.sam_model.init_state(video_path=self.video_path)
+        self.total_frames = self.inference_state["num_frames"]
+
+        self.logger.info(f"Video opened: {self.video_path}")
+        self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
+
+    def cleanup(self):
+        """Release resources"""
+
+        if hasattr(self, "cap") and self.cap is not None:
+            self.cap.release()
+
+        if hasattr(self, "video_writer") and self.video_writer is not None:
+            self.video_writer.release()
+            self.logger.info("Video writer released. Output saved.")
 
     def is_new_object(self, new_box, new_label):
         """
@@ -637,7 +618,7 @@ class InformationExtractor:
         if frame_idx % 30 == 0:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
-    def _analyze_global_features(self):
+    def _digest_video(self):
         self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
 
@@ -794,8 +775,32 @@ class InformationExtractor:
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
+    @staticmethod
+    def filter_prompt(prompts):
+        """
+
+        merge blip prompts into 1?
+
+        :param prompts:
+        :return:
+        """
+
+        seen_nouns = set()
+        unique_final_prompts = []
+
+        for prompt in prompts:
+            nouns = prompt.split(" ")
+            unique_nouns = [n for n in nouns if n.lower() not in seen_nouns]
+            seen_nouns.update(n.lower() for n in unique_nouns)
+            if unique_nouns:
+                unique_final_prompts.append(" . ".join(unique_nouns))
+
+        combined_context = " . ".join(unique_final_prompts)
+
+        return combined_context
+
     def extract(self):
-        self._analyze_global_features()
+        self._digest_video()
         self._analyze_audio()
 
         self.logger.info("--- Step 3: Tracking/OCR ---")
@@ -814,19 +819,37 @@ class InformationExtractor:
             if not ret:
                 break
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            sample_frames = [
+                start_f,
+                start_f + (end_f - start_f) // 3,
+                start_f + 2 * (end_f - start_f) // 3,
+            ]
 
-            (
-                final_dino_prompt,
-                raw_dino_prompt,
-            ) = self.dingo_prompter.generate_prompt_from_frame(frame_rgb)
+            blip_raw_prompts = []
+            blip_final_prompts = []
+
+            for sample_f in sample_frames:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, sample_f)
+                ret, sample_frame = self.cap.read()
+                if ret:
+                    frame_rgb = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB)
+                    (
+                        final_prompt,
+                        raw_prompt,
+                    ) = self.dingo_prompter.generate_prompt_from_frame(frame_rgb)
+
+                    blip_raw_prompts.append(raw_prompt)
+                    blip_final_prompts.append(final_prompt)
+
+            combined_raw_context = self.filter_prompt(blip_raw_prompts)
+            combined_final_context = self.filter_prompt(blip_final_prompts)
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
-                self.video_type, scene_context=raw_dino_prompt
+                self.video_type, scene_context=combined_raw_context
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
-            self.logger.info(f"Dino Shot Prompt: {final_dino_prompt}")
+            self.logger.info(f"Dino Shot Prompt: {combined_final_context}")
 
             while self.current_frame < end_f:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
@@ -839,7 +862,7 @@ class InformationExtractor:
 
                 detected_objects_data = self.dingo_model.detect(
                     raw_image_rgb,
-                    text_prompt=final_dino_prompt,
+                    text_prompt=combined_final_context,
                     box_threshold=self.dino_box_conf,
                     text_threshold=self.dino_text_conf,
                 )
@@ -969,88 +992,3 @@ class InformationExtractor:
         self._save_results_to_json(information)
 
         return information
-
-
-if __name__ == "__main__":
-    video_type = "car ad"
-    models_weights_dir = PATHS["checkpoints"]
-
-    word_similarity_threshold = 0.4
-
-    dino_text_conf = 0.45
-    dino_box_conf = 0.4
-    torch_face_cong = 0.9
-
-    taxonommy_objects_num = 100
-    detection_interval = 10
-
-    label_match_merge_threshold = 0.6
-    label_no_match_merge_threshold = 0.8
-
-    audio_confidence = 0.4
-
-    logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
-
-    logger.info(f"dino_text_conf: {dino_text_conf}")
-    logger.info(f"dino_box_conf: {dino_box_conf}")
-
-    profiles = ProfilesPile()
-
-    taxonomy_resolver = TaxonomyResolver(logger)
-    taxonomy_generator = TaxonomyGenerator(taxonommy_objects_num, profiles, logger)
-
-    car_profile = profiles.get_video_profile(video_type)
-
-    dino = DinoDetector(logger, dino_type="base", weights_dir=models_weights_dir)
-    dino_prompter = DynamicPrompter(logger)
-
-    sam2_device = (
-        torch.device("mps")
-        if torch.backends.mps.is_available()
-        else torch.device("cpu")
-    )
-
-    dino_reid_device = (
-        torch.device("mps")
-        if torch.backends.mps.is_available()
-        else torch.device("cpu")
-    )
-
-    logger.info(f"sam2 Using device: {sam2_device}")
-
-    ocr = OCRSystem(logger)
-    sam2 = build_sam2_video_predictor(
-        "sam2_hiera_t.yaml", "checkpoints/sam2.1_hiera_tiny.pt", sam2_device.type
-    )
-
-    info = InformationExtractor(
-        video_type,
-        sam2,
-        dino,
-        dino_prompter,
-        ocr,
-        taxonomy_resolver,
-        taxonomy_generator,
-        "RAM_QT1IQtE62Uk - Ram 1500 Classic DS - Hockey - QBC FR - Jan.mp4",
-        dino_reid_device.type,
-        word_similarity_threshold,
-        dino_text_conf,
-        dino_box_conf,
-        torch_face_cong,
-        audio_confidence,
-        label_match_merge_threshold=label_match_merge_threshold,
-        label_no_match_merge_threshold=label_no_match_merge_threshold,
-        logger=logger,
-        detection_interval=detection_interval,
-    )
-
-    try:
-        metadata = info.extract()
-        logger.info("Extraction finished successfully.")
-    except KeyboardInterrupt:
-        logger.error("\n!!! Interrupted by User. Saving video... !!!")
-    except Exception as e:
-        logger.error(f"\n!!! Error: {e} !!!")
-    finally:
-        info.cleanup()
-        logger.info("Done!")

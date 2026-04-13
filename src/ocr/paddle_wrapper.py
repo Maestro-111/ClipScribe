@@ -51,39 +51,37 @@ class OCRSystem:
         Returns:
             List of dicts with keys: box, text, label, confidence
         """
-        raw_results = self.ocr_engine.predict(image_cv2)
+        # 1. Use the native .ocr() method instead of .predict()
+        raw_results = self.ocr_engine.ocr(image_cv2)
         parsed_results = []
 
-        for result_obj in raw_results:
-            result_dict = result_obj.json
-            res_data = result_dict.get("res", {})
-
-            rec_boxes = res_data.get("rec_boxes")
-            rec_texts = res_data.get("rec_texts", [])
-            rec_scores = res_data.get("rec_scores", [])
-
-            if rec_boxes is None or len(rec_boxes) == 0:
-                continue
-
-            for box, text, score in zip(rec_boxes, rec_texts, rec_scores):
-                if isinstance(box, np.ndarray):
-                    box = box.tolist()
-
-                if len(box) == 4:
-                    x_min, y_min, x_max, y_max = map(int, box)
-                else:
-                    self.logger.warning(f"Warning: Unexpected box format: {box}")
+        # PaddleOCR returns a list of lists (one list per image).
+        # Check if we got valid results back for our single image.
+        if raw_results and raw_results[0]:
+            for line in raw_results[0]:
+                if not line:
                     continue
+
+                # Standard 'line' format: [[[x1, y1], [x2, y2], [x3, y3], [x4, y4]], ('text', confidence)]
+                box_points, (text, score) = line
+
+                # Extract coordinates to build the axis-aligned [x_min, y_min, x_max, y_max] box
+                x_coords = [p[0] for p in box_points]
+                y_coords = [p[1] for p in box_points]
+
+                x_min, x_max = min(x_coords), max(x_coords)
+                y_min, y_max = min(y_coords), max(y_coords)
 
                 parsed_results.append(
                     {
-                        "box": [x_min, y_min, x_max, y_max],
+                        "box": [int(x_min), int(y_min), int(x_max), int(y_max)],
                         "text": text,
                         "label": "text",
                         "confidence": float(score),
                     }
                 )
 
+        # 2. Merge lines logic remains identical
         if self.merge_lines and len(parsed_results) > 0:
             if self.merge_method == "hierarchical":
                 return self._consolidate_boxes_hierarchical(parsed_results)

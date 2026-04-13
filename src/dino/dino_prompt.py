@@ -3,6 +3,7 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 
 
 class DynamicPrompter:
+
     def __init__(self, logger, device="cpu"):
         self.logger = logger
         self.device = device
@@ -19,7 +20,8 @@ class DynamicPrompter:
             "foreground", "shot", "close-up", "looking", "facing"
         })
 
-    def clean_chunk(self, chunk):
+    def _clean_chunk(self, chunk):
+
         """
         Strictly filters chunks to ensure they are physical objects.
         """
@@ -48,6 +50,7 @@ class DynamicPrompter:
         return result
 
     def generate_prompt_from_frame(self, image_rgb) -> tuple[str, str]:
+
         self.logger.info("blip generating prompt")
 
         inputs = self.processor(image_rgb, return_tensors="pt").to(self.device)
@@ -60,7 +63,7 @@ class DynamicPrompter:
         clean_candidates = set()
 
         for chunk in doc.noun_chunks:
-            cleaned = self.clean_chunk(chunk)
+            cleaned = self._clean_chunk(chunk)
             if cleaned:
                 clean_candidates.add(cleaned)
 
