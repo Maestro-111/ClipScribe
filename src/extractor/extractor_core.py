@@ -2,11 +2,14 @@ import cv2
 import os
 
 import re
+import logging
 import numpy as np
 import math
 
 import json
 import torch
+
+from typing import TYPE_CHECKING
 
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
@@ -14,6 +17,15 @@ from collections import defaultdict
 from dotenv import load_dotenv, find_dotenv
 
 from nltk.corpus import wordnet as wn
+
+if TYPE_CHECKING:
+    import whisper
+    from torchvision import transforms
+    from facenet_pytorch import MTCNN
+    from src.dino.dino_wrapper import DinoDetector
+    from src.dino.dino_prompt import DynamicPrompter
+    from src.ocr.paddle_wrapper import OCRSystem
+    from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 
 load_dotenv(find_dotenv())
 
@@ -74,6 +86,7 @@ class InformationExtractor:
 
     @staticmethod
     def _calculate_iou(boxA, boxB):
+        """Compute Intersection over Union between two [x1, y1, x2, y2] boxes."""
         # Determine intersection rectangle
         xA = max(boxA[0], boxB[0])
         yA = max(boxA[1], boxB[1])
@@ -222,16 +235,16 @@ class InformationExtractor:
         video_type: str,
         video_path: str,
         video_name: str,
-        sam_model,
-        dino_model,
-        dino_prompter,
-        ocr_engine,
-        taxonomy_resolver,
-        taxonomy_generator,
-        reid_model,
-        audio_model,
-        embedding_transform,
-        face_detection,
+        sam_model: torch.nn.Module,
+        dino_model: "DinoDetector",
+        dino_prompter: "DynamicPrompter",
+        ocr_engine: "OCRSystem",
+        taxonomy_resolver: "TaxonomyResolver",
+        taxonomy_generator: "TaxonomyGenerator",
+        reid_model: torch.nn.Module,
+        audio_model: "whisper.Whisper",
+        embedding_transform: "transforms.Compose",
+        face_detection: "MTCNN",
         device: str,
         dino_reid_device: str,
         word_similarity_threshold: float,
@@ -241,7 +254,7 @@ class InformationExtractor:
         audio_confidence: float,
         label_match_merge_threshold: float,
         label_no_match_merge_threshold: float,
-        logger,
+        logger: logging.Logger,
         detection_interval: int = 10,
         reid_model_frame_check_freq: int = 20,
     ):
@@ -306,6 +319,7 @@ class InformationExtractor:
         return f"InformationExtractor: device: {self.device}"
 
     def state_init(self):
+        """Open the video capture, initialize the video writer, and set up SAM inference state."""
         if not os.path.exists(self.artifact_path):
             os.makedirs(self.artifact_path)
 
@@ -371,6 +385,7 @@ class InformationExtractor:
         return True
 
     def get_next_obj_id(self):
+        """Return the next available object ID and increment the counter."""
         current_id = self.obj_id_counter
         self.obj_id_counter += 1
         return current_id
@@ -406,6 +421,10 @@ class InformationExtractor:
     def save_metadata(
         self, frame_idx, obj_ids, masks, frame_text, shot_idx, current_frame_img
     ):
+        """
+        Record per-frame tracking data: filter and store OCR text, convert SAM masks
+        to bounding boxes, and periodically accumulate DINOv2 embeddings for re-ID.
+        """
         timestamp = frame_idx / self.fps
         second_key = int(timestamp)
         masks_np = masks.cpu().numpy()
@@ -493,9 +512,12 @@ class InformationExtractor:
                 self.active_trackers.pop(obj_id, None)
 
     def _calculate_metrics(self, boxes, timestamps):
+        """
+        Derive motion and spatial metrics from a sequence of bounding boxes:
+        velocity, growth factor, screen coverage, direction, centrality, screen time, and quadrant.
+        """
         if len(boxes) < 2:
-            # Return defaults for all 4 values if not enough data
-            return 0.0, 0.0, 0.0, "unknown", 0.0
+            return 0.0, 0.0, 0.0, "unknown", 0.0, 0.0, "center"
 
         centroids = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
         dist = 0
@@ -526,10 +548,12 @@ class InformationExtractor:
         dy = end_c[1] - start_c[1]
 
         direction = "static"
-        if abs(dx) > abs(dy):
-            direction = "right" if dx > 0 else "left"
-        else:
-            direction = "down" if dy > 0 else "up"  # Y grows downwards in OpenCV
+        min_displacement = 5  # pixels — ignore sub-pixel jitter
+        if abs(dx) > min_displacement or abs(dy) > min_displacement:
+            if abs(dx) > abs(dy):
+                direction = "right" if dx > 0 else "left"
+            else:
+                direction = "down" if dy > 0 else "up"  # Y grows downwards in OpenCV
 
         # Centrality (0.0 = perfectly centered, 1.0 = at the very corner)
         video_center = (width / 2, height / 2)
@@ -545,15 +569,49 @@ class InformationExtractor:
         avg_dist_from_center /= len(centroids)
         centrality_score = avg_dist_from_center / max_possible_dist
 
+        # Screen time ratio (fraction of total video this object is visible)
+        video_duration = self.total_frames / self.fps
+        screen_time_ratio = duration / video_duration if video_duration > 0 else 0.0
+
+        # Positional quadrant (dominant region based on average centroid)
+        avg_cx = sum(c[0] for c in centroids) / len(centroids)
+        avg_cy = sum(c[1] for c in centroids) / len(centroids)
+
+        col = (
+            "left"
+            if avg_cx < width / 3
+            else ("right" if avg_cx > 2 * width / 3 else "center")
+        )
+        row = (
+            "top"
+            if avg_cy < height / 3
+            else ("bottom" if avg_cy > 2 * height / 3 else "center")
+        )
+
+        if row == "center" and col == "center":
+            quadrant = "center"
+        elif row == "center":
+            quadrant = col
+        elif col == "center":
+            quadrant = row
+        else:
+            quadrant = f"{row}-{col}"
+
         return (
             round(velocity, 2),
             round(growth, 2),
             round(screen_coverage, 3),
-            direction,  # New
+            direction,
             round(centrality_score, 2),
+            round(screen_time_ratio, 3),
+            quadrant,
         )
 
     def _resolve_identities(self):
+        """
+        Merge local object IDs into global identities across shots using DINOv2
+        cosine similarity and semantic label matching. Returns a local-to-global ID map.
+        """
         self.logger.info("Resolving identities across shots...")
 
         id_map = {}
@@ -632,6 +690,7 @@ class InformationExtractor:
         return id_map
 
     def _finalize_data(self):
+        """Resolve cross-shot identities, compute per-object metrics, and assemble the final output dict."""
         global_id_map = self._resolve_identities()
         final_objects = {}
 
@@ -644,6 +703,8 @@ class InformationExtractor:
                 coverage,
                 direction,
                 centrality_score,
+                screen_time_ratio,
+                quadrant,
             ) = self._calculate_metrics(data["boxes"], data["timestamps"])
 
             occurence_data = {
@@ -657,6 +718,8 @@ class InformationExtractor:
                 "growth_factor": growth,
                 "direction": direction,
                 "centrality_score": centrality_score,
+                "screen_time_ratio": screen_time_ratio,
+                "quadrant": quadrant,
             }
 
             if g_id not in final_objects:
@@ -681,6 +744,7 @@ class InformationExtractor:
         }
 
     def visualize_sam_tracking(self, frame_idx, obj_ids, masks):
+        """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
         if not self.video_writer.isOpened():
             self.logger.error("Error: Video Writer is NOT open.")
             return
@@ -741,6 +805,7 @@ class InformationExtractor:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
     def _digest_video(self):
+        """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
         self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
 
@@ -833,6 +898,7 @@ class InformationExtractor:
         self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
     def _save_results_to_json(self, information):
+        """Serialize the extraction results dict to extraction_summary.json."""
         output_file = os.path.join(self.artifact_path, "extraction_summary.json")
         try:
             with open(output_file, "w") as f:
@@ -862,6 +928,7 @@ class InformationExtractor:
         )
 
     def _analyze_audio(self):
+        """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
         self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
 
         result = self.audio_model.transcribe(
@@ -898,6 +965,10 @@ class InformationExtractor:
         )
 
     def extract(self):
+        """
+        Main entry point. Runs the full pipeline: scene analysis, audio transcription,
+        per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
+        """
         self._digest_video()
         self._analyze_audio()
 
