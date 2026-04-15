@@ -2,7 +2,7 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor
+.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet
 
 setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 	@echo "\nProject Setup Complete! You can now run the extractor."
@@ -75,6 +75,13 @@ fix_mac_ssl:
 	else \
 		echo "Not on macOS. Skipping certificate fix."; \
 	fi
+
+# -------------------------------------------------------------------------
+# 7. NLTK WordNet corpus
+# -------------------------------------------------------------------------
+download_wordnet:
+	@echo "Ensuring WordNet is installed..."
+	@python -c "import nltk; nltk.download('wordnet')"
 
 clean:
 	@echo "Cleaning up..."

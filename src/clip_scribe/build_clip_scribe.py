@@ -1,6 +1,6 @@
 from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 from src.extractor.taxonomy_config import ProfilesPile
-from src.extractor.extractor import InformationExtractor
+from src.extractor.extractor_core import InformationExtractor
 
 from src.parser.parser_core import VideoInformationParser
 
@@ -64,6 +64,10 @@ def build_clip_scribe(
         )
         detection_interval: int = clib_scribe_general_params.get(
             "detection_interval", 10
+        )
+
+        reid_model_frame_check_freq: int = clib_scribe_general_params.get(
+            "reid_model_frame_check_freq", 20
         )
 
         logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
@@ -156,6 +160,7 @@ def build_clip_scribe(
             label_no_match_merge_threshold,
             logger,
             detection_interval,
+            reid_model_frame_check_freq,
         )
 
         info_parser = VideoInformationParser()
