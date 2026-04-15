@@ -13,6 +13,8 @@ from collections import defaultdict
 
 from dotenv import load_dotenv, find_dotenv
 
+from nltk.corpus import wordnet as wn
+
 load_dotenv(find_dotenv())
 
 
@@ -105,12 +107,55 @@ class InformationExtractor:
     @staticmethod
     def _labels_match(label_a, label_b):
         """
-        Fuzzy match for labels to handle 'car' vs 'red car'.
-        Returns True if labels seem to describe the same category.
+        Fuzzy match for labels using string inclusion and WordNet semantics.
+        Checks for synonyms and direct hypernym/hyponym relationships.
         """
-        la = label_a.lower()
-        lb = label_b.lower()
-        return la in lb or lb in la
+        la = label_a.lower().strip()
+        lb = label_b.lower().strip()
+
+        # Fallback: Original string inclusion (handles "car" vs "red car")
+        if la in lb or lb in la:
+            return True
+
+        # Format for WordNet (multi-word labels use underscores, e.g., "human_face")
+        wn_la = la.replace(" ", "_")
+        wn_lb = lb.replace(" ", "_")
+
+        # Fetch synsets (meaning groupings) for both words
+        synsets_a = wn.synsets(wn_la)
+        synsets_b = wn.synsets(wn_lb)
+
+        # If either word isn't in WordNet's dictionary, we can't compare semantically
+        if not synsets_a or not synsets_b:
+            return False
+
+        # Cross-reference all meanings of Label A against all meanings of Label B
+        for syn_a in synsets_a:
+            for syn_b in synsets_b:
+                # Check A: Exact Synonym (Same Synset)
+                # Example: "automobile" and "car" share a synset.
+                if syn_a == syn_b:
+                    return True
+
+                # Check B: Direct Hypernym (Parent Category) or Hyponym (Child Category)
+                # Example: "vehicle" is a direct hypernym of "car".
+
+                # Is B a direct parent of A?
+                if syn_b in syn_a.hypernyms():
+                    return True
+
+                # Is A a direct parent of B?
+                if syn_a in syn_b.hypernyms():
+                    return True
+
+                # Optional Check C: Wu-Palmer Semantic Similarity
+                # If they aren't DIRECT parents/children, but are very closely related
+                # up the tree (e.g., "truck" and "car" sharing the parent "motor_vehicle")
+                similarity = syn_a.wup_similarity(syn_b)
+                if similarity is not None and similarity > 0.85:
+                    return True
+
+        return False
 
     @staticmethod
     def _is_valid_text(text_data, frame_height, max_text_height):
@@ -198,6 +243,7 @@ class InformationExtractor:
         label_no_match_merge_threshold: float,
         logger,
         detection_interval: int = 10,
+        reid_model_frame_check_freq: int = 20,
     ):
         # helper models
 
@@ -251,6 +297,8 @@ class InformationExtractor:
 
         self.audio_registry: list[dict] = []
         self.audio_confidence = audio_confidence
+
+        self.reid_model_frame_check_freq = reid_model_frame_check_freq
 
         self.state_init()
 
@@ -388,18 +436,54 @@ class InformationExtractor:
                         "embedding_count": 0,
                         "boxes": [],
                         "timestamps": [],
+                        "last_embedding_frame": -float("inf"),
                     }
 
                 # Accumulate embeddings periodically for robust cross-shot re-identification
-                if self.object_registry[obj_id]["embedding_count"] < 5:
+
+                frames_since_last = (
+                    frame_idx - self.object_registry[obj_id]["last_embedding_frame"]
+                )
+
+                if frames_since_last >= self.reid_model_frame_check_freq:
                     new_emb = self._extract_embedding(current_frame_img, current_box)
 
-                    if new_emb is not None:
-                        current_sum = self.object_registry[obj_id]["embedding_sum"]
-
-                        if new_emb.shape == current_sum.shape:
+                    if (
+                        new_emb is not None
+                        and new_emb.shape
+                        == self.object_registry[obj_id]["embedding_sum"].shape
+                    ):
+                        if self.object_registry[obj_id]["embedding_count"] == 0:
                             self.object_registry[obj_id]["embedding_sum"] += new_emb
                             self.object_registry[obj_id]["embedding_count"] += 1
+                            self.object_registry[obj_id][
+                                "last_embedding_frame"
+                            ] = frame_idx
+
+                        else:
+                            current_mean = (
+                                self.object_registry[obj_id]["embedding_sum"]
+                                / self.object_registry[obj_id]["embedding_count"]
+                            )
+
+                            norm_new = np.linalg.norm(new_emb)
+                            norm_mean = np.linalg.norm(current_mean)
+
+                            if norm_new > 0 and norm_mean > 0:
+                                cos_sim = np.dot(new_emb, current_mean) / (
+                                    norm_new * norm_mean
+                                )
+
+                                if cos_sim < 0.85:
+                                    self.object_registry[obj_id][
+                                        "embedding_sum"
+                                    ] += new_emb
+                                    self.object_registry[obj_id]["embedding_count"] += 1
+
+                                    self.logger.info(
+                                        f"New viewpoint for ID {obj_id} captured. Sim: {cos_sim:.2f}"
+                                    )
+                        self.object_registry[obj_id]["last_embedding_frame"] = frame_idx
 
                 self.object_registry[obj_id]["boxes"].append(current_box)
                 self.object_registry[obj_id]["timestamps"].append(timestamp)

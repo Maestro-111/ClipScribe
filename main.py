@@ -1,7 +1,7 @@
 from src.clip_scribe.build_clip_scribe import build_clip_scribe
 
-video_name = "CHRYSLER_jtuJbB1QXd8 - Nov 2024 Pacifica.mp4"
-video_path = "input/CHRYSLER_jtuJbB1QXd8 - Nov 2024 Pacifica.mp4"
+video_name = "DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4"
+video_path = "input/DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4"
 video_type = "car ad"
 
 clib_scribe_device = "cpu"

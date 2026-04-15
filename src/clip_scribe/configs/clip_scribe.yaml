@@ -5,6 +5,7 @@ clib_scribe:
   label_match_merge_threshold: 0.6
   label_no_match_merge_threshold: 0.8
   detection_interval: 10
+  reid_model_frame_check_freq: 20
 dino:
   dino_text_conf: 0.45
   dino_box_conf: 0.4
