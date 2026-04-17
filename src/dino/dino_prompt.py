@@ -4,7 +4,8 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 
 class DynamicPrompter:
 
-    def __init__(self, logger, device="cpu"):
+    def __init__(self, logger, device:str="cpu"):
+
         self.logger = logger
         self.device = device
 

@@ -33,6 +33,7 @@ class DinoDetector:
         self.logger.info(f"Grounding DINO loaded on {self.device}")
 
     def detect(self, image_cv2, text_prompt, box_threshold=0.35, text_threshold=0.25):
+
         """
         Input: Raw OpenCV image (BGR)
         Output: List of dicts [{'box': [x1, y1, x2, y2], 'label': 'car', 'score': 0.99}, ...]

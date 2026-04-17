@@ -1,4 +1,8 @@
-from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
+from src.extractor.taxonomy_core import (
+    TaxonomyGenerator,
+    TaxonomyResolver,
+    generate_hints_from_video_name,
+)
 from src.extractor.taxonomy_config import ProfilesPile
 from src.extractor.extractor_core import InformationExtractor
 
@@ -27,7 +31,11 @@ LOCAL_DIR = Path(__file__).resolve().parent
 
 
 def build_clip_scribe(
-    video_name: str, video_path: str, video_type: str, clib_scribe_device: str
+    video_name: str,
+    video_path: str,
+    video_type: str,
+    clib_scribe_device: str,
+    user_hints: list[str] | None = None,
 ) -> ClipScribeEngine:
     try:
         with open(LOCAL_DIR / "configs" / "clip_scribe.yaml") as f:
@@ -44,12 +52,16 @@ def build_clip_scribe(
         face_detection_params = _cfg["face_detection"]
         taxonomy_params = _cfg["taxonomy"]
         audio_params = _cfg["audio"]
+        sam2_params = _cfg["sam2"]
+
+        sam2_size: str = sam2_params.get("size", "tiny")
 
         taxonommy_objects_num: int = taxonomy_params.get("taxonomy_objects_num", 100)
         audio_confidence: float = audio_params.get("audio_confidence", 0.4)
 
         dino_text_conf: float = dino_params.get("dino_text_conf", 0.4)
         dino_box_conf: float = dino_params.get("dino_box_conf", 0.4)
+        dino_size: str = dino_params.get("dino_size", "base")
 
         torch_face_cong: float = face_detection_params.get("torch_face_cong", 0.9)
 
@@ -77,19 +89,28 @@ def build_clip_scribe(
 
         profiles = ProfilesPile()
 
-        taxonomy_resolver = TaxonomyResolver(logger)
-        taxonomy_generator = TaxonomyGenerator(taxonommy_objects_num, profiles, logger)
+        if not user_hints:
+            user_hints = generate_hints_from_video_name(video_name, logger)
 
-        dino = DinoDetector(logger, dino_type="base", weights_dir=models_weights_dir)
-        dino_prompter = DynamicPrompter(logger)
+        taxonomy_resolver = TaxonomyResolver(logger)
+        taxonomy_generator = TaxonomyGenerator(
+            taxonommy_objects_num, profiles, logger, user_hints=user_hints
+        )
+
+        blip_device = (
+            torch.device("mps")
+            if torch.backends.mps.is_available()
+            else torch.device("cpu")
+        )
+
+        dino = DinoDetector(logger, dino_type=dino_size, weights_dir=models_weights_dir)
+        dino_prompter = DynamicPrompter(logger, device=blip_device.type)
 
         sam2_device = (
             torch.device("mps")
             if torch.backends.mps.is_available()
             else torch.device("cpu")
         )
-
-        logger.info(f"sam2 Using device: {sam2_device}")
 
         dino_reid_device = (
             torch.device("mps")
@@ -105,7 +126,7 @@ def build_clip_scribe(
 
         ocr = OCRSystem(logger)
         sam2 = build_sam2_video_predictor(
-            "sam2_hiera_t.yaml", "checkpoints/sam2.1_hiera_tiny.pt", sam2_device.type
+            sam2_size, "src.sam2.configs", models_weights_dir, logger, sam2_device.type
         )
 
         logger.info(
