@@ -10,6 +10,37 @@ from .taxonomy_config import ProfilesPile
 load_dotenv(find_dotenv())
 
 
+def generate_hints_from_video_name(
+    video_name: str, logger, model: str = "gpt-4o-mini"
+) -> list[str]:
+    """Infer 10-20 object hints from a descriptive video filename.
+    Returns [] if the name looks generic / auto-generated."""
+
+    logger.info(f"Attempting to generate hints from video name: '{video_name}'")
+
+    hint_agent = Agent(
+        name="VideoNameHintGenerator",
+        instructions=(
+            "You are given a video filename. "
+            "If the filename is descriptive (contains real words, brand names, or topic clues), "
+            "generate 10 to 20 generic visual object classes that are likely to appear in that video. "
+            "Output ONLY generic visual classes (e.g., 'car', 'tree', 'person', 'logo'), "
+            "NOT specific instances or abstract concepts. "
+            "If the filename is generic, auto-generated, or contains no meaningful clues "
+            "(e.g., 'abcd-1234.mp4', 'video_001.mov', 'VID_20240101'), return an EMPTY list."
+        ),
+        model=model,
+        output_type=StructuredLeafList,
+    )
+
+    result = Runner.run_sync(hint_agent, f"Video filename: {video_name}")
+    items = result.final_output.items if result and result.final_output else []
+    hints = [item.anchor for item in items]
+
+    logger.info(f"Generated {len(hints)} hints from video name: {hints}")
+    return hints
+
+
 class LeafItem(BaseModel):
     """A structured object representing a canonical category."""
 
@@ -91,11 +122,21 @@ class TaxonomyGenerator:
         profiles: ProfilesPile,
         logger,
         model: str = "gpt-4o-mini",
+        user_hints: list[str] | None = None,
     ):
         self.model = model
         self.profiles = profiles
         self.logger = logger
         self.num_objects = num_objects
+        self.user_hints = user_hints or []
+
+        hints_instruction = ""
+        if self.user_hints:
+            hints_str = ", ".join(self.user_hints)
+            hints_instruction = (
+                f"The user expects these objects may appear in the video: {hints_str}. "
+                "Prioritize including these in your output when relevant to the scene. "
+            )
 
         self.leaf_agent = Agent(
             name="StructuredLeafGenerator",
@@ -103,7 +144,8 @@ class TaxonomyGenerator:
                 "You are a computer vision expert. "
                 f"Generate between 5 and {self.num_objects} unique visual objects likely to be in the scene. "
                 "Include MORE objects for complex scenes, FEWER for simple scenes. "
-                "CRITICAL: Output generic, visual classes (e.g., 'car', 'suv', 'tree', 'cellphone', 'building'), "
+                f"{hints_instruction}"
+                "CRITICAL: Output generic, visual classes (e.g., 'car', 'suv', 'tree', 'cellphone', 'building', 'person'), "
                 "NOT specific instances and NOT abstract concepts."
             ),
             model=self.model,

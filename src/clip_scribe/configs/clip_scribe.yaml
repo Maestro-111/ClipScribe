@@ -1,18 +1,27 @@
 paths:
   checkpoints: checkpoints
+
 clib_scribe:
   word_similarity_threshold: 0.4
   label_match_merge_threshold: 0.6
   label_no_match_merge_threshold: 0.85
   detection_interval: 10
   reid_model_frame_check_freq: 20
+
 dino:
   dino_text_conf: 0.45
   dino_box_conf: 0.4
+  dino_size: base
+
 face_detection:
   torch_face_cong: 0.95
+
 taxonomy:
   taxonommy_objects_num: 300
   detection_interval: 10
+
 audio:
   audio_confidence: 0.4
+
+sam2:
+  size: tiny
