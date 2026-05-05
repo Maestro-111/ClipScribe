@@ -153,7 +153,7 @@ class TaxonomyGenerator:
         )
 
     def generate_targets(
-        self, video_type: str, scene_context: str = ""
+        self, video_type: str | None, scene_context: str = ""
     ) -> List[LeafItem]:
         self.logger.info(f"Generating targets for context: '{scene_context}'")
         profile = self.profiles.get_video_profile(video_type)
