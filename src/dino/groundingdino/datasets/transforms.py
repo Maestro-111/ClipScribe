@@ -10,8 +10,8 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
 
-from dino.groundingdino.util.box_ops import box_xyxy_to_cxcywh
-from dino.groundingdino.util.misc import interpolate
+from src.dino.groundingdino.util.box_ops import box_xyxy_to_cxcywh
+from src.dino.groundingdino.util.misc import interpolate
 
 
 def crop(image, target, region):

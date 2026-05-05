@@ -19,7 +19,7 @@ from .utils import (
     window_unpartition,
 )
 
-from utils.sam2_utils import DropPath, MLP
+from src.utils.sam2_utils import DropPath, MLP
 
 
 def do_pool(x: torch.Tensor, pool: nn.Module, norm: nn.Module = None) -> torch.Tensor:

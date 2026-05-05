@@ -9,8 +9,8 @@ from typing import Optional, Tuple, Type
 import torch
 from torch import nn
 
-from utils.position_encoding import PositionEmbeddingRandom
-from utils.sam2_utils import LayerNorm2d
+from src.utils.position_encoding import PositionEmbeddingRandom
+from src.utils.sam2_utils import LayerNorm2d
 
 
 class PromptEncoder(nn.Module):

@@ -178,3 +178,8 @@ cython_debug/
 
 *.faiss
 *.pkl
+
+*.db
+*.db-shm
+*.db-wal
+/data

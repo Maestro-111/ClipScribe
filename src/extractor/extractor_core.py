@@ -2,33 +2,27 @@ import cv2
 import os
 
 import re
+import logging
 import numpy as np
 import math
-
-from dino.dino_wrapper import DinoDetector
-from dino.dino_prompt import DynamicPrompter
-
-from ocr.paddle_wrapper import OCRSystem
-
-from sam2.sam.build_sam import build_sam2_video_predictor
-from utils.clip_scribe_logging import logger
 
 import json
 import torch
 
+from typing import TYPE_CHECKING
+
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
+from nltk.corpus import wordnet as wn
 
-from facenet_pytorch import MTCNN
-from config.config import PATHS
-
-from .taxonomy_core import TaxonomyGenerator, TaxonomyResolver
-from .taxonomy_config import ProfilesPile
-
-from torchvision import transforms
-from dotenv import load_dotenv, find_dotenv
-
-load_dotenv(find_dotenv())
+if TYPE_CHECKING:
+    import whisper
+    from torchvision import transforms
+    from facenet_pytorch import MTCNN
+    from src.dino.dino_wrapper import DinoDetector
+    from src.extractor.scene_describer import GPTSceneDescriber
+    from src.ocr.paddle_wrapper import OCRSystem
+    from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -47,135 +41,71 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 class InformationExtractor:
+
     """
     Process objects, text, moving history and record in json/csv
     """
 
-    def __init__(
-        self,
-        video_type: str,
-        sam_model,
-        dino_model,
-        dino_prompter,
-        ocr_engine,
-        taxonomy_resolver,
-        taxonomy_generator,
-        video_path,
-        device: str,
-        word_similarity_threshold: float,
-        dino_text_conf: float,
-        dino_box_conf: float,
-        torch_face_cong: float,
-        label_match_merge_threshold: float,
-        label_no_match_merge_threshold: float,
-        logger,
-        detection_interval=10,
-    ):
-        self.sam_model = sam_model
-        self.video_path = video_path
-
-        self.detection_interval = detection_interval
-
-        self.ocr_engine = ocr_engine
-        self.dingo_prompter = dino_prompter
-        self.dingo_model = dino_model
-
-        self.device = device
-        self.logger = logger
-        self.logger.info(
-            f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {self.device}..."
-        )
-
-        self.reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
-            self.device
-        )
-        self.reid_model.eval()
-
-        self.current_frame = 0
-        self.obj_id_counter = 1
-
-        self.active_trackers: dict[int, dict] = {}
-        self.id_to_label: dict[int, str] = {}
-
-        self.text_registry: dict[int, set] = defaultdict(set)
-        self.object_registry: dict[int, dict] = {}
-
-        self.taxonomy_resolver = taxonomy_resolver
-        self.taxonomy_generator = taxonomy_generator
-        self.video_type = video_type
-
-        self.word_similarity_threshold = word_similarity_threshold
-
-        self.dino_text_conf = dino_text_conf
-        self.dino_box_conf = dino_box_conf
-
-        self.torch_face_cong = torch_face_cong
-
-        self.artifact_path = f"extractor_artifacts/{video_path}/"
-
-        self.label_match_merge_threshold = label_match_merge_threshold
-        self.label_no_match_merge_threshold = label_no_match_merge_threshold
-
-        self.face_detection = MTCNN(keep_all=True, device="cpu")  # force to use cpu
-
-        self.embedding_transform = transforms.Compose(
-            [
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-
-        self.state_init()
-
-    def state_init(self):
-        if not os.path.exists(self.artifact_path):
-            os.makedirs(self.artifact_path)
-
-        self.cap = cv2.VideoCapture(self.video_path)
-
-        if not self.cap.isOpened():
-            raise ValueError(f"Could not open video: {self.video_path}")
-
-        fps = self.cap.get(cv2.CAP_PROP_FPS)
-        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        self.video_writer_dims = (width, height)
-
-        if fps <= 0:
-            fps = 30.0
-
-        self.fps = fps
-
-        output_filename = os.path.join(self.artifact_path, "tracked_output.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"avc1")
-
-        self.video_writer = cv2.VideoWriter(
-            output_filename, fourcc, fps, (width, height)
-        )
-        self.logger.info(f"Recording video to: {output_filename}")
-
-        self.inference_state = self.sam_model.init_state(video_path=self.video_path)
-        self.total_frames = self.inference_state["num_frames"]
-
-        self.logger.info(f"Video opened: {self.video_path}")
-        self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
-
-    def cleanup(self):
-        """Release resources"""
-        if hasattr(self, "cap") and self.cap is not None:
-            self.cap.release()
-
-        if hasattr(self, "video_writer") and self.video_writer is not None:
-            self.video_writer.release()
-            self.logger.info("Video writer released. Output saved.")
+    @staticmethod
+    def get_schema_descriptions():
+        """
+        Returns a flat dictionary mapping DB table names to their column descriptions.
+        Structure: {table_name: {column_name: description_string}}
+        This is persisted to the field_descriptions table for self-documenting DB schemas.
+        """
+        return {
+            "runs": {
+                "run_id": "Unique identifier for this extraction run.",
+                "video_name": "Name of the video file processed.",
+                "video_path": "Full path to the video file.",
+                "video_type": "Category of video (e.g., 'car ad').",
+                "created_at": "Timestamp when this run was created.",
+            },
+            "global_stats": {
+                "total_shots": "Total number of distinct shots (scene cuts) detected in the video.",
+                "video_duration": "Total video length in seconds.",
+                "avg_shot_duration": "Mean duration of a single shot in seconds. Lower values indicate faster editing pace.",
+                "dynamic_start_detected": "Boolean. True if the first shot is shorter than the criteria threshold.",
+                "dynamic_start_first_shot_dur": "Duration of the very first shot in seconds.",
+                "dynamic_start_criteria": "Human-readable rule used for detection (e.g., 'First shot < 3.0s').",
+                "qp_intro_detected": "Boolean. True if the number of shots starting within t=0s to t=5s meets the threshold.",
+                "qp_intro_shot_count": "Number of shots that start within the first 5 seconds.",
+                "qp_intro_shots": "JSON list of shot indices that fall within the first 5 seconds.",
+                "qp_intro_criteria": "Human-readable rule used for detection.",
+                "qp_general_detected": "Boolean. True if at least one 5-second window meets the threshold.",
+                "qp_general_rapid_fire_segments": "JSON list of 5-second windows that qualify as rapid-fire. Each contains start_time, end_time, shot_count, duration, shot_indices.",
+                "qp_general_criteria": "Human-readable rule used for detection.",
+            },
+            "visual_object_occurrences": {
+                "global_id": "Unique integer ID assigned after cross-shot identity resolution.",
+                "label": "Semantic label for this object (e.g., 'car', 'human face'). Resolved via SBERT taxonomy matching.",
+                "shot_index": "Zero-based index of the shot this occurrence belongs to.",
+                "lifespan_start": "Timestamp (seconds) when the object was first tracked within this shot.",
+                "lifespan_end": "Timestamp (seconds) when the object was last tracked within this shot.",
+                "screen_coverage": "Fraction of total frame area occupied by the object's largest bounding box (0.0 to 1.0).",
+                "velocity_px_sec": "Average speed of the object's centroid in pixels per second.",
+                "growth_factor": "Ratio of bounding-box area at end vs. start of tracking. >1.0 means it approached the camera.",
+                "direction": "Dominant movement direction: 'left', 'right', 'up', 'down', or 'static'.",
+                "centrality_score": "Distance from frame center (0.0 = centered, 1.0 = corner). Lower = more focal.",
+                "screen_time_ratio": "Fraction of total video duration this object was visible in this shot.",
+                "quadrant": "Dominant screen region based on average centroid in a 3x3 grid.",
+            },
+            "text_events": {
+                "second": "The integer second of the video (e.g., 0 = first second).",
+                "line_index": "Zero-based index for multiple text lines detected in the same second.",
+                "text": "Distinct text string detected on screen.",
+            },
+            "audio_segments": {
+                "start_time": "Start time of the speech segment in seconds.",
+                "end_time": "End time of the speech segment in seconds.",
+                "text": "The transcribed speech content.",
+                "confidence": "Confidence score (0.0 to 1.0) derived from Whisper's average log-probability.",
+            },
+        }
 
     @staticmethod
     def _calculate_iou(boxA, boxB):
+        """Compute Intersection over Union between two [x1, y1, x2, y2] boxes."""
         # Determine intersection rectangle
         xA = max(boxA[0], boxB[0])
         yA = max(boxA[1], boxB[1])
@@ -209,12 +139,55 @@ class InformationExtractor:
     @staticmethod
     def _labels_match(label_a, label_b):
         """
-        Fuzzy match for labels to handle 'car' vs 'red car'.
-        Returns True if labels seem to describe the same category.
+        Fuzzy match for labels using string inclusion and WordNet semantics.
+        Checks for synonyms and direct hypernym/hyponym relationships.
         """
-        la = label_a.lower()
-        lb = label_b.lower()
-        return la in lb or lb in la
+        la = label_a.lower().strip()
+        lb = label_b.lower().strip()
+
+        # Fallback: Original string inclusion (handles "car" vs "red car")
+        if la in lb or lb in la:
+            return True
+
+        # Format for WordNet (multi-word labels use underscores, e.g., "human_face")
+        wn_la = la.replace(" ", "_")
+        wn_lb = lb.replace(" ", "_")
+
+        # Fetch synsets (meaning groupings) for both words
+        synsets_a = wn.synsets(wn_la)
+        synsets_b = wn.synsets(wn_lb)
+
+        # If either word isn't in WordNet's dictionary, we can't compare semantically
+        if not synsets_a or not synsets_b:
+            return False
+
+        # Cross-reference all meanings of Label A against all meanings of Label B
+        for syn_a in synsets_a:
+            for syn_b in synsets_b:
+                # Check A: Exact Synonym (Same Synset)
+                # Example: "automobile" and "car" share a synset.
+                if syn_a == syn_b:
+                    return True
+
+                # Check B: Direct Hypernym (Parent Category) or Hyponym (Child Category)
+                # Example: "vehicle" is a direct hypernym of "car".
+
+                # Is B a direct parent of A?
+                if syn_b in syn_a.hypernyms():
+                    return True
+
+                # Is A a direct parent of B?
+                if syn_a in syn_b.hypernyms():
+                    return True
+
+                # Optional Check C: Wu-Palmer Semantic Similarity
+                # If they aren't DIRECT parents/children, but are very closely related
+                # up the tree (e.g., "truck" and "car" sharing the parent "motor_vehicle")
+                similarity = syn_a.wup_similarity(syn_b)
+                if similarity is not None and similarity > 0.85:
+                    return True
+
+        return False
 
     @staticmethod
     def _is_valid_text(text_data, frame_height, max_text_height):
@@ -276,7 +249,148 @@ class InformationExtractor:
 
         return True
 
-    def is_new_object(self, new_box, new_label):
+    def __init__(
+        self,
+        video_type: str | None,
+        video_path: str,
+        video_name: str,
+        sam_model: torch.nn.Module,
+        dino_model: "DinoDetector",
+        scene_describer: "GPTSceneDescriber",
+        ocr_engine: "OCRSystem",
+        taxonomy_resolver: "TaxonomyResolver",
+        taxonomy_generator: "TaxonomyGenerator",
+        reid_model: torch.nn.Module,
+        audio_model: "whisper.Whisper",
+        embedding_transform: "transforms.Compose",
+        face_detection: "MTCNN",
+        device: str,
+        dino_reid_device: str,
+        word_similarity_threshold: float,
+        dino_text_conf: float,
+        dino_box_conf: float,
+        torch_face_cong: float,
+        audio_confidence: float,
+        label_match_merge_threshold: float,
+        label_no_match_merge_threshold: float,
+        logger: logging.Logger,
+        detection_interval: int = 10,
+        reid_model_frame_check_freq: int = 20,
+        min_samples: int = 1,
+        max_samples: int = 12,
+        sampling_rate: float = 2.0,
+    ):
+        # helper models
+
+        self.sam_model = sam_model
+        self.ocr_engine = ocr_engine
+        self.scene_describer = scene_describer
+
+        self.dingo_model = dino_model
+        self.audio_model = audio_model
+
+        self.embedding_transform = embedding_transform
+        self.reid_model = reid_model
+
+        self.face_detection = face_detection
+
+        # video params
+
+        self.video_path = video_path
+        self.video_name = video_name
+        self.video_type = video_type
+
+        self.detection_interval = detection_interval
+
+        self.current_frame = 0
+        self.obj_id_counter = 1
+
+        self.active_trackers: dict[int, dict] = {}
+        self.id_to_label: dict[int, str] = {}
+
+        self.text_registry: dict[int, set] = defaultdict(set)
+        self.object_registry: dict[int, dict] = {}
+
+        self.taxonomy_resolver = taxonomy_resolver
+        self.taxonomy_generator = taxonomy_generator
+
+        self.word_similarity_threshold = word_similarity_threshold
+
+        self.dino_text_conf = dino_text_conf
+        self.dino_box_conf = dino_box_conf
+
+        self.torch_face_cong = torch_face_cong
+
+        self.artifact_path = f"extractor_artifacts/{self.video_name}/"
+
+        self.label_match_merge_threshold = label_match_merge_threshold
+        self.label_no_match_merge_threshold = label_no_match_merge_threshold
+
+        self.device = device
+        self.dino_reid_device = dino_reid_device
+        self.logger = logger
+
+        self.audio_registry: list[dict] = []
+        self.audio_confidence = audio_confidence
+
+        self.reid_model_frame_check_freq = reid_model_frame_check_freq
+
+        # Adaptive frame sampling parameters
+        self.min_samples = min_samples
+        self.max_samples = max_samples
+        self.sampling_rate = sampling_rate
+
+        self._state_init()
+
+    def __repr__(self) -> str:
+        return f"InformationExtractor: device: {self.device}"
+
+    def _state_init(self):
+        """Open the video capture, initialize the video writer, and set up SAM inference state."""
+        if not os.path.exists(self.artifact_path):
+            os.makedirs(self.artifact_path)
+
+        self.cap = cv2.VideoCapture(self.video_path)
+
+        if not self.cap.isOpened():
+            raise ValueError(f"Could not open video: {self.video_path}")
+
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        self.video_writer_dims = (width, height)
+
+        if fps <= 0:
+            fps = 30.0
+
+        self.fps = fps
+
+        output_filename = os.path.join(self.artifact_path, "tracked_output.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")
+
+        self.video_writer = cv2.VideoWriter(
+            output_filename, fourcc, fps, (width, height)
+        )
+        self.logger.info(f"Recording video to: {output_filename}")
+
+        self.inference_state = self.sam_model.init_state(video_path=self.video_path)
+        self.total_frames = self.inference_state["num_frames"]
+
+        self.logger.info(f"Video opened: {self.video_path}")
+        self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
+
+    def cleanup(self):
+        """Release resources"""
+
+        if hasattr(self, "cap") and self.cap is not None:
+            self.cap.release()
+
+        if hasattr(self, "video_writer") and self.video_writer is not None:
+            self.video_writer.release()
+            self.logger.info("Video writer released. Output saved.")
+
+    def _is_new_object(self, new_box, new_label):
         """
         Returns True if the box does NOT overlap significantly with
         an active tracker OF THE SAME CLASS.
@@ -297,7 +411,8 @@ class InformationExtractor:
 
         return True
 
-    def get_next_obj_id(self):
+    def _get_next_obj_id(self):
+        """Return the next available object ID and increment the counter."""
         current_id = self.obj_id_counter
         self.obj_id_counter += 1
         return current_id
@@ -320,7 +435,9 @@ class InformationExtractor:
         crop = frame_bgr[y1:y2, x1:x2]
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
 
-        img_tensor = self.embedding_transform(crop_rgb).unsqueeze(0).to(self.device)
+        img_tensor = (
+            self.embedding_transform(crop_rgb).unsqueeze(0).to(self.dino_reid_device)
+        )
 
         with torch.no_grad():
             features = self.reid_model.forward_features(img_tensor)
@@ -328,9 +445,13 @@ class InformationExtractor:
 
         return embedding.cpu().numpy().flatten()
 
-    def save_metadata(
+    def _save_metadata(
         self, frame_idx, obj_ids, masks, frame_text, shot_idx, current_frame_img
     ):
+        """
+        Record per-frame tracking data: filter and store OCR text, convert SAM masks
+        to bounding boxes, and periodically accumulate DINOv2 embeddings for re-ID.
+        """
         timestamp = frame_idx / self.fps
         second_key = int(timestamp)
         masks_np = masks.cpu().numpy()
@@ -353,7 +474,6 @@ class InformationExtractor:
             if current_box:
                 label = self.id_to_label.get(obj_id, "unknown")
 
-                # If this is the VERY FIRST time we see this specific ID, capture embedding
                 if obj_id not in self.object_registry:
                     self.object_registry[obj_id] = {
                         "label": label,
@@ -362,16 +482,54 @@ class InformationExtractor:
                         "embedding_count": 0,
                         "boxes": [],
                         "timestamps": [],
+                        "last_embedding_frame": -float("inf"),
                     }
 
+                # Accumulate embeddings periodically for robust cross-shot re-identification
+
+                frames_since_last = (
+                    frame_idx - self.object_registry[obj_id]["last_embedding_frame"]
+                )
+
+                if frames_since_last >= self.reid_model_frame_check_freq:
                     new_emb = self._extract_embedding(current_frame_img, current_box)
 
-                    if new_emb is not None:
-                        current_sum = self.object_registry[obj_id]["embedding_sum"]
-
-                        if new_emb.shape == current_sum.shape:
+                    if (
+                        new_emb is not None
+                        and new_emb.shape
+                        == self.object_registry[obj_id]["embedding_sum"].shape
+                    ):
+                        if self.object_registry[obj_id]["embedding_count"] == 0:
                             self.object_registry[obj_id]["embedding_sum"] += new_emb
                             self.object_registry[obj_id]["embedding_count"] += 1
+                            self.object_registry[obj_id][
+                                "last_embedding_frame"
+                            ] = frame_idx
+
+                        else:
+                            current_mean = (
+                                self.object_registry[obj_id]["embedding_sum"]
+                                / self.object_registry[obj_id]["embedding_count"]
+                            )
+
+                            norm_new = np.linalg.norm(new_emb)
+                            norm_mean = np.linalg.norm(current_mean)
+
+                            if norm_new > 0 and norm_mean > 0:
+                                cos_sim = np.dot(new_emb, current_mean) / (
+                                    norm_new * norm_mean
+                                )
+
+                                if cos_sim < 0.85:
+                                    self.object_registry[obj_id][
+                                        "embedding_sum"
+                                    ] += new_emb
+                                    self.object_registry[obj_id]["embedding_count"] += 1
+
+                                    self.logger.info(
+                                        f"New viewpoint for ID {obj_id} captured. Sim: {cos_sim:.2f}"
+                                    )
+                        self.object_registry[obj_id]["last_embedding_frame"] = frame_idx
 
                 self.object_registry[obj_id]["boxes"].append(current_box)
                 self.object_registry[obj_id]["timestamps"].append(timestamp)
@@ -381,9 +539,12 @@ class InformationExtractor:
                 self.active_trackers.pop(obj_id, None)
 
     def _calculate_metrics(self, boxes, timestamps):
+        """
+        Derive motion and spatial metrics from a sequence of bounding boxes:
+        velocity, growth factor, screen coverage, direction, centrality, screen time, and quadrant.
+        """
         if len(boxes) < 2:
-            # Return defaults for all 4 values if not enough data
-            return 0.0, 0.0, 0.0, "unknown", 0.0
+            return 0.0, 0.0, 0.0, "unknown", 0.0, 0.0, "center"
 
         centroids = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
         dist = 0
@@ -414,10 +575,12 @@ class InformationExtractor:
         dy = end_c[1] - start_c[1]
 
         direction = "static"
-        if abs(dx) > abs(dy):
-            direction = "right" if dx > 0 else "left"
-        else:
-            direction = "down" if dy > 0 else "up"  # Y grows downwards in OpenCV
+        min_displacement = 5  # pixels — ignore sub-pixel jitter
+        if abs(dx) > min_displacement or abs(dy) > min_displacement:
+            if abs(dx) > abs(dy):
+                direction = "right" if dx > 0 else "left"
+            else:
+                direction = "down" if dy > 0 else "up"  # Y grows downwards in OpenCV
 
         # Centrality (0.0 = perfectly centered, 1.0 = at the very corner)
         video_center = (width / 2, height / 2)
@@ -433,15 +596,49 @@ class InformationExtractor:
         avg_dist_from_center /= len(centroids)
         centrality_score = avg_dist_from_center / max_possible_dist
 
+        # Screen time ratio (fraction of total video this object is visible)
+        video_duration = self.total_frames / self.fps
+        screen_time_ratio = duration / video_duration if video_duration > 0 else 0.0
+
+        # Positional quadrant (dominant region based on average centroid)
+        avg_cx = sum(c[0] for c in centroids) / len(centroids)
+        avg_cy = sum(c[1] for c in centroids) / len(centroids)
+
+        col = (
+            "left"
+            if avg_cx < width / 3
+            else ("right" if avg_cx > 2 * width / 3 else "center")
+        )
+        row = (
+            "top"
+            if avg_cy < height / 3
+            else ("bottom" if avg_cy > 2 * height / 3 else "center")
+        )
+
+        if row == "center" and col == "center":
+            quadrant = "center"
+        elif row == "center":
+            quadrant = col
+        elif col == "center":
+            quadrant = row
+        else:
+            quadrant = f"{row}-{col}"
+
         return (
             round(velocity, 2),
             round(growth, 2),
             round(screen_coverage, 3),
-            direction,  # New
+            direction,
             round(centrality_score, 2),
+            round(screen_time_ratio, 3),
+            quadrant,
         )
 
     def _resolve_identities(self):
+        """
+        Merge local object IDs into global identities across shots using DINOv2
+        cosine similarity and semantic label matching. Returns a local-to-global ID map.
+        """
         self.logger.info("Resolving identities across shots...")
 
         id_map = {}
@@ -520,6 +717,7 @@ class InformationExtractor:
         return id_map
 
     def _finalize_data(self):
+        """Resolve cross-shot identities, compute per-object metrics, and assemble the final output dict."""
         global_id_map = self._resolve_identities()
         final_objects = {}
 
@@ -532,6 +730,8 @@ class InformationExtractor:
                 coverage,
                 direction,
                 centrality_score,
+                screen_time_ratio,
+                quadrant,
             ) = self._calculate_metrics(data["boxes"], data["timestamps"])
 
             occurence_data = {
@@ -545,6 +745,8 @@ class InformationExtractor:
                 "growth_factor": growth,
                 "direction": direction,
                 "centrality_score": centrality_score,
+                "screen_time_ratio": screen_time_ratio,
+                "quadrant": quadrant,
             }
 
             if g_id not in final_objects:
@@ -565,9 +767,11 @@ class InformationExtractor:
             "global_stats": self.global_stats if hasattr(self, "global_stats") else {},
             "visual_objects": list(final_objects.values()),
             "text_events": final_text,
+            "audio_segments": self.audio_registry,  # Add this line
         }
 
     def visualize_sam_tracking(self, frame_idx, obj_ids, masks):
+        """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
         if not self.video_writer.isOpened():
             self.logger.error("Error: Video Writer is NOT open.")
             return
@@ -627,8 +831,9 @@ class InformationExtractor:
         if frame_idx % 30 == 0:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
-    def _analyze_global_features(self):
-        self.logger.info("--- Step 1: Analyzing Shots & Audio ---")
+    def _digest_video(self):
+        """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
+        self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
 
         # 1. Run Scene Detection
@@ -720,6 +925,7 @@ class InformationExtractor:
         self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
     def _save_results_to_json(self, information):
+        """Serialize the extraction results dict to extraction_summary.json."""
         output_file = os.path.join(self.artifact_path, "extraction_summary.json")
         try:
             with open(output_file, "w") as f:
@@ -731,7 +937,7 @@ class InformationExtractor:
     def _add_new_tracker(self, box, label):
         """Helper to register the new object with SAM and internal state"""
 
-        new_id = self.get_next_obj_id()
+        new_id = self._get_next_obj_id()
 
         self.logger.info(f"  + New object {new_id} ({label})")
         self.id_to_label[new_id] = label
@@ -748,8 +954,52 @@ class InformationExtractor:
             box=box,
         )
 
+    def _analyze_audio(self):
+        """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
+        self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
+
+        result = self.audio_model.transcribe(
+            audio=self.video_path,
+            verbose=False,
+            no_speech_threshold=0.6,
+            condition_on_previous_text=False,
+        )
+
+        self.audio_registry = []
+
+        for segment in result["segments"]:
+            # Convert Log Probability to a 0-1 Confidence Score
+            # avg_logprob is usually negative (e.g., -0.21). exp(-0.21) ≈ 0.81 (81%)
+            confidence = math.exp(segment["avg_logprob"])
+
+            if confidence < self.audio_confidence:
+                self.logger.info(
+                    f"Skipping audio segment '{segment['text']}' (Conf: {confidence:.2f})"
+                )
+                continue
+
+            self.audio_registry.append(
+                {
+                    "start": round(segment["start"], 2),
+                    "end": round(segment["end"], 2),
+                    "text": segment["text"].strip(),
+                    "confidence": round(confidence, 2),  # Useful to save this metric
+                }
+            )
+
+        self.logger.info(
+            f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
+        )
+
     def extract(self):
-        self._analyze_global_features()
+        """
+        Main entry point. Runs the full pipeline: scene analysis, audio transcription,
+        per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
+        """
+        self._digest_video()
+        self._analyze_audio()
+
+        self.logger.info("--- Step 3: Tracking/OCR ---")
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
             self.sam_model.reset_state(self.inference_state)
@@ -765,19 +1015,50 @@ class InformationExtractor:
             if not ret:
                 break
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Adaptive frame sampling based on shot duration
+            shot_duration = (end_f - start_f) / self.fps
+            num_samples = max(
+                self.min_samples,
+                min(
+                    self.max_samples,
+                    int(math.ceil(self.sampling_rate * math.sqrt(shot_duration))),
+                ),
+            )
+            shot_length = end_f - start_f
 
+            self.logger.info(
+                f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
+            )
+
+            if num_samples == 1:
+                sample_frames = [start_f]
+            else:
+                sample_frames = [
+                    start_f + i * shot_length // (num_samples - 1)
+                    for i in range(num_samples)
+                ]
+
+            # Collect sampled RGB frames for GPT vision analysis
+            sampled_rgb_frames = []
+            for sample_f in sample_frames:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, sample_f)
+                ret, sample_frame = self.cap.read()
+                if ret:
+                    frame_rgb = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB)
+                    sampled_rgb_frames.append(frame_rgb)
+
+            # Single GPT call processes all sampled frames
             (
-                final_dino_prompt,
-                raw_dino_prompt,
-            ) = self.dingo_prompter.generate_prompt_from_frame(frame_rgb)
+                combined_final_context,
+                combined_raw_context,
+            ) = self.scene_describer.describe_scene(sampled_rgb_frames)
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
-                self.video_type, scene_context=raw_dino_prompt
+                self.video_type, scene_context=combined_raw_context
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
-            self.logger.info(f"Dino Shot Prompt: {final_dino_prompt}")
+            self.logger.info(f"Dino Shot Prompt: {combined_final_context}")
 
             while self.current_frame < end_f:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
@@ -790,7 +1071,7 @@ class InformationExtractor:
 
                 detected_objects_data = self.dingo_model.detect(
                     raw_image_rgb,
-                    text_prompt=final_dino_prompt,
+                    text_prompt=combined_final_context,
                     box_threshold=self.dino_box_conf,
                     text_threshold=self.dino_text_conf,
                 )
@@ -842,7 +1123,7 @@ class InformationExtractor:
                         )
                         continue
 
-                    if self.is_new_object(box, best_semantic):
+                    if self._is_new_object(box, best_semantic):
                         self._add_new_tracker(box, best_semantic)
 
                 try:
@@ -871,14 +1152,16 @@ class InformationExtractor:
                             }
                         )
 
-                        if self.is_new_object(tracker_box, forced_label):
+                        if self._is_new_object(tracker_box, forced_label):
                             self._add_new_tracker(tracker_box, forced_label)
 
                     self.logger.info(
                         f"Detected #{len(mapping)} faces in the current frame"
                     )
-
-                    self.dingo_model.map_results(raw_image_rgb, mapping, face_viz_path)
+                    if mapping:
+                        self.dingo_model.map_results(
+                            raw_image_rgb, mapping, face_viz_path
+                        )
 
                 frames_left_in_shot = end_f - self.current_frame
                 frames_to_track = min(self.detection_interval, frames_left_in_shot)
@@ -896,11 +1179,12 @@ class InformationExtractor:
                     max_frame_num_to_track=frames_to_track,
                 )
 
+                last_propagated_frame = self.current_frame
                 for frame_idx, obj_ids, video_res_masks in chunk_generator:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                     _, curr_frame = self.cap.read()
 
-                    self.save_metadata(
+                    self._save_metadata(
                         frame_idx,
                         obj_ids,
                         video_res_masks,
@@ -909,8 +1193,9 @@ class InformationExtractor:
                         curr_frame,
                     )
                     self.visualize_sam_tracking(frame_idx, obj_ids, video_res_masks)
+                    last_propagated_frame = frame_idx
 
-                self.current_frame += frames_to_track
+                self.current_frame = last_propagated_frame + 1
 
         self.logger.info("Video Processing Complete. Finalizing data...")
 
@@ -918,85 +1203,3 @@ class InformationExtractor:
         self._save_results_to_json(information)
 
         return information
-
-
-if __name__ == "__main__":
-    video_type = "car ad"
-    models_weights_dir = PATHS["checkpoints"]
-
-    word_similarity_threshold = 0.4
-
-    dino_text_conf = 0.45
-    dino_box_conf = 0.4
-    torch_face_cong = 0.9
-
-    taxonommy_objects_num = 100
-    detection_interval = 10
-
-    label_match_merge_threshold = 0.6
-    label_no_match_merge_threshold = 0.8
-
-    logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
-
-    logger.info(f"dino_text_conf: {dino_text_conf}")
-    logger.info(f"dino_box_conf: {dino_box_conf}")
-
-    profiles = ProfilesPile()
-
-    taxonomy_resolver = TaxonomyResolver(logger)
-    taxonomy_generator = TaxonomyGenerator(taxonommy_objects_num, profiles, logger)
-
-    car_profile = profiles.get_video_profile(video_type)
-
-    dino = DinoDetector(logger, dino_type="base", weights_dir=models_weights_dir)
-    dino_prompter = DynamicPrompter(logger)
-
-    sam2_device = (
-        torch.device("mps")
-        if torch.backends.mps.is_available()
-        else torch.device("cpu")
-    )
-
-    dino_reid_device = (
-        torch.device("mps")
-        if torch.backends.mps.is_available()
-        else torch.device("cpu")
-    )
-
-    logger.info(f"sam2 Using device: {sam2_device}")
-
-    ocr = OCRSystem(logger)
-    sam2 = build_sam2_video_predictor(
-        "sam2_hiera_t.yaml", "checkpoints/sam2.1_hiera_tiny.pt", sam2_device.type
-    )
-
-    info = InformationExtractor(
-        video_type,
-        sam2,
-        dino,
-        dino_prompter,
-        ocr,
-        taxonomy_resolver,
-        taxonomy_generator,
-        "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4",
-        dino_reid_device.type,
-        word_similarity_threshold,
-        dino_text_conf,
-        dino_box_conf,
-        torch_face_cong,
-        label_match_merge_threshold=label_match_merge_threshold,
-        label_no_match_merge_threshold=label_no_match_merge_threshold,
-        logger=logger,
-        detection_interval=detection_interval,
-    )
-
-    try:
-        metadata = info.extract()
-        logger.info("Extraction finished successfully.")
-    except KeyboardInterrupt:
-        logger.error("\n!!! Interrupted by User. Saving video... !!!")
-    except Exception as e:
-        logger.error(f"\n!!! Error: {e} !!!")
-    finally:
-        info.cleanup()
-        logger.info("Done!")

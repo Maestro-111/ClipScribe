@@ -1,23 +1,44 @@
-
 import torch
 import hydra
 from hydra import compose
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
-from utils.clip_scribe_logging import logger
+
+sam2_size_to_weights = {
+    "tiny": "sam2.1_hiera_tiny.pt",
+    "small": "sam2.1_hiera_small.pt"
+}
+
+sam2_size_to_conf = {
+    "tiny": "sam2_hiera_t.yaml",
+    "small": "sam2_hiera_s.yaml"
+}
 
 
 def build_sam2_video_predictor(
-        config_file:str,
-        ckpt_path:str,
+        sam2_size:str,
+        conf_dir:str,
+        ckpt_dir:str,
+        logger,
         device:str="cpu",
         mode:str="eval",
         apply_postprocessing=True,
 ):
 
-    with hydra.initialize_config_module(config_module="src.sam2.configs", version_base=None):
+    pt_file_name = sam2_size_to_weights.get(sam2_size, "sam2.1_hiera_tiny.pt")
+    conf_file_name = sam2_size_to_conf.get(sam2_size, "sam2_hiera_t.yaml")
 
-        cfg = compose(config_name=config_file)
+    logger.info(f"sam2 Using device: {device}")
+
+    logger.info(
+        f"sam2 size is: {sam2_size}, using {pt_file_name} pt file and {conf_file_name} conf file"
+    )
+
+    ckpt_file_path = f"{ckpt_dir}/{pt_file_name}"
+
+    with hydra.initialize_config_module(config_module=conf_dir, version_base=None):
+
+        cfg = compose(config_name=conf_file_name)
 
         OmegaConf.set_struct(cfg, False)
         OmegaConf.resolve(cfg)
@@ -36,7 +57,7 @@ def build_sam2_video_predictor(
         # This looks at the '_target_' keys in YAML
         model = instantiate(cfg.model, _recursive_=True)
 
-        _load_checkpoint(model, ckpt_path)
+        _load_checkpoint(model, ckpt_file_path, logger)
         model = model.to(device)
 
         if mode == "eval":
@@ -45,7 +66,7 @@ def build_sam2_video_predictor(
         return model
 
 
-def _load_checkpoint(model, ckpt_path):
+def _load_checkpoint(model, ckpt_path, logger):
 
     if ckpt_path:
 
