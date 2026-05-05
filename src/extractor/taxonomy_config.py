@@ -27,7 +27,6 @@ class TaxonomyProfile(BaseModel):
     )
 
     def get_prompt_instruction(self) -> str:
-
         """Helper to format these settings into a prompt block"""
         cats = "\n".join([f"- {c}" for c in self.focus_categories])
         examples = ", ".join(self.example_items)
@@ -63,9 +62,32 @@ class ProfilesPile:
             example_items=["SUV", "alloy wheel", "pine tree", "driver", "car emblem"],
         )
 
-        self.__type_to_profile["car ad"] = car_ad_profile
+        general_profile = TaxonomyProfile(
+            video_type="general",
+            focus_categories=[
+                "Main Subjects (e.g. person, animal, primary object)",
+                "Physical Objects (e.g. furniture, tools, devices, vehicles)",
+                "Environmental Context (e.g. buildings, nature, indoor/outdoor settings)",
+                "Text and Signage (e.g. signs, labels, captions)",
+                "Actions and Activities (e.g. movement, interactions)",
+            ],
+            guidance_ratio="Generate a balanced distribution with 30% main subjects, 25% physical objects, 20% environmental context, 15% actions, and 10% text/signage.",
+            example_items=[
+                "person",
+                "table",
+                "tree",
+                "building",
+                "walking",
+                "car",
+                "sign",
+                "door",
+            ],
+        )
 
-    def get_video_profile(self, video_type):
-        if video_type not in self.__type_to_profile:
-            return None  # Fixed explicit return None
+        self.__type_to_profile["car ad"] = car_ad_profile
+        self.__type_to_profile["general profile"] = general_profile
+
+    def get_video_profile(self, video_type: str | None):
+        if video_type not in self.__type_to_profile or video_type is None:
+            return self.__type_to_profile["general profile"]
         return self.__type_to_profile[video_type]

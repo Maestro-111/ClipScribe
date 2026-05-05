@@ -37,10 +37,10 @@ repos:
         args:
           - "--config-file=pyproject.toml"
           - "--explicit-package-bases"
-          - "--ignore-missing-imports"
-          - "--exclude=src/(sam2|dino)/"
-          - "--exclude=src/utils/(sam2_utils|position_encoding|misc)\\.py"
-          - "src"
+          - "src/clip_scribe"
+          - "src/extractor"
+          - "src/ocr"
+          - "src/parser"
         additional_dependencies:
           - pandas-stubs
         language_version: python3.12

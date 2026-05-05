@@ -1,8 +1,8 @@
 import torch
 import cv2
 from PIL import Image
-from dino.groundingdino.datasets import transforms as T
-from dino.groundingdino.util.inference import load_model, predict
+from .groundingdino.datasets import transforms as T
+from .groundingdino.util.inference import load_model, predict
 import torchvision.ops as ops
 import os
 
@@ -33,6 +33,7 @@ class DinoDetector:
         self.logger.info(f"Grounding DINO loaded on {self.device}")
 
     def detect(self, image_cv2, text_prompt, box_threshold=0.35, text_threshold=0.25):
+
         """
         Input: Raw OpenCV image (BGR)
         Output: List of dicts [{'box': [x1, y1, x2, y2], 'label': 'car', 'score': 0.99}, ...]

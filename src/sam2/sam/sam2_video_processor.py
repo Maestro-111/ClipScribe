@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from .sam2_base import NO_OBJ_SCORE, SAM2Base
-from utils.sam2_misc import concat_points, fill_holes_in_mask_scores, load_video_frames
+from src.utils.sam2_misc import concat_points, fill_holes_in_mask_scores, load_video_frames
 
 
 class SAM2VideoPredictor(SAM2Base):
