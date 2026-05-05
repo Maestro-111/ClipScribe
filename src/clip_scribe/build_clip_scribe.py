@@ -9,7 +9,7 @@ from src.extractor.extractor_core import InformationExtractor
 from src.parser.parser_core import VideoInformationParser
 
 from src.dino.dino_wrapper import DinoDetector
-from src.dino.dino_prompt import DynamicPrompter
+from src.extractor.scene_describer import GPTSceneDescriber
 
 from torchvision import transforms
 from facenet_pytorch import MTCNN
@@ -34,7 +34,7 @@ LOCAL_DIR = Path(__file__).resolve().parent
 def build_clip_scribe(
     video_name: str,
     video_path: str,
-    video_type: str,
+    video_type: str | None,
     clib_scribe_device: str,
     user_hints: list[str] | None = None,
 ) -> ClipScribeEngine:
@@ -54,6 +54,7 @@ def build_clip_scribe(
         taxonomy_params = _cfg["taxonomy"]
         audio_params = _cfg["audio"]
         sam2_params = _cfg["sam2"]
+        scene_analysis_params = _cfg["scene_analysis"]
 
         db_params = _cfg.get("database", {})
         db_path = PROJECT_ROOT / db_params.get("path", "data/clip_scribe.db")
@@ -101,14 +102,21 @@ def build_clip_scribe(
             taxonommy_objects_num, profiles, logger, user_hints=user_hints
         )
 
-        blip_device = (
-            torch.device("mps")
-            if torch.backends.mps.is_available()
-            else torch.device("cpu")
-        )
+        # Scene analysis configuration
+        scene_model = scene_analysis_params.get("model", "gpt-4o-mini")
+        min_samples = scene_analysis_params.get("min_samples", 1)
+        max_samples = scene_analysis_params.get("max_samples", 12)
+        sampling_rate = scene_analysis_params.get("sampling_rate", 2.0)
+        max_frame_dim = scene_analysis_params.get("max_frame_dim", 512)
+        image_detail = scene_analysis_params.get("image_detail", "low")
 
         dino = DinoDetector(logger, dino_type=dino_size, weights_dir=models_weights_dir)
-        dino_prompter = DynamicPrompter(logger, device=blip_device.type)
+        scene_describer = GPTSceneDescriber(
+            logger,
+            model=scene_model,
+            max_frame_dim=max_frame_dim,
+            image_detail=image_detail,
+        )
 
         sam2_device = (
             torch.device("mps")
@@ -166,7 +174,7 @@ def build_clip_scribe(
             video_name,
             sam2,
             dino,
-            dino_prompter,
+            scene_describer,
             ocr,
             taxonomy_resolver,
             taxonomy_generator,
@@ -186,6 +194,9 @@ def build_clip_scribe(
             logger,
             detection_interval,
             reid_model_frame_check_freq,
+            min_samples,
+            max_samples,
+            sampling_rate,
         )
 
         info_parser = VideoInformationParser()

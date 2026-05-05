@@ -28,7 +28,7 @@ clib_scribe:
   # Number of frames to track detected objects before running detection again
   # Higher = faster processing but may miss new objects appearing mid-shot
   # Range: 1-30 frames. Default: 10
-  detection_interval: 5
+  detection_interval: 7
 
   # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
   # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
@@ -42,7 +42,7 @@ dino:
   # Text-to-image grounding confidence threshold (how well text prompt matches image regions)
   # Lower = more detections but noisier. Higher = fewer false positives
   # Range: 0.0-1.0. Default: 0.45
-  dino_text_conf: 0.4
+  dino_text_conf: 0.3
 
   # Bounding box confidence threshold for object proposals
   # Lower = more detections. Higher = only high-confidence boxes
@@ -88,6 +88,32 @@ sam2:
   # Larger models produce better masks but are slower and require more VRAM
   # 'tiny' is recommended for real-time or resource-constrained environments
   size: tiny
+
+# ============================================================================
+# Scene Analysis (GPT Vision)
+# ============================================================================
+scene_analysis:
+  # GPT model for vision-based scene description
+  model: "gpt-4o-mini"
+
+  # Minimum number of frames to sample per shot (ensures at least some coverage)
+  min_samples: 1
+
+  # Maximum number of frames to sample per shot (caps processing cost)
+  max_samples: 12
+
+  # Sampling rate multiplier for sqrt-based adaptive sampling
+  # Formula: num_samples = max(min_samples, min(max_samples, ceil(sampling_rate * sqrt(duration_sec))))
+  # Higher = more frames sampled for longer shots
+  # Default: 2.0 gives: 0.5s→2, 1s→2, 2s→3, 5s→5, 10s→7, 20s→9, 30s→11, 60s→12
+  sampling_rate: 2.0
+
+  # Maximum frame dimension (width or height) for resizing before sending to GPT
+  # Smaller = lower token cost but less detail. Recommended: 512-1024
+  max_frame_dim: 512
+
+  # OpenAI image detail mode: "low" (85 tokens/image) or "high" (variable, higher cost)
+  image_detail: "low"
 
 # ============================================================================
 # Database Storage

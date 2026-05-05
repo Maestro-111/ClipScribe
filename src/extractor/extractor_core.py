@@ -13,9 +13,6 @@ from typing import TYPE_CHECKING
 
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
-
-from dotenv import load_dotenv, find_dotenv
-
 from nltk.corpus import wordnet as wn
 
 if TYPE_CHECKING:
@@ -23,11 +20,9 @@ if TYPE_CHECKING:
     from torchvision import transforms
     from facenet_pytorch import MTCNN
     from src.dino.dino_wrapper import DinoDetector
-    from src.dino.dino_prompt import DynamicPrompter
+    from src.extractor.scene_describer import GPTSceneDescriber
     from src.ocr.paddle_wrapper import OCRSystem
     from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
-
-load_dotenv(find_dotenv())
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -50,39 +45,6 @@ class InformationExtractor:
     """
     Process objects, text, moving history and record in json/csv
     """
-
-    @staticmethod
-    def merge_dino_prompts(prompts):
-        """
-        Deduplicates noun phrases across multiple DINO-formatted prompts.
-        Input:  ["car . road . tree .", "car . building ."]
-        Output: "car . road . tree . building ."
-        """
-        seen = set()
-        unique = []
-        for prompt in prompts:
-            parts = [p.strip() for p in prompt.split(".") if p.strip()]
-            for part in parts:
-                if part.lower() not in seen:
-                    seen.add(part.lower())
-                    unique.append(part)
-        return " . ".join(unique) + " ." if unique else "object ."
-
-    @staticmethod
-    def merge_raw_prompts(prompts):
-        """
-        Joins raw BLIP captions into a combined context for the LLM.
-        Input:  ["a car on a road with trees", "a car near a building"]
-        Output: "a car on a road with trees, a car near a building"
-        """
-        seen = set()
-        unique = []
-        for p in prompts:
-            normalized = p.strip().lower()
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                unique.append(p.strip())
-        return ", ".join(unique) if unique else ""
 
     @staticmethod
     def get_schema_descriptions():
@@ -289,12 +251,12 @@ class InformationExtractor:
 
     def __init__(
         self,
-        video_type: str,
+        video_type: str | None,
         video_path: str,
         video_name: str,
         sam_model: torch.nn.Module,
         dino_model: "DinoDetector",
-        dino_prompter: "DynamicPrompter",
+        scene_describer: "GPTSceneDescriber",
         ocr_engine: "OCRSystem",
         taxonomy_resolver: "TaxonomyResolver",
         taxonomy_generator: "TaxonomyGenerator",
@@ -314,12 +276,15 @@ class InformationExtractor:
         logger: logging.Logger,
         detection_interval: int = 10,
         reid_model_frame_check_freq: int = 20,
+        min_samples: int = 1,
+        max_samples: int = 12,
+        sampling_rate: float = 2.0,
     ):
         # helper models
 
         self.sam_model = sam_model
         self.ocr_engine = ocr_engine
-        self.dingo_prompter = dino_prompter
+        self.scene_describer = scene_describer
 
         self.dingo_model = dino_model
         self.audio_model = audio_model
@@ -369,6 +334,11 @@ class InformationExtractor:
         self.audio_confidence = audio_confidence
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
+
+        # Adaptive frame sampling parameters
+        self.min_samples = min_samples
+        self.max_samples = max_samples
+        self.sampling_rate = sampling_rate
 
         self._state_init()
 
@@ -1045,9 +1015,20 @@ class InformationExtractor:
             if not ret:
                 break
 
+            # Adaptive frame sampling based on shot duration
             shot_duration = (end_f - start_f) / self.fps
-            num_samples = max(1, min(int(shot_duration), 5))
+            num_samples = max(
+                self.min_samples,
+                min(
+                    self.max_samples,
+                    int(math.ceil(self.sampling_rate * math.sqrt(shot_duration))),
+                ),
+            )
             shot_length = end_f - start_f
+
+            self.logger.info(
+                f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
+            )
 
             if num_samples == 1:
                 sample_frames = [start_f]
@@ -1057,24 +1038,20 @@ class InformationExtractor:
                     for i in range(num_samples)
                 ]
 
-            blip_raw_prompts = []
-            blip_final_prompts = []
-
+            # Collect sampled RGB frames for GPT vision analysis
+            sampled_rgb_frames = []
             for sample_f in sample_frames:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, sample_f)
                 ret, sample_frame = self.cap.read()
                 if ret:
                     frame_rgb = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB)
-                    (
-                        final_prompt,
-                        raw_prompt,
-                    ) = self.dingo_prompter.generate_prompt_from_frame(frame_rgb)
+                    sampled_rgb_frames.append(frame_rgb)
 
-                    blip_raw_prompts.append(raw_prompt)
-                    blip_final_prompts.append(final_prompt)
-
-            combined_raw_context = self.merge_raw_prompts(blip_raw_prompts)
-            combined_final_context = self.merge_dino_prompts(blip_final_prompts)
+            # Single GPT call processes all sampled frames
+            (
+                combined_final_context,
+                combined_raw_context,
+            ) = self.scene_describer.describe_scene(sampled_rgb_frames)
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
                 self.video_type, scene_context=combined_raw_context
