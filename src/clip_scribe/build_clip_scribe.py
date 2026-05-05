@@ -20,6 +20,7 @@ from src.ocr.paddle_wrapper import OCRSystem
 
 from src.sam2.sam.build_sam import build_sam2_video_predictor
 from src.utils.clip_scribe_logging import logger
+from src.utils.clib_scribe_db import ClipScribeWriterDB, ClipScribeReaderDB
 
 from .engine import ClipScribeEngine
 
@@ -53,6 +54,9 @@ def build_clip_scribe(
         taxonomy_params = _cfg["taxonomy"]
         audio_params = _cfg["audio"]
         sam2_params = _cfg["sam2"]
+
+        db_params = _cfg.get("database", {})
+        db_path = PROJECT_ROOT / db_params.get("path", "data/clip_scribe.db")
 
         sam2_size: str = sam2_params.get("size", "tiny")
 
@@ -186,8 +190,15 @@ def build_clip_scribe(
 
         info_parser = VideoInformationParser()
 
+        writer_db = ClipScribeWriterDB(db_path=db_path, logger=logger)
+        reader_db = ClipScribeReaderDB(db_path=db_path, logger=logger)
+
         clib_scribe = ClipScribeEngine(
-            extractor=info_extractor, parser=info_parser, logger=logger
+            extractor=info_extractor,
+            parser=info_parser,
+            logger=logger,
+            reader_db=reader_db,
+            writer_db=writer_db,
         )
 
         return clib_scribe
