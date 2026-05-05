@@ -85,6 +85,63 @@ class InformationExtractor:
         return ", ".join(unique) if unique else ""
 
     @staticmethod
+    def get_schema_descriptions():
+        """
+        Returns a flat dictionary mapping DB table names to their column descriptions.
+        Structure: {table_name: {column_name: description_string}}
+        This is persisted to the field_descriptions table for self-documenting DB schemas.
+        """
+        return {
+            "runs": {
+                "run_id": "Unique identifier for this extraction run.",
+                "video_name": "Name of the video file processed.",
+                "video_path": "Full path to the video file.",
+                "video_type": "Category of video (e.g., 'car ad').",
+                "created_at": "Timestamp when this run was created.",
+            },
+            "global_stats": {
+                "total_shots": "Total number of distinct shots (scene cuts) detected in the video.",
+                "video_duration": "Total video length in seconds.",
+                "avg_shot_duration": "Mean duration of a single shot in seconds. Lower values indicate faster editing pace.",
+                "dynamic_start_detected": "Boolean. True if the first shot is shorter than the criteria threshold.",
+                "dynamic_start_first_shot_dur": "Duration of the very first shot in seconds.",
+                "dynamic_start_criteria": "Human-readable rule used for detection (e.g., 'First shot < 3.0s').",
+                "qp_intro_detected": "Boolean. True if the number of shots starting within t=0s to t=5s meets the threshold.",
+                "qp_intro_shot_count": "Number of shots that start within the first 5 seconds.",
+                "qp_intro_shots": "JSON list of shot indices that fall within the first 5 seconds.",
+                "qp_intro_criteria": "Human-readable rule used for detection.",
+                "qp_general_detected": "Boolean. True if at least one 5-second window meets the threshold.",
+                "qp_general_rapid_fire_segments": "JSON list of 5-second windows that qualify as rapid-fire. Each contains start_time, end_time, shot_count, duration, shot_indices.",
+                "qp_general_criteria": "Human-readable rule used for detection.",
+            },
+            "visual_object_occurrences": {
+                "global_id": "Unique integer ID assigned after cross-shot identity resolution.",
+                "label": "Semantic label for this object (e.g., 'car', 'human face'). Resolved via SBERT taxonomy matching.",
+                "shot_index": "Zero-based index of the shot this occurrence belongs to.",
+                "lifespan_start": "Timestamp (seconds) when the object was first tracked within this shot.",
+                "lifespan_end": "Timestamp (seconds) when the object was last tracked within this shot.",
+                "screen_coverage": "Fraction of total frame area occupied by the object's largest bounding box (0.0 to 1.0).",
+                "velocity_px_sec": "Average speed of the object's centroid in pixels per second.",
+                "growth_factor": "Ratio of bounding-box area at end vs. start of tracking. >1.0 means it approached the camera.",
+                "direction": "Dominant movement direction: 'left', 'right', 'up', 'down', or 'static'.",
+                "centrality_score": "Distance from frame center (0.0 = centered, 1.0 = corner). Lower = more focal.",
+                "screen_time_ratio": "Fraction of total video duration this object was visible in this shot.",
+                "quadrant": "Dominant screen region based on average centroid in a 3x3 grid.",
+            },
+            "text_events": {
+                "second": "The integer second of the video (e.g., 0 = first second).",
+                "line_index": "Zero-based index for multiple text lines detected in the same second.",
+                "text": "Distinct text string detected on screen.",
+            },
+            "audio_segments": {
+                "start_time": "Start time of the speech segment in seconds.",
+                "end_time": "End time of the speech segment in seconds.",
+                "text": "The transcribed speech content.",
+                "confidence": "Confidence score (0.0 to 1.0) derived from Whisper's average log-probability.",
+            },
+        }
+
+    @staticmethod
     def _calculate_iou(boxA, boxB):
         """Compute Intersection over Union between two [x1, y1, x2, y2] boxes."""
         # Determine intersection rectangle
@@ -313,12 +370,12 @@ class InformationExtractor:
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
 
-        self.state_init()
+        self._state_init()
 
     def __repr__(self) -> str:
         return f"InformationExtractor: device: {self.device}"
 
-    def state_init(self):
+    def _state_init(self):
         """Open the video capture, initialize the video writer, and set up SAM inference state."""
         if not os.path.exists(self.artifact_path):
             os.makedirs(self.artifact_path)
@@ -363,7 +420,7 @@ class InformationExtractor:
             self.video_writer.release()
             self.logger.info("Video writer released. Output saved.")
 
-    def is_new_object(self, new_box, new_label):
+    def _is_new_object(self, new_box, new_label):
         """
         Returns True if the box does NOT overlap significantly with
         an active tracker OF THE SAME CLASS.
@@ -384,7 +441,7 @@ class InformationExtractor:
 
         return True
 
-    def get_next_obj_id(self):
+    def _get_next_obj_id(self):
         """Return the next available object ID and increment the counter."""
         current_id = self.obj_id_counter
         self.obj_id_counter += 1
@@ -418,7 +475,7 @@ class InformationExtractor:
 
         return embedding.cpu().numpy().flatten()
 
-    def save_metadata(
+    def _save_metadata(
         self, frame_idx, obj_ids, masks, frame_text, shot_idx, current_frame_img
     ):
         """
@@ -910,7 +967,7 @@ class InformationExtractor:
     def _add_new_tracker(self, box, label):
         """Helper to register the new object with SAM and internal state"""
 
-        new_id = self.get_next_obj_id()
+        new_id = self._get_next_obj_id()
 
         self.logger.info(f"  + New object {new_id} ({label})")
         self.id_to_label[new_id] = label
@@ -1089,7 +1146,7 @@ class InformationExtractor:
                         )
                         continue
 
-                    if self.is_new_object(box, best_semantic):
+                    if self._is_new_object(box, best_semantic):
                         self._add_new_tracker(box, best_semantic)
 
                 try:
@@ -1118,7 +1175,7 @@ class InformationExtractor:
                             }
                         )
 
-                        if self.is_new_object(tracker_box, forced_label):
+                        if self._is_new_object(tracker_box, forced_label):
                             self._add_new_tracker(tracker_box, forced_label)
 
                     self.logger.info(
@@ -1150,7 +1207,7 @@ class InformationExtractor:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                     _, curr_frame = self.cap.read()
 
-                    self.save_metadata(
+                    self._save_metadata(
                         frame_idx,
                         obj_ids,
                         video_res_masks,

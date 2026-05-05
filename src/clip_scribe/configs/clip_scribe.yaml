@@ -1,27 +1,98 @@
+# ============================================================================
+# ClipScribe Configuration
+# ============================================================================
+
 paths:
+  # Directory where model checkpoint files are stored (DINO, SAM2, etc.)
   checkpoints: checkpoints
 
+# ============================================================================
+# Core Extraction Settings
+# ============================================================================
 clib_scribe:
-  word_similarity_threshold: 0.4
-  label_match_merge_threshold: 0.6
-  label_no_match_merge_threshold: 0.85
-  detection_interval: 10
-  reid_model_frame_check_freq: 20
+  # SBERT cosine similarity threshold for mapping raw DINO labels to canonical taxonomy targets
+  # Lower = more lenient matching (e.g., "sedan" matches "car")
+  # Range: 0.0-1.0. Default: 0.4
+  word_similarity_threshold: 0.35
 
+  # DINOv2 visual similarity threshold for merging objects with SAME labels across shots
+  # Higher = stricter identity matching (reduces false merges of similar-looking objects)
+  # Range: 0.0-1.0. Default: 0.6
+  label_match_merge_threshold: 0.6
+
+  # DINOv2 visual similarity threshold for merging objects with DIFFERENT labels across shots
+  # Very high threshold acts as "visual override" when labels disagree but appearance is identical
+  # Range: 0.0-1.0. Default: 0.85
+  label_no_match_merge_threshold: 0.85
+
+  # Number of frames to track detected objects before running detection again
+  # Higher = faster processing but may miss new objects appearing mid-shot
+  # Range: 1-30 frames. Default: 10
+  detection_interval: 5
+
+  # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
+  # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
+  # Range: 10-50 frames. Default: 20
+  reid_model_frame_check_freq: 10
+
+# ============================================================================
+# GroundingDINO Object Detection
+# ============================================================================
 dino:
-  dino_text_conf: 0.45
+  # Text-to-image grounding confidence threshold (how well text prompt matches image regions)
+  # Lower = more detections but noisier. Higher = fewer false positives
+  # Range: 0.0-1.0. Default: 0.45
+  dino_text_conf: 0.4
+
+  # Bounding box confidence threshold for object proposals
+  # Lower = more detections. Higher = only high-confidence boxes
+  # Range: 0.0-1.0. Default: 0.4
   dino_box_conf: 0.4
+
+  # GroundingDINO model size: 'tiny', 'base'
+  # Larger models are more accurate but slower and require more VRAM
   dino_size: base
 
+# ============================================================================
+# Face Detection (MTCNN)
+# ============================================================================
 face_detection:
+  # MTCNN face detection confidence threshold
+  # Higher = only very clear faces detected (reduces false positives from profiles/occlusions)
+  # Range: 0.0-1.0. Default: 0.95
   torch_face_cong: 0.95
 
+# ============================================================================
+# Dynamic Taxonomy Generation (LLM)
+# ============================================================================
 taxonomy:
+  # Maximum number of canonical object targets the LLM generates per scene
+  # Higher = more granular taxonomy but slower LLM calls and more complex matching
+  # Range: 50-500. Default: 300
   taxonommy_objects_num: 300
-  detection_interval: 10
 
+# ============================================================================
+# Audio Transcription (Whisper)
+# ============================================================================
 audio:
+  # Minimum confidence threshold for Whisper transcription segments
+  # Derived from exp(avg_logprob). Lower = keeps more segments but may include hallucinations
+  # Range: 0.0-1.0. Default: 0.4
   audio_confidence: 0.4
 
+# ============================================================================
+# SAM2 Segmentation & Tracking
+# ============================================================================
 sam2:
+  # SAM2 model size: 'tiny', 'small', 'base_plus', 'large'
+  # Larger models produce better masks but are slower and require more VRAM
+  # 'tiny' is recommended for real-time or resource-constrained environments
   size: tiny
+
+# ============================================================================
+# Database Storage
+# ============================================================================
+database:
+  # Path to SQLite database file for storing extraction results
+  # Relative to project root. Created automatically if doesn't exist
+  path: data/clip_scribe.db

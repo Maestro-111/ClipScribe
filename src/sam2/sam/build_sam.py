@@ -26,7 +26,7 @@ def build_sam2_video_predictor(
 ):
 
     pt_file_name = sam2_size_to_weights.get(sam2_size, "sam2.1_hiera_tiny.pt")
-    conf_file_name = sam2_size_to_weights.get(sam2_size, "sam2_hiera_t.yaml")
+    conf_file_name = sam2_size_to_conf.get(sam2_size, "sam2_hiera_t.yaml")
 
     logger.info(f"sam2 Using device: {device}")
 
