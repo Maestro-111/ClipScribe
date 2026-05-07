@@ -23,6 +23,95 @@ class ClipScribeBaseDB:
 class ClipScribeReaderDB(ClipScribeBaseDB):
     def __init__(self, db_path: str | Path, logger: logging.Logger):
         super().__init__(db_path, logger)
+        self._conn.row_factory = sqlite3.Row
+
+    def get_latest_run(self) -> dict | None:
+        """Fetch the most recent run from the runs table."""
+        cursor = self._conn.execute(
+            "SELECT * FROM runs ORDER BY created_at DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_global_stats(self, run_id: str) -> dict | None:
+        """Fetch global statistics for a specific run."""
+        cursor = self._conn.execute(
+            "SELECT * FROM global_stats WHERE run_id = ?", (run_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        stats = dict(row)
+        # Parse JSON fields
+        if stats.get("qp_intro_shots"):
+            stats["qp_intro_shots"] = json.loads(stats["qp_intro_shots"])
+        if stats.get("qp_general_rapid_fire_segments"):
+            stats["qp_general_rapid_fire_segments"] = json.loads(
+                stats["qp_general_rapid_fire_segments"]
+            )
+        return stats
+
+    def get_audio_segments(
+        self, run_id: str, max_start_time: float | None = None
+    ) -> list[dict]:
+        """
+        Fetch audio transcript segments for a run.
+        Optionally filter by max_start_time (e.g., first 5 seconds).
+        """
+        query = "SELECT * FROM audio_segments WHERE run_id = ?"
+        params: list[str | float] = [run_id]
+
+        if max_start_time is not None:
+            query += " AND start_time < ?"
+            params.append(max_start_time)
+
+        query += " ORDER BY start_time"
+
+        cursor = self._conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_text_events(self, run_id: str, max_second: int | None = None) -> list[dict]:
+        """
+        Fetch OCR text events for a run.
+        Optionally filter by max_second (e.g., first 5 seconds).
+        """
+        query = "SELECT * FROM text_events WHERE run_id = ?"
+        params: list[str | int] = [run_id]
+
+        if max_second is not None:
+            query += " AND second < ?"
+            params.append(max_second)
+
+        query += " ORDER BY second, line_index"
+
+        cursor = self._conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_visual_objects(
+        self,
+        run_id: str,
+        label_contains: str | None = None,
+        max_lifespan_start: float | None = None,
+    ) -> list[dict]:
+        """
+        Fetch visual object occurrences for a run.
+        Optionally filter by label (fuzzy match) and max_lifespan_start.
+        """
+        query = "SELECT * FROM visual_object_occurrences WHERE run_id = ?"
+        params: list[str | float] = [run_id]
+
+        if label_contains is not None:
+            query += " AND label LIKE ?"
+            params.append(f"%{label_contains}%")
+
+        if max_lifespan_start is not None:
+            query += " AND lifespan_start < ?"
+            params.append(max_lifespan_start)
+
+        query += " ORDER BY lifespan_start"
+
+        cursor = self._conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
 
 
 class ClipScribeWriterDB(ClipScribeBaseDB):

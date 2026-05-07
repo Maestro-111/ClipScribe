@@ -4,7 +4,7 @@ from src.extractor.taxonomy_core import (
     generate_hints_from_video_name,
 )
 from src.extractor.taxonomy_config import ProfilesPile
-from src.extractor.extractor_core import InformationExtractor
+from src.extractor.extractor_core import VideoInformationExtractor
 
 from src.parser.parser_core import VideoInformationParser
 
@@ -23,6 +23,7 @@ from src.utils.clip_scribe_logging import logger
 from src.utils.clib_scribe_db import ClipScribeWriterDB, ClipScribeReaderDB
 
 from .engine import ClipScribeEngine
+from .platform_configs import BasePlatformConf
 
 from pathlib import Path
 import yaml  # type: ignore
@@ -36,6 +37,8 @@ def build_clip_scribe(
     video_path: str,
     video_type: str | None,
     clib_scribe_device: str,
+    clib_scribe_platform_name: str,
+    clib_scribe_platform_conf: BasePlatformConf,
     user_hints: list[str] | None = None,
 ) -> ClipScribeEngine:
     try:
@@ -55,6 +58,7 @@ def build_clip_scribe(
         audio_params = _cfg["audio"]
         sam2_params = _cfg["sam2"]
         scene_analysis_params = _cfg["scene_analysis"]
+        parser_params = _cfg.get("parser", {})
 
         db_params = _cfg.get("database", {})
         db_path = PROJECT_ROOT / db_params.get("path", "data/clip_scribe.db")
@@ -168,7 +172,7 @@ def build_clip_scribe(
 
         face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
 
-        info_extractor = InformationExtractor(
+        info_extractor = VideoInformationExtractor(
             video_type,
             video_path,
             video_name,
@@ -199,10 +203,25 @@ def build_clip_scribe(
             sampling_rate,
         )
 
-        info_parser = VideoInformationParser()
-
         writer_db = ClipScribeWriterDB(db_path=db_path, logger=logger)
         reader_db = ClipScribeReaderDB(db_path=db_path, logger=logger)
+
+        # Parser configuration
+        parser_model = parser_params.get("model", "gpt-4o-mini")
+        parser_output_dir = PROJECT_ROOT / parser_params.get(
+            "output_dir", "parser_artifacts"
+        )
+        parser_max_parallel = parser_params.get("max_parallel_agents", 5)
+
+        info_parser = VideoInformationParser(
+            reader_db=reader_db,
+            model=parser_model,
+            platform_name=clib_scribe_platform_name,
+            platform_config=clib_scribe_platform_conf,
+            output_dir=str(parser_output_dir),
+            logger=logger,
+            max_parallel_agents=parser_max_parallel,
+        )
 
         clib_scribe = ClipScribeEngine(
             extractor=info_extractor,

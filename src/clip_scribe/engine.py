@@ -18,7 +18,7 @@ class ClipScribeEngine:
             f"(extractor={self.extractor}, parser={self.parser})"
         )
 
-    def run(self) -> int | None:
+    def run(self) -> None:
         video_metadata: dict | None = {}
 
         try:
@@ -27,28 +27,23 @@ class ClipScribeEngine:
             pass
 
         if video_metadata:
-            try:
-                self._save_metadata_to_db(video_metadata)
-                metadata_descriptions = self.extractor.get_schema_descriptions()
-                self._save_field_descriptions(metadata_descriptions)
-            except Exception as e:
-                self.logger.error(f"Failed to save data: {e}", exc_info=True)
-                return 0
-            finally:
-                # Close DB connections once after all operations are done
-                if self.writer_db:
-                    self.writer_db.close()
-                if self.reader_db:
-                    self.reader_db.close()
-            try:
-                self._parse_information()
-            except Exception:
-                return 0
+            run_id = self._save_metadata_to_db(video_metadata)
+            metadata_descriptions = self.extractor.get_schema_descriptions()
+
+            self._save_field_descriptions(metadata_descriptions)
+
+            if run_id:
+                self._parse_information(run_id, self.extractor.video_name)
+
+            if self.writer_db:
+                self.writer_db.close()
+            if self.reader_db:
+                self.reader_db.close()
 
         else:
             self.logger.warning("No video metadata to parse")
 
-        return 1
+        return
 
     def _extract_information(self) -> dict | None:
         try:
@@ -62,21 +57,22 @@ class ClipScribeEngine:
             self.logger.error(
                 f"_extract_information error occurred: {e}", exc_info=True
             )
-            raise e
+            return None
         finally:
             self.extractor.cleanup()
             self.logger.info("Done!")
 
-    def _save_metadata_to_db(self, video_metadata: dict) -> None:
+    def _save_metadata_to_db(self, video_metadata: dict) -> str | None:
         if self.writer_db is None:
-            return
+            return None
 
-        self.writer_db.save_run(
+        run_id = self.writer_db.save_run(
             video_name=self.extractor.video_name,
             video_path=self.extractor.video_path,
             video_type=self.extractor.video_type,
             video_metadata=video_metadata,
         )
+        return run_id
 
     def _save_field_descriptions(self, descriptions: dict) -> None:
         if self.writer_db is None:
@@ -84,5 +80,14 @@ class ClipScribeEngine:
 
         self.writer_db.save_field_descriptions(descriptions)
 
-    def _parse_information(self):
-        pass
+    def _parse_information(self, run_id: str, video_name: str) -> None:
+        """
+        Parse and evaluate video information.
+
+        Args:
+            run_id: Run identifier from database
+            video_name: Name of the video
+        """
+
+        report_path = self.parser.parse(run_id, video_name)
+        self.logger.info(f"Parser report generated: {report_path}")
