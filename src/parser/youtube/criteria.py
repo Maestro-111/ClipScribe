@@ -13,7 +13,7 @@ def get_feature_configs():
             "question": "Does the first shot in the video change in less than 3 seconds?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}.",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when the first shot in the video changes.",
                 "Return True if and only if the first shot in the video changes in less than 3 seconds.",
             ],
@@ -29,7 +29,7 @@ def get_feature_configs():
             "question": "Are there 5 or more shots within ANY 5 consecutive seconds in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the shot changes count in the following format: Number of shots: #",
                 "Provide the exact timestamp when the shot changes happen and a description of the shot.",
                 "Return False if and only if the number of identified shots is less than 5.",
@@ -46,7 +46,7 @@ def get_feature_configs():
             "question": "Are there at least 5 shot changes or visual cuts detected in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the shot changes count in the following format: Number of shots: #",
                 "Provide the exact timestamp when the shot changes happen and a description of the shot.",
                 "Return False if the number of shots identified is less than 5.",
@@ -63,7 +63,7 @@ def get_feature_configs():
             "question": "Are there any supers (text overlays) at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp where supers are found as well as the list of supers.",
             ],
             "mode": "baseline",
@@ -78,7 +78,7 @@ def get_feature_configs():
             "question": "Does the speech match any supers (text overlays) in the video or is the speech contextually supportive of the overlaid text shown on the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp where supers are found and the timestamp when the speech matches the supers or is contextually supportive of the overlaid text shown on the video.",
             ],
             "mode": "agentic",
@@ -123,7 +123,7 @@ def get_feature_configs():
             "question": "Is the brand {brand_name} or brand logo {brand_name} visible at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when the brand {brand_name} or brand logo {brand_name} is found.",
             ],
             "mode": "agentic",
@@ -246,7 +246,7 @@ def get_feature_configs():
             "question": "Is the pace of video greater than 2 seconds per shot/frame?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Return True if and only if the pace of video greater than 2 seconds per shot/frame.",
             ],
             "mode": "baseline",
@@ -261,7 +261,7 @@ def get_feature_configs():
             "question": "Are there people present at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when people are present in the video.",
             ],
             "mode": "agentic",
@@ -306,7 +306,7 @@ def get_feature_configs():
             "question": "Is there a close up of a human face present at any time the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when there is a close up of a human face.",
             ],
             "mode": "agentic",
@@ -351,7 +351,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "Some examples of call to actions are: {call_to_actions}",
-                "Look through each frame in the video carefully and answer the question.",
+                "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when the call to action is detected in any text overlay in the video.",
             ],
             "mode": "agentic",
