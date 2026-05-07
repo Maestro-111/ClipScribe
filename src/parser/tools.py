@@ -35,8 +35,11 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - text: transcribed text
             - confidence: transcription confidence score
         """
-        segments = reader_db.get_audio_segments(run_id, max_start_time)
-        return json.dumps(segments, indent=2)
+        try:
+            segments = reader_db.get_audio_segments(run_id, max_start_time)
+            return json.dumps(segments, indent=2)
+        except Exception:
+            return json.dumps([])
 
     @tool
     def query_text_events(max_second: int | None = None) -> str:
@@ -53,8 +56,11 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - line_index: line number within that second
             - text: extracted text content
         """
-        events = reader_db.get_text_events(run_id, max_second)
-        return json.dumps(events, indent=2)
+        try:
+            events = reader_db.get_text_events(run_id, max_second)
+            return json.dumps(events, indent=2)
+        except Exception:
+            return json.dumps([])
 
     @tool
     def query_visual_objects(
@@ -83,10 +89,13 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - screen_time_ratio: proportion of shot duration
             - quadrant: screen quadrant location
         """
-        objects = reader_db.get_visual_objects(
-            run_id, label_contains, max_lifespan_start
-        )
-        return json.dumps(objects, indent=2)
+        try:
+            objects = reader_db.get_visual_objects(
+                run_id, label_contains, max_lifespan_start
+            )
+            return json.dumps(objects, indent=2)
+        except Exception:
+            return json.dumps([])
 
     @tool
     def query_global_stats() -> str:
@@ -104,18 +113,57 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - qp_intro_shot_count: number of shots in intro
             - qp_general_detected: whether general quick pacing was detected (0/1)
         """
-        stats = reader_db.get_global_stats(run_id)
-        if not stats:
+        try:
+            stats = reader_db.get_global_stats(run_id)
+            if not stats:
+                return json.dumps({})
+            return json.dumps(stats, indent=2)
+        except Exception:
             return json.dumps({})
-        return json.dumps(stats, indent=2)
+
+    @tool
+    def query_scene_descriptions(
+        max_start_time: float | None = None, max_end_time: float | None = None
+    ) -> str:
+        """
+        Query GPT-generated scene descriptions for each shot from the database.
+
+        Args:
+            max_start_time: Optional maximum start time in seconds to filter scenes
+            max_end_time: Optional maximum end time in seconds to filter scenes
+
+        Returns:
+            JSON string containing list of scene descriptions with fields:
+            - shot_index: zero-based shot index
+            - start_time: shot start time in seconds
+            - end_time: shot end time in seconds
+            - description: rich narrative scene description from GPT vision analysis
+        """
+        try:
+            descriptions = reader_db.get_scene_descriptions(
+                run_id, max_start_time, max_end_time
+            )
+            return json.dumps(descriptions, indent=2)
+        except Exception:
+            return json.dumps([])
 
     # Map tool groups to relevant tools
     tool_map = {
-        "audio": [query_audio_segments, query_global_stats],
-        "text": [query_text_events, query_global_stats],
-        "visual": [query_visual_objects, query_global_stats],
-        "audio_text": [query_audio_segments, query_text_events, query_global_stats],
-        "visual_text": [query_visual_objects, query_text_events, query_global_stats],
+        "audio": [query_audio_segments, query_scene_descriptions, query_global_stats],
+        "text": [query_text_events, query_scene_descriptions, query_global_stats],
+        "visual": [query_visual_objects, query_scene_descriptions, query_global_stats],
+        "audio_text": [
+            query_audio_segments,
+            query_text_events,
+            query_scene_descriptions,
+            query_global_stats,
+        ],
+        "visual_text": [
+            query_visual_objects,
+            query_text_events,
+            query_scene_descriptions,
+            query_global_stats,
+        ],
     }
 
     if tool_group not in tool_map:

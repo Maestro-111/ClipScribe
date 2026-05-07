@@ -100,6 +100,8 @@ class BaseEvaluator(ABC):
         )
         llm_prompt = f"{question}\n\n{instructions}"
 
+        time_scope = 5.0 if feature.get("type") == "first_5_secs_video" else None
+
         try:
             agent_result = run_agent(
                 agent,
@@ -107,7 +109,7 @@ class BaseEvaluator(ABC):
                 instructions,
                 agentic_eval=self.agentic_eval,
                 platform_context=self.platform_context,
-                feature_type=feature.get("type", "full_video"),
+                time_scope=time_scope,
             )
 
             return self.build_feature_result(

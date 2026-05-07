@@ -7,7 +7,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "DODGE_XSzs0uoxLPs - Dodge Hornet ｜ A New Breed ：15.mp4"
+video_name = "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 clib_scribe_device = "mps"
@@ -15,18 +15,14 @@ clib_scribe_device = "mps"
 clib_scribe_platform = "youtube"
 
 platform_params = {
-    "youtube_brand_name": "Dodge",
-    "youtube_branded_products": ["Dodge Hornet"],
-    "youtube_branded_products_categories": ["SUV", "vehicle", "car"],
-    "youtube_call_to_actions": [
-        "learn more",
-        "buy now",
-        "order now",
-    ],
+    "youtube_brand_name": "Jeep Grand Cherokee",
+    "youtube_branded_products": ["Grand Cherokee L", "Grand Cherokee"],
+    "youtube_branded_products_categories": ["truck", "vehicle", "car", "suv"],
+    "youtube_call_to_actions": ["learn more", "buy now", "order now", "purchase now"],
 }
 
 # Optional: provide explicit hints for extractor, otherwise they are auto-generated from the video name
-user_hints = ["SUV", "vehicle", "car", "truck"]
+user_hints = ["suv", "vehicle", "car", "truck", "license plate", "brand logo"]
 
 
 try:
