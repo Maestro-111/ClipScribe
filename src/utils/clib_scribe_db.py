@@ -113,6 +113,32 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         cursor = self._conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_scene_descriptions(
+        self,
+        run_id: str,
+        max_start_time: float | None = None,
+        max_end_time: float | None = None,
+    ) -> list[dict]:
+        """
+        Fetch scene descriptions for a run.
+        Optionally filter by max_start_time and/or max_end_time.
+        """
+        query = "SELECT * FROM scene_descriptions WHERE run_id = ?"
+        params: list[str | float] = [run_id]
+
+        if max_start_time is not None:
+            query += " AND start_time < ?"
+            params.append(max_start_time)
+
+        if max_end_time is not None:
+            query += " AND end_time < ?"
+            params.append(max_end_time)
+
+        query += " ORDER BY start_time"
+
+        cursor = self._conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
 
 class ClipScribeWriterDB(ClipScribeBaseDB):
     def __init__(self, db_path: str | Path, logger: logging.Logger):
@@ -184,6 +210,15 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 confidence  REAL
             );
 
+            CREATE TABLE IF NOT EXISTS scene_descriptions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id      TEXT NOT NULL REFERENCES runs(run_id),
+                shot_index  INTEGER NOT NULL,
+                start_time  REAL,
+                end_time    REAL,
+                description TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS field_descriptions (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 table_name   TEXT NOT NULL,
@@ -212,6 +247,9 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             self._insert_text_events(run_id, video_metadata.get("text_events", []))
             self._insert_audio_segments(
                 run_id, video_metadata.get("audio_segments", [])
+            )
+            self._insert_scene_descriptions(
+                run_id, video_metadata.get("scene_descriptions", [])
             )
 
         self.logger.info(f"Saved run {run_id} for '{video_name}'")
@@ -331,6 +369,24 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         if rows:
             self._conn.executemany(
                 "INSERT INTO audio_segments (run_id, start_time, end_time, text, confidence) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+
+    def _insert_scene_descriptions(self, run_id: str, scene_descriptions: list) -> None:
+        rows = [
+            (
+                run_id,
+                desc.get("shot_index"),
+                desc.get("start_time"),
+                desc.get("end_time"),
+                desc.get("description"),
+            )
+            for desc in scene_descriptions
+        ]
+
+        if rows:
+            self._conn.executemany(
+                "INSERT INTO scene_descriptions (run_id, shot_index, start_time, end_time, description) VALUES (?, ?, ?, ?, ?)",
                 rows,
             )
 

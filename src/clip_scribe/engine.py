@@ -20,7 +20,7 @@ class ClipScribeEngine:
 
     def run(self) -> None:
         # video_metadata: dict | None = {}
-
+        #
         # try:
         #     video_metadata = self._extract_information()
         # except Exception:
@@ -29,18 +29,23 @@ class ClipScribeEngine:
         video_metadata = 1
 
         if video_metadata:
-            run_id = "6fd22776-e6ed-452a-9c3b-73855f35c8d1"  # self._save_metadata_to_db(video_metadata)
-            metadata_descriptions = self.extractor.get_schema_descriptions()
+            try:
+                run_id = "2b9ffb5e-1118-4df6-85f9-d1b7c0de0910"  # self._save_metadata_to_db(video_metadata)
+                metadata_descriptions = self.extractor.get_schema_descriptions()
 
-            self._save_field_descriptions(metadata_descriptions)
+                self._save_field_descriptions(metadata_descriptions)
 
-            if run_id:
-                self._parse_information(run_id, self.extractor.video_name)
+                if run_id:
+                    self._parse_information(run_id, self.extractor.video_name)
 
-            if self.writer_db:
-                self.writer_db.close()
-            if self.reader_db:
-                self.reader_db.close()
+            except Exception:
+                pass
+
+            finally:
+                if self.writer_db:
+                    self.writer_db.close()
+                if self.reader_db:
+                    self.reader_db.close()
 
         else:
             self.logger.warning("No video metadata to parse")
