@@ -19,15 +19,17 @@ class ClipScribeEngine:
         )
 
     def run(self) -> None:
-        video_metadata: dict | None = {}
+        # video_metadata: dict | None = {}
 
-        try:
-            video_metadata = self._extract_information()
-        except Exception:
-            pass
+        # try:
+        #     video_metadata = self._extract_information()
+        # except Exception:
+        #     pass
+
+        video_metadata = 1
 
         if video_metadata:
-            run_id = self._save_metadata_to_db(video_metadata)
+            run_id = "6fd22776-e6ed-452a-9c3b-73855f35c8d1"  # self._save_metadata_to_db(video_metadata)
             metadata_descriptions = self.extractor.get_schema_descriptions()
 
             self._save_field_descriptions(metadata_descriptions)
