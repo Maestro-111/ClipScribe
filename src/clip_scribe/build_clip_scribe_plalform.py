@@ -12,7 +12,7 @@ def build_platform(platform_name: str, **kwargs):
         )
         youtube_call_to_actions = kwargs.get("youtube_call_to_actions", [])
 
-        YouTubePlatformConf(  # noqa ignore
+        platform = YouTubePlatformConf(  # noqa ignore
             brand_name=youtube_brand_name,
             branded_products=youtube_branded_products,
             branded_products_categories=youtube_branded_products_categories,

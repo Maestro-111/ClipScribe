@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 
 from src.utils.clib_scribe_db import ClipScribeReaderDB
-from src.parser.youtube.evaluator import YouTubeEvaluator
-from src.parser.report_writer import write_report
+from src.parser.evaluator_base import BaseEvaluator
+from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
 
 
@@ -52,19 +52,28 @@ class VideoInformationParser:
             report_name = "abcd"
         return report_name
 
-    def create_evaluator(self):
+    def create_evaluator(self) -> BaseEvaluator | None:
         evaluator = None
 
         if self.platform_name == "youtube":
-            evaluator = YouTubeEvaluator(
+            evaluator = YouTubeEvaluator(  # noqa ignore
                 reader_db=self.reader_db,
                 model=self.model,
                 platform_config=self.platform_config,
+                agentic_eval=YouTubeAgentEvaluation,  # noqa ignore
                 logger=self.logger,
                 max_parallel_agents=self.max_parallel_agents,
             )
 
         return evaluator
+
+    def create_report_writer(self, output_path):
+        report_writer = None
+
+        if self.platform_name == "youtube":
+            report_writer = YouTubeReportWriter(output_path)  # noqa ignore
+
+        return report_writer
 
     def parse(self, run_id: str, video_name: str) -> str:
         """
@@ -80,16 +89,15 @@ class VideoInformationParser:
 
         self.logger.info(f"Starting parser for run {run_id}, video '{video_name}'")
 
-        # Creat evaluator
-        evaluator = self.create_evaluator()
         report_name = self.create_report_name()
-
         output_path = Path(self.output_dir) / video_name / f"{report_name}_report.csv"
 
+        evaluator = self.create_evaluator()
+        report_writer = self.create_report_writer(output_path)
+
         if evaluator is not None:
-            # Evaluate all features
             results = evaluator.evaluate_all(run_id, video_name)
-            write_report(results, str(output_path))
+            report_writer.write_report(results)
 
             self.logger.info(f"Parser completed. Report written to: {output_path}")
 

@@ -1,6 +1,6 @@
 """Baseline (deterministic) feature evaluators for YouTube ABCD criteria."""
 
-from utils.clib_scribe_db import ClipScribeReaderDB
+from src.utils.clib_scribe_db import ClipScribeReaderDB
 
 
 def evaluate_baseline(
@@ -48,31 +48,6 @@ def evaluate_baseline(
             if avg_shot_duration is None:
                 return False
             return avg_shot_duration > 2.0
-
-        case "c_presence_of_people":
-            # Query for person/human labels
-            people_objects = reader_db.get_visual_objects(
-                run_id, label_contains="person"
-            )
-            human_objects = reader_db.get_visual_objects(run_id, label_contains="human")
-            return len(people_objects) > 0 or len(human_objects) > 0
-
-        case "c_presence_of_people_1st_5_secs":
-            # Query for person/human labels in first 5 seconds
-            people_objects = reader_db.get_visual_objects(
-                run_id, label_contains="person", max_lifespan_start=5.0
-            )
-            human_objects = reader_db.get_visual_objects(
-                run_id, label_contains="human", max_lifespan_start=5.0
-            )
-            return len(people_objects) > 0 or len(human_objects) > 0
-
-        case "c_visible_face":
-            # Query for human face labels in first 5 seconds
-            face_objects = reader_db.get_visual_objects(
-                run_id, label_contains="human face", max_lifespan_start=5.0
-            )
-            return len(face_objects) > 0
 
         case "d_audio_speech_early_1st_5_secs":
             # Query for audio segments in first 5 seconds

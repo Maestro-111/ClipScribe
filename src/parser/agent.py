@@ -2,9 +2,9 @@
 
 from langchain_openai import ChatOpenAI
 
-# from langgraph.prebuilt import create_react_agent
-from src.parser.models import AgentEvaluation
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
+
+from src.parser.models import BaseAgentEvaluation
 
 
 def build_agent(model: ChatOpenAI, tools: list):
@@ -18,10 +18,17 @@ def build_agent(model: ChatOpenAI, tools: list):
     Returns:
         Compiled LangGraph agent
     """
-    return create_agent(model, tools)
+    return create_react_agent(model, tools)
 
 
-def run_agent(agent, question: str, instructions: str) -> AgentEvaluation:
+def run_agent(
+    agent,
+    question: str,
+    instructions: str,
+    agentic_eval: type[BaseAgentEvaluation],
+    platform_context: str = "video criteria",
+    feature_type: str = "full_video",
+) -> BaseAgentEvaluation:
     """
     Run the agent with a question and instructions, returning structured evaluation.
 
@@ -29,12 +36,26 @@ def run_agent(agent, question: str, instructions: str) -> AgentEvaluation:
         agent: Compiled LangGraph agent
         question: The evaluation question
         instructions: Additional instructions for the agent
+        agentic_eval: The BaseAgentEvaluation subclass to construct the result with
+        platform_context: Platform-specific context for the system prompt (default: "video criteria")
+        feature_type: Scope of the feature ("first_5_secs_video" or "full_video")
 
     Returns:
-        AgentEvaluation with evaluation (bool) and explanation (str)
+        BaseAgentEvaluation with evaluation (bool) and explanation (str)
     """
-    system_message = f"""You are an expert video analyst evaluating YouTube ABCD criteria.
+    time_scope = ""
+    if feature_type == "first_5_secs_video":
+        time_scope = """
+IMPORTANT — TIME SCOPE RESTRICTION:
+This evaluation applies ONLY to the first 5 seconds of the video.
+You MUST use time filter parameters when calling tools:
+- query_audio_segments: set max_start_time=5
+- query_text_events: set max_second=5
+- query_visual_objects: set max_lifespan_start=5
+Ignore any data beyond the 5-second mark."""
 
+    system_message = f"""You are an expert video analyst evaluating {platform_context}.
+{time_scope}
 Your task:
 1. Query the database using the provided tools to gather relevant information
 2. Analyze the results to answer the question
@@ -77,19 +98,17 @@ Use the tools to query the database, then provide your structured evaluation."""
             evaluation = bool(parsed.get("evaluation", False))
             explanation = str(parsed.get("explanation", "No explanation provided"))
 
-            return AgentEvaluation(evaluation=evaluation, explanation=explanation)
+            return agentic_eval(evaluation=evaluation, explanation=explanation)
         else:
             # Fallback: try to infer evaluation from response
             evaluation = (
                 "true" in final_message.lower() or "yes" in final_message.lower()
             )
-            return AgentEvaluation(
-                evaluation=evaluation, explanation=final_message[:500]
-            )
+            return agentic_eval(evaluation=evaluation, explanation=final_message[:500])
 
     except Exception as e:
         # Fallback for parsing errors
-        return AgentEvaluation(
+        return agentic_eval(
             evaluation=False,
             explanation=f"Error parsing agent response: {str(e)}. Raw response: {final_message[:200]}",
         )

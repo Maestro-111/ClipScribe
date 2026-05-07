@@ -7,7 +7,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4"
+video_name = "DODGE_XSzs0uoxLPs - Dodge Hornet ｜ A New Breed ：15.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 clib_scribe_device = "mps"
@@ -15,22 +15,18 @@ clib_scribe_device = "mps"
 clib_scribe_platform = "youtube"
 
 platform_params = {
-    "youtube_brand_name": "Jeep",
-    "youtube_branded_products": ["Grand Cherokee", "Grand Cherokee L"],
-    "youtube_branded_products_categories": ["SUV", "vehicle"],
+    "youtube_brand_name": "Dodge",
+    "youtube_branded_products": ["Dodge Hornet"],
+    "youtube_branded_products_categories": ["SUV", "vehicle", "car"],
     "youtube_call_to_actions": [
-        "visit",
         "learn more",
         "buy now",
         "order now",
-        "search",
-        "click",
-        "subscribe",
     ],
 }
 
 # Optional: provide explicit hints for extractor, otherwise they are auto-generated from the video name
-user_hints = ["SUV", "vehicle"]
+user_hints = ["SUV", "vehicle", "car", "truck"]
 
 
 try:
@@ -50,7 +46,6 @@ try:
 
     else:
         raise NotImplementedError(f"no {clib_scribe_platform} available")
-
 except Exception:
     traceback.print_exc()
     sys.exit(1)
