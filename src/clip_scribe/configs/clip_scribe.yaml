@@ -122,3 +122,16 @@ database:
   # Path to SQLite database file for storing extraction results
   # Relative to project root. Created automatically if doesn't exist
   path: data/clip_scribe.db
+
+# ============================================================================
+# Parser Configuration
+# ============================================================================
+parser:
+  # LLM model for agentic feature evaluation
+  model: "gpt-4o-mini"
+
+  # Output directory for parser reports (relative to project root)
+  output_dir: "parser_artifacts"
+
+  # Maximum number of parallel LangGraph agents to run concurrently
+  max_parallel_agents: 5

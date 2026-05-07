@@ -26,6 +26,8 @@ dependencies = [
     "openai-whisper>=20250625",
     "paddlepaddle",
     "addict",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
     "yapf",
     "pycocotools",
     "timm",

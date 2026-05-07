@@ -40,7 +40,7 @@ class NumpyEncoder(json.JSONEncoder):
         return super(NumpyEncoder, self).default(obj)
 
 
-class InformationExtractor:
+class VideoInformationExtractor:
 
     """
     Process objects, text, moving history and record in json/csv
