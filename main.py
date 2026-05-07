@@ -7,7 +7,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_EvQO3sH1SMs - 2023 Jeep Grand Cherokee L ｜ Jeep No Limits.mp4"
+video_name = "JEEP_0efgsF7yOCE - Jeep Compass 2023 ｜ Liquidation Totale.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 clib_scribe_device = "mps"
@@ -15,10 +15,17 @@ clib_scribe_device = "mps"
 clib_scribe_platform = "youtube"
 
 platform_params = {
-    "youtube_brand_name": "Jeep Grand Cherokee",
-    "youtube_branded_products": ["Grand Cherokee L", "Grand Cherokee"],
+    "youtube_brand_name": "Jeep Compass",
+    "youtube_branded_products": ["Jeep Compass", "Jeep Compass Lineup"],
     "youtube_branded_products_categories": ["truck", "vehicle", "car", "suv"],
-    "youtube_call_to_actions": ["learn more", "buy now", "order now", "purchase now"],
+    "youtube_call_to_actions": [
+        "learn more",
+        "buy now",
+        "order now",
+        "purchase now",
+        "get now",
+        "apply now",
+    ],
 }
 
 # Optional: provide explicit hints for extractor, otherwise they are auto-generated from the video name
