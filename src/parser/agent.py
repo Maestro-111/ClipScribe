@@ -56,6 +56,7 @@ def run_agent(
     agentic_eval: type[BaseAgentEvaluation],
     platform_context: str = "video criteria",
     time_scope: float | None = None,
+    field_context: str | None = None,
     recursion_limit: int = 25,
 ) -> BaseAgentEvaluation:
     """
@@ -69,6 +70,9 @@ def run_agent(
         platform_context: Platform-specific context for the system prompt (default: "video criteria")
         time_scope: Optional time window in seconds. When set, the agent restricts
                      its evaluation to the first N seconds of the video.
+        field_context: Optional pre-formatted string describing database fields available
+                       to the agent. Injected into the system prompt so the agent
+                       understands what each column means before querying.
         recursion_limit: how many reasoning step?
 
     Returns:
@@ -86,14 +90,23 @@ You MUST use time filter parameters when calling tools:
 - query_scene_descriptions: set max_start_time={time_scope}
 Ignore any data beyond the {time_scope}-second mark."""
 
+    field_context_text = ""
+    if field_context:
+        field_context_text = f"""
+DATABASE FIELD REFERENCE:
+Use this reference to understand the meaning and value ranges of fields returned by your query tools.
+Analyze these fields explicitly when reasoning about the criteria.
+{field_context}"""
+
     system_message = f"""You are an expert video analyst evaluating {platform_context}.
 {time_scope_text}
+{field_context_text}
 Your task:
 1. Query the database using the provided tools to gather relevant information
-2. Analyze the results to answer the question
+2. Analyze the results to answer the question — pay attention to quantitative fields and their values
 3. Return your evaluation as JSON with two fields:
    - "evaluation": true or false
-   - "explanation": a concise explanation (1-3 sentences) of your reasoning
+   - "explanation": a concise explanation (1-3 sentences) of your reasoning, citing specific field values when relevant
 
 Question: {question}
 

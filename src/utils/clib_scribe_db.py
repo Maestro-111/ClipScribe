@@ -113,6 +113,23 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         cursor = self._conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_field_descriptions(self, table_name: str | None = None) -> list[dict]:
+        """
+        Fetch field descriptions from the field_descriptions table.
+        Optionally filter by table_name.
+        """
+        query = "SELECT table_name, column_name, description FROM field_descriptions"
+        params: list[str] = []
+
+        if table_name is not None:
+            query += " WHERE table_name = ?"
+            params.append(table_name)
+
+        query += " ORDER BY table_name, column_name"
+
+        cursor = self._conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
     def get_scene_descriptions(
         self,
         run_id: str,

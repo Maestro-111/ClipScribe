@@ -57,7 +57,7 @@ clip_scribe:
     max_parallel_agents: 5
 
     # agent max reasoning steps
-    recursion_limit: 40
+    recursion_limit: 50
 
 # ============================================================================
 # GroundingDINO Object Detection

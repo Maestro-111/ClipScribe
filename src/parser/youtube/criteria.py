@@ -261,7 +261,8 @@ def get_feature_configs():
             "question": "Are there people present at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Query the extracted video data using the provided tools to answer the question.",
+                "Search visual objects for person-related labels such as 'person', 'human', 'man', 'woman', 'face', 'hand', 'body'.",
+                "Also check scene descriptions for mentions of people, characters, or human figures.",
                 "Provide the exact timestamp when people are present in the video.",
             ],
             "mode": "agentic",
@@ -277,6 +278,8 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse visual data from the first 5 seconds of the video.",
+                "Search visual objects for person-related labels such as 'person', 'human', 'man', 'woman', 'face', 'hand', 'body'.",
+                "Also check scene descriptions for mentions of people, characters, or human figures.",
                 "Provide the exact timestamp when people are present.",
             ],
             "mode": "agentic",
@@ -292,7 +295,9 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse visual data from the first 5 seconds of the video.",
-                "Provide the exact timestamp when the human face is present.",
+                "Search visual objects for face-related labels such as 'face', 'human face', 'person'.",
+                "Check the screen_coverage field to confirm the face is actually visible (not a tiny background element).",
+                "Provide the exact timestamp and screen_coverage value when the face is present.",
             ],
             "mode": "agentic",
             "tool_group": "visual",
@@ -306,8 +311,11 @@ def get_feature_configs():
             "question": "Is there a close up of a human face present at any time the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Query the extracted video data using the provided tools to answer the question.",
-                "Provide the exact timestamp when there is a close up of a human face.",
+                "Search visual objects for face-related labels such as 'face', 'human face', 'person'.",
+                "A 'close up' is determined by analyzing the screen_coverage field: a value >= 0.15 (15% of frame area) indicates the face occupies a significant portion of the screen, consistent with a close-up shot.",
+                "Also consider centrality_score (lower values mean the face is more centered/focal) and growth_factor (values > 1.0 suggest the subject is approaching the camera).",
+                "You MUST check the actual screen_coverage values — do not assume a face is a close-up just because it exists.",
+                "Provide the exact timestamp, screen_coverage, and centrality_score of the close-up face.",
             ],
             "mode": "agentic",
             "tool_group": "visual",
