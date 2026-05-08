@@ -7,33 +7,57 @@ paths:
   checkpoints: checkpoints
 
 # ============================================================================
-# Core Extraction Settings
+# ClipScribe Core Settings
 # ============================================================================
-clib_scribe:
-  # SBERT cosine similarity threshold for mapping raw DINO labels to canonical taxonomy targets
-  # Lower = more lenient matching (e.g., "sedan" matches "car")
-  # Range: 0.0-1.0. Default: 0.4
-  word_similarity_threshold: 0.35
+clip_scribe:
+  # --------------------------------------------------------------------------
+  # Extractor Settings
+  # --------------------------------------------------------------------------
+  extractor:
+    # SBERT cosine similarity threshold for mapping raw DINO labels to canonical taxonomy targets
+    # Lower = more lenient matching (e.g., "sedan" matches "car")
+    # Range: 0.0-1.0. Default: 0.4
+    word_similarity_threshold: 0.35
 
-  # DINOv2 visual similarity threshold for merging objects with SAME labels across shots
-  # Higher = stricter identity matching (reduces false merges of similar-looking objects)
-  # Range: 0.0-1.0. Default: 0.6
-  label_match_merge_threshold: 0.6
+    # DINOv2 visual similarity threshold for merging objects with SAME labels across shots
+    # Higher = stricter identity matching (reduces false merges of similar-looking objects)
+    # Range: 0.0-1.0. Default: 0.6
+    label_match_merge_threshold: 0.6
 
-  # DINOv2 visual similarity threshold for merging objects with DIFFERENT labels across shots
-  # Very high threshold acts as "visual override" when labels disagree but appearance is identical
-  # Range: 0.0-1.0. Default: 0.85
-  label_no_match_merge_threshold: 0.85
+    # DINOv2 visual similarity threshold for merging objects with DIFFERENT labels across shots
+    # Very high threshold acts as "visual override" when labels disagree but appearance is identical
+    # Range: 0.0-1.0. Default: 0.85
+    label_no_match_merge_threshold: 0.85
 
-  # Number of frames to track detected objects before running detection again
-  # Higher = faster processing but may miss new objects appearing mid-shot
-  # Range: 1-30 frames. Default: 10
-  detection_interval: 8
+    # Number of frames to track detected objects before running detection again
+    # Higher = faster processing but may miss new objects appearing mid-shot
+    # Range: 1-30 frames. Default: 10
+    detection_interval: 8
 
-  # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
-  # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
-  # Range: 10-50 frames. Default: 20
-  reid_model_frame_check_freq: 10
+    # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
+    # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
+    # Range: 10-50 frames. Default: 20
+    reid_model_frame_check_freq: 10
+
+  # --------------------------------------------------------------------------
+  # Parser Settings
+  # --------------------------------------------------------------------------
+  parser:
+    # LLM model for agentic feature evaluation
+    agent:
+      llm: "gpt-4o-mini"
+      temperature: 0.2
+      max_tokens: 1000
+      max_retries: 10
+
+    # Output directory for parser reports (relative to project root)
+    output_dir: "parser_artifacts"
+
+    # Maximum number of parallel LangGraph agents to run concurrently
+    max_parallel_agents: 5
+
+    # agent max reasoning steps
+    recursion_limit: 40
 
 # ============================================================================
 # GroundingDINO Object Detection
@@ -122,16 +146,3 @@ database:
   # Path to SQLite database file for storing extraction results
   # Relative to project root. Created automatically if doesn't exist
   path: data/clip_scribe.db
-
-# ============================================================================
-# Parser Configuration
-# ============================================================================
-parser:
-  # LLM model for agentic feature evaluation
-  model: "gpt-4o-mini"
-
-  # Output directory for parser reports (relative to project root)
-  output_dir: "parser_artifacts"
-
-  # Maximum number of parallel LangGraph agents to run concurrently
-  max_parallel_agents: 5

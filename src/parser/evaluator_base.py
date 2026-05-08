@@ -3,7 +3,6 @@
 import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from langchain_openai import ChatOpenAI
 
 from src.utils.clib_scribe_db import ClipScribeReaderDB
 from src.parser.tools import build_tools
@@ -19,19 +18,20 @@ class BaseEvaluator(ABC):
     def __init__(
         self,
         reader_db: ClipScribeReaderDB,
-        model: str,
+        model,
         platform_config: BasePlatformConf,
         agentic_eval: type[BaseAgentEvaluation],
         logger: logging.Logger,
         max_parallel_agents: int = 5,
+        recursion_limit: int = 25,
     ):
         self.reader_db = reader_db
-        self.model_name = model
+        self.model = model
         self.platform_config = platform_config
         self.agentic_eval = agentic_eval
         self.logger = logger
         self.max_parallel_agents = max_parallel_agents
-        self.llm = ChatOpenAI(model=model, temperature=0)
+        self.recursion_limit = recursion_limit
 
     @property
     @abstractmethod
@@ -87,7 +87,7 @@ class BaseEvaluator(ABC):
 
         tool_group = feature["tool_group"]
         tools = build_tools(self.reader_db, run_id, tool_group)
-        agent = build_agent(self.llm, tools)
+        agent = build_agent(self.model, tools)
 
         criteria = feature.get("criteria", "")
         question = self._resolve_placeholders(feature["question"], criteria=criteria)
@@ -110,6 +110,7 @@ class BaseEvaluator(ABC):
                 agentic_eval=self.agentic_eval,
                 platform_context=self.platform_context,
                 time_scope=time_scope,
+                recursion_limit=self.recursion_limit,
             )
 
             return self.build_feature_result(
@@ -184,7 +185,10 @@ class BaseEvaluator(ABC):
         with ThreadPoolExecutor(max_workers=self.max_parallel_agents) as executor:
             future_to_feature = {
                 executor.submit(
-                    self._evaluate_agentic_feature, feature, run_id, video_name
+                    self._evaluate_agentic_feature,
+                    feature,
+                    run_id,
+                    video_name,
                 ): feature
                 for feature in agentic_features
             }
