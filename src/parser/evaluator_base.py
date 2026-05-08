@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.utils.clib_scribe_db import ClipScribeReaderDB
-from src.parser.tools import build_tools
+from src.parser.tools import build_tools, TOOL_GROUP_TABLES
 from src.parser.agent import build_agent, run_agent
 from src.parser.models import BaseFeatureResult, BaseAgentEvaluation
 
@@ -79,8 +79,40 @@ class BaseEvaluator(ABC):
         """
         ...
 
+    def _build_field_context(self, tool_group: str) -> str | None:
+        """Fetch field descriptions for the tables relevant to a tool_group
+        and format them into a readable reference string for the agent."""
+        table_names = TOOL_GROUP_TABLES.get(tool_group, [])
+
+        if not table_names:
+            return None
+
+        all_descriptions: list[dict] = []
+        for table_name in table_names:
+            all_descriptions.extend(self.reader_db.get_field_descriptions(table_name))
+
+        if not all_descriptions:
+            return None
+
+        # Group by table for readable formatting
+        by_table: dict[str, list[dict]] = {}
+        for desc in all_descriptions:
+            by_table.setdefault(desc["table_name"], []).append(desc)
+
+        lines: list[str] = []
+        for table_name, columns in by_table.items():
+            lines.append(f"\nTable: {table_name}")
+            for col in columns:
+                lines.append(f"  - {col['column_name']}: {col['description']}")
+
+        return "\n".join(lines)
+
     def _evaluate_agentic_feature(
-        self, feature: dict, run_id: str, video_name: str
+        self,
+        feature: dict,
+        run_id: str,
+        video_name: str,
+        field_context: str | None = None,
     ) -> BaseFeatureResult:
         feature_id = feature["id"]
         self.logger.info(f"Evaluating agentic feature: {feature_id}")
@@ -110,6 +142,7 @@ class BaseEvaluator(ABC):
                 agentic_eval=self.agentic_eval,
                 platform_context=self.platform_context,
                 time_scope=time_scope,
+                field_context=field_context,
                 recursion_limit=self.recursion_limit,
             )
 
@@ -182,6 +215,13 @@ class BaseEvaluator(ABC):
             f"(max {self.max_parallel_agents} concurrent)..."
         )
 
+        # Pre-compute field contexts on the main thread to avoid concurrent
+        # SQLite access from worker threads.
+        unique_tool_groups = {f["tool_group"] for f in agentic_features}
+        field_contexts: dict[str, str | None] = {
+            tg: self._build_field_context(tg) for tg in unique_tool_groups
+        }
+
         with ThreadPoolExecutor(max_workers=self.max_parallel_agents) as executor:
             future_to_feature = {
                 executor.submit(
@@ -189,6 +229,7 @@ class BaseEvaluator(ABC):
                     feature,
                     run_id,
                     video_name,
+                    field_contexts.get(feature["tool_group"]),
                 ): feature
                 for feature in agentic_features
             }

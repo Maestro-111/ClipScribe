@@ -4,6 +4,24 @@ import json
 from langchain_core.tools import tool
 from src.utils.clib_scribe_db import ClipScribeReaderDB
 
+TOOL_GROUP_TABLES: dict[str, list[str]] = {
+    "audio": ["audio_segments", "scene_descriptions", "global_stats"],
+    "text": ["text_events", "scene_descriptions", "global_stats"],
+    "visual": ["visual_object_occurrences", "scene_descriptions", "global_stats"],
+    "audio_text": [
+        "audio_segments",
+        "text_events",
+        "scene_descriptions",
+        "global_stats",
+    ],
+    "visual_text": [
+        "visual_object_occurrences",
+        "text_events",
+        "scene_descriptions",
+        "global_stats",
+    ],
+}
+
 
 def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> list:
     """
@@ -147,22 +165,62 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
         except Exception:
             return json.dumps([])
 
+    @tool
+    def query_field_descriptions(table_name: str | None = None) -> str:
+        """
+        Query field descriptions to understand the meaning of database columns.
+        Call this before analyzing query results to understand what each field represents.
+
+        Args:
+            table_name: Optional table name to filter (e.g., "visual_object_occurrences",
+                        "audio_segments", "text_events", "scene_descriptions", "global_stats").
+                        If None, returns descriptions for all tables.
+
+        Returns:
+            JSON string containing list of field descriptions with fields:
+            - table_name: the database table
+            - column_name: the column in that table
+            - description: human-readable explanation of what this field means and how to interpret its values
+        """
+        try:
+            descriptions = reader_db.get_field_descriptions(table_name)
+            return json.dumps(descriptions, indent=2)
+        except Exception:
+            return json.dumps([])
+
     # Map tool groups to relevant tools
     tool_map = {
-        "audio": [query_audio_segments, query_scene_descriptions, query_global_stats],
-        "text": [query_text_events, query_scene_descriptions, query_global_stats],
-        "visual": [query_visual_objects, query_scene_descriptions, query_global_stats],
+        "audio": [
+            query_audio_segments,
+            query_scene_descriptions,
+            query_global_stats,
+            query_field_descriptions,
+        ],
+        "text": [
+            query_text_events,
+            query_scene_descriptions,
+            query_global_stats,
+            query_field_descriptions,
+        ],
+        "visual": [
+            query_visual_objects,
+            query_scene_descriptions,
+            query_global_stats,
+            query_field_descriptions,
+        ],
         "audio_text": [
             query_audio_segments,
             query_text_events,
             query_scene_descriptions,
             query_global_stats,
+            query_field_descriptions,
         ],
         "visual_text": [
             query_visual_objects,
             query_text_events,
             query_scene_descriptions,
             query_global_stats,
+            query_field_descriptions,
         ],
     }
 
