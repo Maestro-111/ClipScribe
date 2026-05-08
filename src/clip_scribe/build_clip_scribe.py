@@ -52,13 +52,16 @@ def build_clip_scribe(
         models_weights_dir = clib_scribe_paths["checkpoints"]
 
         dino_params = _cfg["dino"]
-        clib_scribe_general_params = _cfg["clib_scribe"]
+        clip_scribe_params = _cfg["clip_scribe"]
+        clib_scribe_extractor_params = clip_scribe_params["extractor"]
         face_detection_params = _cfg["face_detection"]
         taxonomy_params = _cfg["taxonomy"]
         audio_params = _cfg["audio"]
         sam2_params = _cfg["sam2"]
         scene_analysis_params = _cfg["scene_analysis"]
-        parser_params = _cfg.get("parser", {})
+
+        clib_scribe_parser_params = clip_scribe_params.get("parser", {})
+        parser_agent_params = clib_scribe_parser_params.get("agent", {})
 
         db_params = _cfg.get("database", {})
         db_path = PROJECT_ROOT / db_params.get("path", "data/clip_scribe.db")
@@ -74,20 +77,20 @@ def build_clip_scribe(
 
         torch_face_cong: float = face_detection_params.get("torch_face_cong", 0.9)
 
-        label_match_merge_threshold: float = clib_scribe_general_params.get(
+        label_match_merge_threshold: float = clib_scribe_extractor_params.get(
             "label_match_merge_threshold", 0.6
         )
-        label_no_match_merge_threshold: float = clib_scribe_general_params.get(
+        label_no_match_merge_threshold: float = clib_scribe_extractor_params.get(
             "label_no_match_merge_threshold", 0.8
         )
-        word_similarity_threshold: float = clib_scribe_general_params.get(
+        word_similarity_threshold: float = clib_scribe_extractor_params.get(
             "word_similarity_threshold", 0.4
         )
-        detection_interval: int = clib_scribe_general_params.get(
+        detection_interval: int = clib_scribe_extractor_params.get(
             "detection_interval", 10
         )
 
-        reid_model_frame_check_freq: int = clib_scribe_general_params.get(
+        reid_model_frame_check_freq: int = clib_scribe_extractor_params.get(
             "reid_model_frame_check_freq", 20
         )
 
@@ -207,20 +210,21 @@ def build_clip_scribe(
         reader_db = ClipScribeReaderDB(db_path=db_path, logger=logger)
 
         # Parser configuration
-        parser_model = parser_params.get("model", "gpt-4o-mini")
-        parser_output_dir = PROJECT_ROOT / parser_params.get(
+        parser_output_dir = PROJECT_ROOT / clib_scribe_parser_params.get(
             "output_dir", "parser_artifacts"
         )
-        parser_max_parallel = parser_params.get("max_parallel_agents", 5)
+        parser_max_parallel = clib_scribe_parser_params.get("max_parallel_agents", 5)
+        recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
 
         info_parser = VideoInformationParser(
             reader_db=reader_db,
-            model=parser_model,
+            agent=parser_agent_params,
             platform_name=clib_scribe_platform_name,
             platform_config=clib_scribe_platform_conf,
             output_dir=str(parser_output_dir),
             logger=logger,
             max_parallel_agents=parser_max_parallel,
+            recursion_limit=recursion_limit,
         )
 
         clib_scribe = ClipScribeEngine(

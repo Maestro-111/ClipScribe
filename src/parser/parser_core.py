@@ -7,6 +7,7 @@ from src.utils.clib_scribe_db import ClipScribeReaderDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
+from langchain_openai import ChatOpenAI
 
 
 class VideoInformationParser:
@@ -15,36 +16,54 @@ class VideoInformationParser:
     def __init__(
         self,
         reader_db: ClipScribeReaderDB,
-        model: str,
+        agent: dict,
         platform_name: str,
         platform_config: BasePlatformConf,
         output_dir: str,
         logger: logging.Logger,
         max_parallel_agents: int = 5,
+        recursion_limit: int = 20,
     ):
         """
         Initialize the video information parser.
 
         Args:
             reader_db: Database reader instance
-            model: LLM model name for agentic evaluation
+            agent: agent configuration
             platform_config: Platform-specific configuration (brand_name, products, etc.)
             output_dir: Output directory for parser reports
             logger: Logger instance
             max_parallel_agents: Maximum number of parallel agent executions
         """
+
         self.reader_db = reader_db
-        self.model = model
         self.platform_name = platform_name
         self.platform_config = platform_config
         self.output_dir = output_dir
         self.logger = logger
         self.max_parallel_agents = max_parallel_agents
+        self.recursion_limit = recursion_limit
+        self.model = self.create_agent_model(agent)
 
     def __repr__(self) -> str:
-        return (
-            f"VideoInformationParser(model={self.model}, output_dir={self.output_dir})"
+        return f"VideoInformationParser(model={self.model.model_name}, output_dir={self.output_dir})"
+
+    @staticmethod
+    def create_agent_model(agent: dict):
+        llm = agent.get("llm", "gpt-4o-mini")
+        temperature = agent.get("temperature", 0.0)
+        max_tokens = agent.get("max_tokens", 1000)
+        max_retries = agent.get("max_retries", 7)
+
+        model = ChatOpenAI(
+            model=llm,
+            temperature=temperature,
+            timeout=30,
+            max_tokens=max_tokens,
+            max_retries=max_retries,
         )
+
+        return model
 
     def create_report_name(self) -> str:
         report_name = ""
@@ -63,6 +82,7 @@ class VideoInformationParser:
                 agentic_eval=YouTubeAgentEvaluation,  # noqa ignore
                 logger=self.logger,
                 max_parallel_agents=self.max_parallel_agents,
+                recursion_limit=self.recursion_limit,
             )
 
         return evaluator

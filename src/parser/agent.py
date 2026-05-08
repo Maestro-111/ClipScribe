@@ -56,6 +56,7 @@ def run_agent(
     agentic_eval: type[BaseAgentEvaluation],
     platform_context: str = "video criteria",
     time_scope: float | None = None,
+    recursion_limit: int = 25,
 ) -> BaseAgentEvaluation:
     """
     Run the agent with a question and instructions, returning structured evaluation.
@@ -68,6 +69,7 @@ def run_agent(
         platform_context: Platform-specific context for the system prompt (default: "video criteria")
         time_scope: Optional time window in seconds. When set, the agent restricts
                      its evaluation to the first N seconds of the video.
+        recursion_limit: how many reasoning step?
 
     Returns:
         BaseAgentEvaluation with evaluation (bool) and explanation (str)
@@ -110,7 +112,7 @@ Use the tools to query the database, then provide your structured evaluation."""
                     {"role": "system", "content": system_message},
                 ]
             },
-            {"recursion_limit": 25},
+            {"recursion_limit": recursion_limit},
             stream_mode="values",
         ):
             messages = chunk["messages"]
