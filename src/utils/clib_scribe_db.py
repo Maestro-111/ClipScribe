@@ -25,6 +25,12 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         super().__init__(db_path, logger)
         self._conn.row_factory = sqlite3.Row
 
+    def get_run(self, run_id: str) -> dict | None:
+        """Fetch a specific run by its run_id."""
+        cursor = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def get_latest_run(self) -> dict | None:
         """Fetch the most recent run from the runs table."""
         cursor = self._conn.execute(
@@ -252,6 +258,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         video_path: str,
         video_type: str,
         video_metadata: dict,
+        field_descriptions: dict,
     ) -> str:
         run_id = str(uuid.uuid4())
 
@@ -268,6 +275,8 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             self._insert_scene_descriptions(
                 run_id, video_metadata.get("scene_descriptions", [])
             )
+
+            self._insert_field_descriptions(field_descriptions)
 
         self.logger.info(f"Saved run {run_id} for '{video_name}'")
         return run_id
@@ -407,23 +416,14 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 rows,
             )
 
-    def save_field_descriptions(self, descriptions: dict) -> None:
-        """
-        Persist field descriptions to the field_descriptions table.
-        Idempotent: uses INSERT OR IGNORE to safely skip existing entries.
-
-        Args:
-            descriptions: Flat dict {table_name: {column_name: description}}
-        """
+    def _insert_field_descriptions(self, descriptions: dict) -> None:
         rows = []
         for table_name, columns in descriptions.items():
             for column_name, description in columns.items():
                 rows.append((table_name, column_name, description))
 
         if rows:
-            with self._conn:
-                self._conn.executemany(
-                    "INSERT OR IGNORE INTO field_descriptions (table_name, column_name, description) VALUES (?, ?, ?)",
-                    rows,
-                )
-            self.logger.info(f"Saved {len(rows)} field descriptions to DB.")
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO field_descriptions (table_name, column_name, description) VALUES (?, ?, ?)",
+                rows,
+            )
