@@ -36,6 +36,7 @@ def build_clip_scribe(
     video_name: str,
     video_path: str,
     video_type: str | None,
+    clib_scribe_mode: str,
     clib_scribe_device: str,
     clib_scribe_platform_name: str,
     clib_scribe_platform_conf: BasePlatformConf,
@@ -176,9 +177,6 @@ def build_clip_scribe(
         face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
 
         info_extractor = VideoInformationExtractor(
-            video_type,
-            video_path,
-            video_name,
             sam2,
             dino,
             scene_describer,
@@ -217,7 +215,6 @@ def build_clip_scribe(
         recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
 
         info_parser = VideoInformationParser(
-            reader_db=reader_db,
             agent=parser_agent_params,
             platform_name=clib_scribe_platform_name,
             platform_config=clib_scribe_platform_conf,
@@ -228,9 +225,13 @@ def build_clip_scribe(
         )
 
         clib_scribe = ClipScribeEngine(
+            mode=clib_scribe_mode,
+            logger=logger,
+            video_name=video_name,
+            video_path=video_path,
+            video_type=video_type,
             extractor=info_extractor,
             parser=info_parser,
-            logger=logger,
             reader_db=reader_db,
             writer_db=writer_db,
         )

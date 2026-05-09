@@ -257,9 +257,6 @@ class VideoInformationExtractor:
 
     def __init__(
         self,
-        video_type: str | None,
-        video_path: str,
-        video_name: str,
         sam_model: torch.nn.Module,
         dino_model: "DinoDetector",
         scene_describer: "GPTSceneDescriber",
@@ -299,13 +296,6 @@ class VideoInformationExtractor:
         self.reid_model = reid_model
 
         self.face_detection = face_detection
-
-        # video params
-
-        self.video_path = video_path
-        self.video_name = video_name
-        self.video_type = video_type
-
         self.detection_interval = detection_interval
 
         self.current_frame = 0
@@ -327,8 +317,6 @@ class VideoInformationExtractor:
 
         self.torch_face_cong = torch_face_cong
 
-        self.artifact_path = f"extractor_artifacts/{self.video_name}/"
-
         self.label_match_merge_threshold = label_match_merge_threshold
         self.label_no_match_merge_threshold = label_no_match_merge_threshold
 
@@ -347,20 +335,18 @@ class VideoInformationExtractor:
         self.max_samples = max_samples
         self.sampling_rate = sampling_rate
 
-        self._state_init()
-
     def __repr__(self) -> str:
         return f"InformationExtractor: device: {self.device}"
 
-    def _state_init(self):
+    def _state_init(self, artifact_path: str, video_path: str):
         """Open the video capture, initialize the video writer, and set up SAM inference state."""
-        if not os.path.exists(self.artifact_path):
-            os.makedirs(self.artifact_path)
+        if not os.path.exists(artifact_path):
+            os.makedirs(artifact_path)
 
-        self.cap = cv2.VideoCapture(self.video_path)
+        self.cap = cv2.VideoCapture(video_path)
 
         if not self.cap.isOpened():
-            raise ValueError(f"Could not open video: {self.video_path}")
+            raise ValueError(f"Could not open video: {video_path}")
 
         fps = self.cap.get(cv2.CAP_PROP_FPS)
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -373,7 +359,7 @@ class VideoInformationExtractor:
 
         self.fps = fps
 
-        output_filename = os.path.join(self.artifact_path, "tracked_output.mp4")
+        output_filename = os.path.join(artifact_path, "tracked_output.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"avc1")
 
         self.video_writer = cv2.VideoWriter(
@@ -381,10 +367,10 @@ class VideoInformationExtractor:
         )
         self.logger.info(f"Recording video to: {output_filename}")
 
-        self.inference_state = self.sam_model.init_state(video_path=self.video_path)
+        self.inference_state = self.sam_model.init_state(video_path=video_path)
         self.total_frames = self.inference_state["num_frames"]
 
-        self.logger.info(f"Video opened: {self.video_path}")
+        self.logger.info(f"Video opened: {video_path}")
         self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
 
     def cleanup(self):
@@ -839,7 +825,7 @@ class VideoInformationExtractor:
         if frame_idx % 30 == 0:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
-    def _digest_video(self):
+    def _digest_video(self, video_path: str):
         """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
         self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
@@ -847,7 +833,7 @@ class VideoInformationExtractor:
         # 1. Run Scene Detection
         # threshold=27.0 compares adjacent frames' content (HSV).
         # >27 diff = Cut.
-        scene_list = detect(self.video_path, ContentDetector(threshold=27.0))
+        scene_list = detect(video_path, ContentDetector(threshold=27.0))
 
         # Format: [(start_frame, end_frame), ...]
         self.shot_boundaries = [
@@ -932,9 +918,9 @@ class VideoInformationExtractor:
 
         self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
-    def _save_results_to_json(self, information):
+    def _save_results_to_json(self, information, artifact_path: str):
         """Serialize the extraction results dict to extraction_summary.json."""
-        output_file = os.path.join(self.artifact_path, "extraction_summary.json")
+        output_file = os.path.join(artifact_path, "extraction_summary.json")
         try:
             with open(output_file, "w") as f:
                 json.dump(information, f, cls=NumpyEncoder, indent=4)
@@ -962,12 +948,12 @@ class VideoInformationExtractor:
             box=box,
         )
 
-    def _analyze_audio(self):
+    def _analyze_audio(self, video_path: str):
         """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
         self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
 
         result = self.audio_model.transcribe(
-            audio=self.video_path,
+            audio=video_path,
             verbose=False,
             no_speech_threshold=0.6,
             condition_on_previous_text=False,
@@ -999,13 +985,17 @@ class VideoInformationExtractor:
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
-    def extract(self):
+    def extract(self, video_type: str | None, video_path: str, video_name: str):
         """
         Main entry point. Runs the full pipeline: scene analysis, audio transcription,
         per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
         """
-        self._digest_video()
-        self._analyze_audio()
+
+        artifact_path = f"extractor_artifacts/{video_name}/"
+        self._state_init(artifact_path, video_path)
+
+        self._digest_video(video_path)
+        self._analyze_audio(video_path)
 
         self.logger.info("--- Step 3: Tracking/OCR ---")
 
@@ -1071,7 +1061,7 @@ class VideoInformationExtractor:
             )
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
-                self.video_type, scene_context=combined_raw_context
+                video_type, scene_context=combined_raw_context
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
@@ -1100,17 +1090,17 @@ class VideoInformationExtractor:
                 )
 
                 text_viz_path = os.path.join(
-                    self.artifact_path,
+                    artifact_path,
                     f"ocr_result_{shot_idx}_{self.current_frame}.png",
                 )
 
                 face_viz_path = os.path.join(
-                    self.artifact_path,
+                    artifact_path,
                     f"torch_face_result_{shot_idx}_{self.current_frame}.png",
                 )
 
                 object_viz_path = os.path.join(
-                    self.artifact_path,
+                    artifact_path,
                     f"dino_general_result_{shot_idx}_{self.current_frame}.png",
                 )
 
@@ -1127,7 +1117,7 @@ class VideoInformationExtractor:
                     label = box_info["label"]
 
                     self.logger.info(
-                        f"trying to match {label} with {self.video_type} taxonomy targets"
+                        f"trying to match {label} with {video_type} taxonomy targets"
                     )
 
                     best_semantic = self.taxonomy_resolver.resolve(
@@ -1217,6 +1207,6 @@ class VideoInformationExtractor:
         self.logger.info("Video Processing Complete. Finalizing data...")
 
         information = self._finalize_data()
-        self._save_results_to_json(information)
+        self._save_results_to_json(information, artifact_path)
 
         return information

@@ -4,55 +4,108 @@ class ClipScribeEngine:
     Core
     """
 
-    def __init__(self, extractor, parser, logger, reader_db=None, writer_db=None):
+    def __init__(
+        self,
+        mode: str,
+        logger,
+        video_name: str,
+        video_path: str,
+        video_type: str | None,
+        extractor,
+        parser,
+        reader_db=None,
+        writer_db=None,
+    ):
+        self.mode = mode
+
+        self.video_name = video_name
+        self.video_path = video_path
+        self.video_type = video_type
+
         self.extractor = extractor
         self.parser = parser
         self.logger = logger
-
         self.writer_db = writer_db
         self.reader_db = reader_db
 
     def __repr__(self) -> str:
         return (
             f"This is ClibScribe - smartest video processor! "
+            f"mode : {self.mode}, "
             f"(extractor={self.extractor}, parser={self.parser})"
         )
 
-    def run(self) -> None:
+    def run(self, run_id: str = ""):
+        if self.mode == "full":
+            self.parse_extract()
+        elif self.mode == "extract":
+            self.extract()
+        elif self.mode == "parse":
+            self.parse(run_id)
+        else:
+            raise ValueError(
+                f"Invalid mode: {self.mode}. Supported modes: 'full', 'extract', 'parse'"
+            )
+
+    def extract(self):
         video_metadata: dict | None = {}
 
         try:
-            video_metadata = self._extract_information()
-        except Exception:
+            video_metadata = self._run_extractor()
+        except Exception:  # can be None, will skip later
             pass
 
+        return video_metadata
+
+    def parse(self, run_id: str):
+        try:
+            if run_id:
+                if self.reader_db is None:
+                    raise Exception("parse called without a reader_db")
+                if self.reader_db.get_run(run_id) is None:
+                    raise ValueError(f"run_id '{run_id}' not found in database")
+                self._run_parser(run_id)
+
+        except Exception as e:
+            raise e
+
+        finally:
+            if self.writer_db:
+                self.writer_db.close()
+            if self.reader_db:
+                self.reader_db.close()
+
+    def parse_extract(self) -> None:
+        """
+
+        Run the whole Clib Scribe engine: extract all information from video + parse it
+
+        :return:
+        """
+
+        video_metadata = self.extract()
+
         if video_metadata:
-            try:
-                run_id = self._save_metadata_to_db(video_metadata)
-                metadata_descriptions = self.extractor.get_schema_descriptions()
-
-                self._save_field_descriptions(metadata_descriptions)
-
-                if run_id:
-                    self._parse_information(run_id, self.extractor.video_name)
-
-            except Exception:
-                pass
-
-            finally:
-                if self.writer_db:
-                    self.writer_db.close()
-                if self.reader_db:
-                    self.reader_db.close()
+            metadata_descriptions = self.extractor.get_schema_descriptions()
+            run_id = self._save_metadata_to_db(video_metadata, metadata_descriptions)
+            self.parse(run_id)
 
         else:
             self.logger.warning("No video metadata to parse")
 
         return
 
-    def _extract_information(self) -> dict | None:
+    def _run_extractor(self) -> dict | None:
+        if self.extractor is None:
+            return None
+
         try:
-            metadata = self.extractor.extract()
+            metadata = self.extractor.extract(
+                video_name=self.video_name,
+                video_path=self.video_path,
+                video_type=self.video_type,
+            )
+
             self.logger.info("Extraction finished successfully.")
             return metadata
         except KeyboardInterrupt:
@@ -67,32 +120,37 @@ class ClipScribeEngine:
             self.extractor.cleanup()
             self.logger.info("Done!")
 
-    def _save_metadata_to_db(self, video_metadata: dict) -> str | None:
+    def _save_metadata_to_db(
+        self, video_metadata: dict, field_descriptions: dict
+    ) -> str:
         if self.writer_db is None:
-            return None
+            raise Exception("_save_metadata_to_db called without a writer_db")
 
         run_id = self.writer_db.save_run(
             video_name=self.extractor.video_name,
             video_path=self.extractor.video_path,
             video_type=self.extractor.video_type,
             video_metadata=video_metadata,
+            field_descriptions=field_descriptions,
         )
         return run_id
 
-    def _save_field_descriptions(self, descriptions: dict) -> None:
-        if self.writer_db is None:
-            return
-
-        self.writer_db.save_field_descriptions(descriptions)
-
-    def _parse_information(self, run_id: str, video_name: str) -> None:
+    def _run_parser(self, run_id: str) -> None:
         """
         Parse and evaluate video information.
 
         Args:
             run_id: Run identifier from database
-            video_name: Name of the video
         """
 
-        report_path = self.parser.parse(run_id, video_name)
+        if self.parser is None:
+            return None
+
+        if self.reader_db is None:
+            raise Exception("_parse_information called without a reader_db")
+
+        report_path = self.parser.parse(
+            run_id=run_id, reader_db=self.reader_db, video_name=self.video_name
+        )
+
         self.logger.info(f"Parser report generated: {report_path}")
