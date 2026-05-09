@@ -4,7 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from src.utils.clib_scribe_db import ClipScribeReaderDB
+from src.db import ClipScribeReaderDB
 from src.parser.tools import build_tools, TOOL_GROUP_TABLES
 from src.parser.agent import build_agent, run_agent
 from src.parser.models import BaseFeatureResult, BaseAgentEvaluation

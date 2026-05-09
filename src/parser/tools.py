@@ -2,7 +2,7 @@
 
 import json
 from langchain_core.tools import tool
-from src.utils.clib_scribe_db import ClipScribeReaderDB
+from src.db import ClipScribeReaderDB
 
 TOOL_GROUP_TABLES: dict[str, list[str]] = {
     "audio": ["audio_segments", "scene_descriptions", "global_stats"],

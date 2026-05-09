@@ -127,9 +127,9 @@ class ClipScribeEngine:
             raise Exception("_save_metadata_to_db called without a writer_db")
 
         run_id = self.writer_db.save_run(
-            video_name=self.extractor.video_name,
-            video_path=self.extractor.video_path,
-            video_type=self.extractor.video_type,
+            video_name=self.video_name,
+            video_path=self.video_path,
+            video_type=self.video_type,
             video_metadata=video_metadata,
             field_descriptions=field_descriptions,
         )

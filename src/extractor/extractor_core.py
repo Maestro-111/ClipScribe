@@ -861,7 +861,7 @@ class VideoInformationExtractor:
         has_dynamic_start = first_shot["duration"] < 3.0
 
         shots_in_first_5s = [s for s in shot_data if s["start"] < 5.0]
-        has_quick_pacing_start = len(shots_in_first_5s) >= 6
+        has_quick_pacing_start = len(shots_in_first_5s) >= 5
 
         rapid_fire_intervals = []
 

@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from src.utils.clib_scribe_db import ClipScribeReaderDB
+from src.db import ClipScribeReaderDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
