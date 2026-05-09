@@ -20,13 +20,15 @@ from src.ocr.paddle_wrapper import OCRSystem
 
 from src.sam2.sam.build_sam import build_sam2_video_predictor
 from src.utils.clip_scribe_logging import logger
-from src.utils.clib_scribe_db import ClipScribeWriterDB, ClipScribeReaderDB
+from src.db import ClipScribeWriterDB, ClipScribeReaderDB, create_db_engine
 
 from .engine import ClipScribeEngine
 from .platform_configs import BasePlatformConf
 
 from pathlib import Path
+import os
 import yaml  # type: ignore
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_DIR = Path(__file__).resolve().parent
@@ -43,6 +45,8 @@ def build_clip_scribe(
     user_hints: list[str] | None = None,
 ) -> ClipScribeEngine:
     try:
+        load_dotenv()
+
         with open(LOCAL_DIR / "configs" / "clip_scribe.yaml") as f:
             _cfg = yaml.safe_load(f)
 
@@ -65,7 +69,15 @@ def build_clip_scribe(
         parser_agent_params = clib_scribe_parser_params.get("agent", {})
 
         db_params = _cfg.get("database", {})
-        db_path = PROJECT_ROOT / db_params.get("path", "data/clip_scribe.db")
+        db_backend = db_params.get("backend", "sqlite")
+
+        if db_backend == "sqlite":
+            db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")
+            if db_url.startswith("sqlite:///") and not db_url.startswith("sqlite:////"):
+                relative_path = db_url[len("sqlite:///") :]
+                db_url = f"sqlite:///{PROJECT_ROOT / relative_path}"
+        else:
+            db_url = os.environ["POSTGRESQL_URL"]
 
         sam2_size: str = sam2_params.get("size", "tiny")
 
@@ -204,8 +216,14 @@ def build_clip_scribe(
             sampling_rate,
         )
 
-        writer_db = ClipScribeWriterDB(db_path=db_path, logger=logger)
-        reader_db = ClipScribeReaderDB(db_path=db_path, logger=logger)
+        db_engine = create_db_engine(
+            database_url=db_url,
+            pool_size=db_params.get("pool_size", 5),
+            max_overflow=db_params.get("max_overflow", 10),
+            logger=logger,
+        )
+        writer_db = ClipScribeWriterDB(engine=db_engine, logger=logger)
+        reader_db = ClipScribeReaderDB(engine=db_engine, logger=logger)
 
         # Parser configuration
         parser_output_dir = PROJECT_ROOT / clib_scribe_parser_params.get(

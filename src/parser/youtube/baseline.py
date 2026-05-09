@@ -1,6 +1,6 @@
 """Baseline (deterministic) feature evaluators for YouTube ABCD criteria."""
 
-from src.utils.clib_scribe_db import ClipScribeReaderDB
+from src.db import ClipScribeReaderDB
 
 
 def evaluate_baseline(

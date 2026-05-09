@@ -12,12 +12,14 @@ video_name = (
 )
 video_path = f"input/{video_name}"
 video_type = "car ad"
+
+
+run_id = "8fd3f80b-d920-4ea9-98f6-b29d2f370fa6"
+
 clib_scribe_device = "mps"
-
 clib_scribe_platform = "youtube"
+clib_scribe_mode = "parse"
 
-clib_scribe_mode = "full"
-run_id = ""
 
 platform_params = {
     "youtube_brand_name": "Dodge",

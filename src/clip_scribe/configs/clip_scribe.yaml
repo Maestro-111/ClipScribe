@@ -143,6 +143,7 @@ scene_analysis:
 # Database Storage
 # ============================================================================
 database:
-  # Path to SQLite database file for storing extraction results
-  # Relative to project root. Created automatically if doesn't exist
-  path: data/clip_scribe.db
+  # Which database backend to use: "sqlite" or "postgresql"
+  backend: "sqlite"
+  pool_size: 5
+  max_overflow: 10
