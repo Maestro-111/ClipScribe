@@ -144,6 +144,6 @@ scene_analysis:
 # ============================================================================
 database:
   # Which database backend to use: "sqlite" or "postgresql"
-  backend: "sqlite"
+  backend: "postgresql"
   pool_size: 5
   max_overflow: 10
