@@ -7,29 +7,24 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = (
-    "DODGE_nDidh6WnaHQ - DodgeDurango 0 Video 15s ENG NTL May 2025DodgeDurango PR.mp4"
-)
+video_name = "CHRYSLER_jtuJbB1QXd8 - Nov 2024 Pacifica.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 
 
-run_id = "8fd3f80b-d920-4ea9-98f6-b29d2f370fa6"
+run_id = ""
 
 clib_scribe_device = "mps"
 clib_scribe_platform = "youtube"
-clib_scribe_mode = "parse"
+clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "Dodge",
-    "youtube_branded_products": ["Dodge Durango:"],
+    "youtube_brand_name": "Chrysler",
+    "youtube_branded_products": ["Chrysler Pacifica"],
     "youtube_branded_products_categories": [
-        "Dodge Durango sxt",
-        "Dodge Durango gt",
-        "Dodge Durango gt plus",
-        "Dodge Durango v8 plus",
-        "Dodge Durango v8 premium" "Dodge Durango jailbreak",
+        "Chrysler Pacifica minivan",
+        "Chrysler Pacifica grand caravan",
     ],
     "youtube_call_to_actions": [
         "learn more",

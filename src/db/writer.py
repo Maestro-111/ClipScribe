@@ -18,6 +18,15 @@ from .schema import (
 )
 
 
+def _native(val):
+    """Convert numpy scalars to Python native types for DB compatibility."""
+    if val is None:
+        return None
+    if hasattr(val, "item"):
+        return val.item()
+    return val
+
+
 class ClipScribeWriterDB(ClipScribeBaseDB):
     def __init__(self, engine: Engine, logger: logging.Logger):
         super().__init__(engine, logger)
@@ -106,14 +115,18 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                         "global_id": g_id,
                         "label": label,
                         "shot_index": occ.get("shot_index"),
-                        "lifespan_start": lifespan[0] if len(lifespan) > 0 else None,
-                        "lifespan_end": lifespan[1] if len(lifespan) > 1 else None,
-                        "screen_coverage": occ.get("screen_coverage"),
-                        "velocity_px_sec": occ.get("velocity_px_sec"),
-                        "growth_factor": occ.get("growth_factor"),
+                        "lifespan_start": _native(
+                            lifespan[0] if len(lifespan) > 0 else None
+                        ),
+                        "lifespan_end": _native(
+                            lifespan[1] if len(lifespan) > 1 else None
+                        ),
+                        "screen_coverage": _native(occ.get("screen_coverage")),
+                        "velocity_px_sec": _native(occ.get("velocity_px_sec")),
+                        "growth_factor": _native(occ.get("growth_factor")),
                         "direction": occ.get("direction"),
-                        "centrality_score": occ.get("centrality_score"),
-                        "screen_time_ratio": occ.get("screen_time_ratio"),
+                        "centrality_score": _native(occ.get("centrality_score")),
+                        "screen_time_ratio": _native(occ.get("screen_time_ratio")),
                         "quadrant": occ.get("quadrant"),
                     }
                 )

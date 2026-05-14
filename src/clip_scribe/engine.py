@@ -1,3 +1,7 @@
+from src.extractor.extractor_core import VideoInformationExtractor
+from src.parser.parser_core import VideoInformationParser
+
+
 class ClipScribeEngine:
 
     """
@@ -11,8 +15,8 @@ class ClipScribeEngine:
         video_name: str,
         video_path: str,
         video_type: str | None,
-        extractor,
-        parser,
+        extractor: VideoInformationExtractor | None,
+        parser: VideoInformationParser | None,
         reader_db=None,
         writer_db=None,
     ):
@@ -48,6 +52,9 @@ class ClipScribeEngine:
             )
 
     def extract(self):
+        if self.extractor is None:
+            raise ValueError("No extractor defined; extract method cannot be called")
+
         video_metadata: dict | None = {}
 
         try:
@@ -58,6 +65,9 @@ class ClipScribeEngine:
         return video_metadata
 
     def parse(self, run_id: str):
+        if self.parser is None:
+            raise ValueError("No parser defined; parse method cannot be called")
+
         try:
             if run_id:
                 if self.reader_db is None:
@@ -65,6 +75,8 @@ class ClipScribeEngine:
                 if self.reader_db.get_run(run_id) is None:
                     raise ValueError(f"run_id '{run_id}' not found in database")
                 self._run_parser(run_id)
+            else:
+                self.logger.warning("Empty run_id is given to parse!")
 
         except Exception as e:
             raise e
@@ -83,6 +95,8 @@ class ClipScribeEngine:
         :return:
         """
 
+        assert self.extractor is not None
+
         video_metadata = self.extract()
 
         if video_metadata:
@@ -96,9 +110,7 @@ class ClipScribeEngine:
         return
 
     def _run_extractor(self) -> dict | None:
-        if self.extractor is None:
-            return None
-
+        assert self.extractor is not None
         try:
             metadata = self.extractor.extract(
                 video_name=self.video_name,
@@ -143,11 +155,8 @@ class ClipScribeEngine:
             run_id: Run identifier from database
         """
 
-        if self.parser is None:
-            return None
-
-        if self.reader_db is None:
-            raise Exception("_parse_information called without a reader_db")
+        assert self.reader_db is not None
+        assert self.parser is not None
 
         report_path = self.parser.parse(
             run_id=run_id, reader_db=self.reader_db, video_name=self.video_name
