@@ -1,13 +1,10 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv, find_dotenv
 import torch
 from sentence_transformers import SentenceTransformer, util
 from agents import Agent, Runner
 import re
 from .taxonomy_config import ProfilesPile
-
-load_dotenv(find_dotenv())
 
 
 def generate_hints_from_video_name(

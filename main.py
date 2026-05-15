@@ -1,3 +1,8 @@
+"""
+tmp entry point, should wrap into cli
+"""
+
+
 from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
 from src.clip_scribe.build_clip_scribe_plalform import build_platform
 from dotenv import load_dotenv, find_dotenv
@@ -7,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_-06ZPnShpv4 - 2024 Jeep Wrangler ｜ Jeep Adventure Days ｜ LEASE ｜ September.mp4"
+video_name = "JEEP_3QKe1Q__ZqY - Nov 2024 JeepWrangler.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 
@@ -24,6 +29,7 @@ platform_params = {
     "youtube_branded_products_categories": [
         "Jeep Wrangler Pick Up Truck",
         "Jeep Wrangler Truck" "Jeep Wrangler Car",
+        "Jeep Wrangler SUV",
     ],
     "youtube_call_to_actions": [
         "learn more",

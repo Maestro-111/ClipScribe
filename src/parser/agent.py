@@ -58,6 +58,7 @@ def run_agent(
     time_scope: float | None = None,
     field_context: str | None = None,
     recursion_limit: int = 25,
+    run_name: str | None = None,
 ) -> BaseAgentEvaluation:
     """
     Run the agent with a question and instructions, returning structured evaluation.
@@ -74,6 +75,7 @@ def run_agent(
                        to the agent. Injected into the system prompt so the agent
                        understands what each column means before querying.
         recursion_limit: how many reasoning step?
+        run_name: Optional name for the LangSmith trace (e.g., the feature id).
 
     Returns:
         BaseAgentEvaluation with evaluation (bool) and explanation (str)
@@ -119,13 +121,16 @@ Use the tools to query the database, then provide your structured evaluation."""
     # even if the recursion limit is hit before the agent finishes.
     messages: list = []
     try:
+        stream_config: dict[str, str | int] = {"recursion_limit": recursion_limit}
+        if run_name:
+            stream_config["run_name"] = run_name
         for chunk in agent.stream(
             {
                 "messages": [
                     {"role": "system", "content": system_message},
                 ]
             },
-            {"recursion_limit": recursion_limit},
+            stream_config,
             stream_mode="values",
         ):
             messages = chunk["messages"]

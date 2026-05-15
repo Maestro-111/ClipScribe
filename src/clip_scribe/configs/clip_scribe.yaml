@@ -45,7 +45,7 @@ clip_scribe:
   parser:
     # LLM model for agentic feature evaluation
     agent:
-      llm: "gpt-5.4-mini"
+      llm: "gpt-5.4"
       temperature: 0.2
       max_tokens: 1000
       max_retries: 10
@@ -97,7 +97,7 @@ taxonomy:
 
   hint_generation:
     # LLM model used to infer fallback hints from the video filename when enabled
-    model: "gpt-5.4-nano"
+    model: "gpt-5.4-mini"
 
   target_generation:
     # LLM model used to generate scene-specific taxonomy targets
@@ -126,7 +126,7 @@ sam2:
 # ============================================================================
 scene_analysis:
   # GPT model for vision-based scene description
-  model: "gpt-4o-mini"
+  model: "gpt-5.4-mini"
 
   # Minimum number of frames to sample per shot (ensures at least some coverage)
   min_samples: 1

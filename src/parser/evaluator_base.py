@@ -144,6 +144,7 @@ class BaseEvaluator(ABC):
                 time_scope=time_scope,
                 field_context=field_context,
                 recursion_limit=self.recursion_limit,
+                run_name=feature_id,
             )
 
             return self.build_feature_result(
