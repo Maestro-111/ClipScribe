@@ -45,7 +45,7 @@ clip_scribe:
   parser:
     # LLM model for agentic feature evaluation
     agent:
-      llm: "gpt-4o-mini"
+      llm: "gpt-5.4-mini"
       temperature: 0.2
       max_tokens: 1000
       max_retries: 10
@@ -93,7 +93,15 @@ taxonomy:
   # Maximum number of canonical object targets the LLM generates per scene
   # Higher = more granular taxonomy but slower LLM calls and more complex matching
   # Range: 50-500. Default: 300
-  taxonommy_objects_num: 300
+  taxonomy_objects_num: 300
+
+  hint_generation:
+    # LLM model used to infer fallback hints from the video filename when enabled
+    model: "gpt-5.4-nano"
+
+  target_generation:
+    # LLM model used to generate scene-specific taxonomy targets
+    model: "gpt-5.4-mini"
 
 # ============================================================================
 # Audio Transcription (Whisper)
