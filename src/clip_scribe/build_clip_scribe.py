@@ -5,7 +5,6 @@ from src.extractor.taxonomy_core import (
 )
 from src.extractor.taxonomy_config import ProfilesPile
 from src.extractor.extractor_core import VideoInformationExtractor
-from src.extractor.taxonomy_runtime import merge_hint_sources
 
 from src.parser.parser_core import VideoInformationParser
 
@@ -188,13 +187,11 @@ class ClipScribeBuilder:
 
         profiles = ProfilesPile()
 
-        generated_hints: list[str] = []
+        combined_hints = user_hints
         if generate_hint_from_name:
-            generated_hints = generate_hints_from_video_name(
-                video_name, logger, model=hint_generation_model
+            combined_hints = generate_hints_from_video_name(
+                video_name, logger, model=hint_generation_model, user_hints=user_hints
             )
-
-        effective_user_hints = merge_hint_sources(user_hints, generated_hints)
 
         taxonomy_resolver = TaxonomyResolver(logger)
         taxonomy_generator = TaxonomyGenerator(
@@ -276,7 +273,7 @@ class ClipScribeBuilder:
             ocr,
             taxonomy_resolver,
             taxonomy_generator,
-            effective_user_hints,
+            combined_hints,
             reid_model,
             audio_model,
             embedding_transform,
