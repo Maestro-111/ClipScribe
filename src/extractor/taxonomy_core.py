@@ -6,13 +6,12 @@ from sentence_transformers import SentenceTransformer, util
 from agents import Agent, Runner
 import re
 from .taxonomy_config import ProfilesPile
+from .taxonomy_runtime import build_taxonomy_generation_input, merge_hint_sources
 
 load_dotenv(find_dotenv())
 
 
-def generate_hints_from_video_name(
-    video_name: str, logger, model: str = "gpt-4o-mini"
-) -> list[str]:
+def generate_hints_from_video_name(video_name: str, logger, model: str) -> list[str]:
     """Infer 10-20 object hints from a descriptive video filename.
     Returns [] if the name looks generic / auto-generated."""
 
@@ -35,7 +34,7 @@ def generate_hints_from_video_name(
 
     result = Runner.run_sync(hint_agent, f"Video filename: {video_name}")
     items = result.final_output.items if result and result.final_output else []
-    hints = [item.anchor for item in items]
+    hints = merge_hint_sources(item.anchor for item in items)
 
     logger.info(f"Generated {len(hints)} hints from video name: {hints}")
     return hints
@@ -121,22 +120,12 @@ class TaxonomyGenerator:
         num_objects: int,
         profiles: ProfilesPile,
         logger,
-        model: str = "gpt-4o-mini",
-        user_hints: list[str] | None = None,
+        model: str,
     ):
         self.model = model
         self.profiles = profiles
         self.logger = logger
         self.num_objects = num_objects
-        self.user_hints = user_hints or []
-
-        hints_instruction = ""
-        if self.user_hints:
-            hints_str = ", ".join(self.user_hints)
-            hints_instruction = (
-                f"The user expects these objects may appear in the video: {hints_str}. "
-                "Prioritize including these in your output when relevant to the scene. "
-            )
 
         self.leaf_agent = Agent(
             name="StructuredLeafGenerator",
@@ -144,7 +133,6 @@ class TaxonomyGenerator:
                 "You are a computer vision expert. "
                 f"Generate between 5 and {self.num_objects} unique visual objects likely to be in the scene. "
                 "Include MORE objects for complex scenes, FEWER for simple scenes. "
-                f"{hints_instruction}"
                 "CRITICAL: Output generic, visual classes (e.g., 'car', 'suv', 'tree', 'cellphone', 'building', 'person'), "
                 "NOT specific instances and NOT abstract concepts."
             ),
@@ -153,17 +141,25 @@ class TaxonomyGenerator:
         )
 
     def generate_targets(
-        self, video_type: str | None, scene_context: str = ""
+        self,
+        video_type: str | None,
+        scene_context: str = "",
+        dino_prompt: str = "",
+        user_hints: list[str] | None = None,
     ) -> List[LeafItem]:
         profile = self.profiles.get_video_profile(video_type)
 
         if not profile:
             return []
 
-        user_input = (
-            f"Video Type: {video_type}\n"
-            f"{profile.get_prompt_instruction()}\n"
-            f"Scene Description: {scene_context}\n"
+        normalized_hints = merge_hint_sources(user_hints)
+
+        user_input = build_taxonomy_generation_input(
+            video_type=video_type,
+            profile_prompt=profile.get_prompt_instruction(),
+            scene_context=scene_context,
+            dino_prompt=dino_prompt,
+            user_hints=normalized_hints,
         )
 
         result = Runner.run_sync(self.leaf_agent, user_input)

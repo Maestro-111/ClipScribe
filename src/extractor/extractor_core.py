@@ -263,6 +263,7 @@ class VideoInformationExtractor:
         ocr_engine: "OCRSystem",
         taxonomy_resolver: "TaxonomyResolver",
         taxonomy_generator: "TaxonomyGenerator",
+        taxonomy_user_hints: list[str] | None,
         reid_model: torch.nn.Module,
         audio_model: "whisper.Whisper",
         embedding_transform: "transforms.Compose",
@@ -309,6 +310,7 @@ class VideoInformationExtractor:
 
         self.taxonomy_resolver = taxonomy_resolver
         self.taxonomy_generator = taxonomy_generator
+        self.taxonomy_user_hints = taxonomy_user_hints or []
 
         self.word_similarity_threshold = word_similarity_threshold
 
@@ -1061,7 +1063,10 @@ class VideoInformationExtractor:
             )
 
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
-                video_type, scene_context=combined_raw_context
+                video_type,
+                scene_context=combined_raw_context,
+                dino_prompt=combined_final_context,
+                user_hints=self.taxonomy_user_hints,
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
