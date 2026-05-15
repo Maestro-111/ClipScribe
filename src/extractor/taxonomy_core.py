@@ -6,12 +6,13 @@ from sentence_transformers import SentenceTransformer, util
 from agents import Agent, Runner
 import re
 from .taxonomy_config import ProfilesPile
-from .taxonomy_runtime import build_taxonomy_generation_input, merge_hint_sources
 
 load_dotenv(find_dotenv())
 
 
-def generate_hints_from_video_name(video_name: str, logger, model: str) -> list[str]:
+def generate_hints_from_video_name(
+    video_name: str, logger, model: str, user_hints: list[str] | None = None
+) -> list[str]:
     """Infer 10-20 object hints from a descriptive video filename.
     Returns [] if the name looks generic / auto-generated."""
 
@@ -34,10 +35,18 @@ def generate_hints_from_video_name(video_name: str, logger, model: str) -> list[
 
     result = Runner.run_sync(hint_agent, f"Video filename: {video_name}")
     items = result.final_output.items if result and result.final_output else []
-    hints = merge_hint_sources(item.anchor for item in items)
 
-    logger.info(f"Generated {len(hints)} hints from video name: {hints}")
-    return hints
+    generated_hints_norm = set([item.anchor.lower() for item in items])
+    user_hints_norm = set()
+    if user_hints:
+        user_hints_norm = set([hint.lower() for hint in user_hints])
+
+    combined_hints = list(generated_hints_norm | user_hints_norm)
+
+    logger.info(
+        f"Generated {len(combined_hints)} hints from video name: {combined_hints}"
+    )
+    return combined_hints
 
 
 class LeafItem(BaseModel):
@@ -152,16 +161,39 @@ class TaxonomyGenerator:
         if not profile:
             return []
 
-        normalized_hints = merge_hint_sources(user_hints)
-
-        user_input = build_taxonomy_generation_input(
+        user_input = self.build_taxonomy_generation_input(
             video_type=video_type,
             profile_prompt=profile.get_prompt_instruction(),
             scene_context=scene_context,
             dino_prompt=dino_prompt,
-            user_hints=normalized_hints,
+            user_hints=user_hints,
         )
 
         result = Runner.run_sync(self.leaf_agent, user_input)
         taxonomy = result.final_output.items if result and result.final_output else []
+
         return taxonomy
+
+    @staticmethod
+    def build_taxonomy_generation_input(
+        video_type: str | None,
+        profile_prompt: str,
+        scene_context: str = "",
+        dino_prompt: str = "",
+        user_hints: list[str] | None = None,
+    ) -> str:
+        lines = [
+            f"Video Type: {video_type or 'general'}",
+            profile_prompt,
+        ]
+
+        if scene_context:
+            lines.append(f"Scene Description: {scene_context}")
+
+        if dino_prompt:
+            lines.append(f"GroundingDINO Prompt: {dino_prompt}")
+
+        if user_hints:
+            lines.append(f"User Hints: {', '.join(user_hints)}")
+
+        return "\n".join(lines) + "\n"

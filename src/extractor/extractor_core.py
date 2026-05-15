@@ -310,7 +310,7 @@ class VideoInformationExtractor:
 
         self.taxonomy_resolver = taxonomy_resolver
         self.taxonomy_generator = taxonomy_generator
-        self.taxonomy_user_hints = taxonomy_user_hints or []
+        self.taxonomy_user_hints = taxonomy_user_hints
 
         self.word_similarity_threshold = word_similarity_threshold
 
