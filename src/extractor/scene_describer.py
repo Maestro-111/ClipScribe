@@ -74,21 +74,21 @@ class GPTSceneDescriber:
         - Ensure proper formatting
         """
         # Parse period-separated targets
-        targets = [t.strip().lower() for t in raw_prompt.split('.') if t.strip()]
+        targets = [t.strip().lower() for t in raw_prompt.split(".") if t.strip()]
 
         # Filter out 'text' and deduplicate while preserving order
         seen = set()
         unique_targets = []
         for target in targets:
-            if target == 'text':
-                self.logger.warning(f"Filtered out 'text' from DINO prompt")
+            if target == "text":
+                self.logger.warning("Filtered out 'text' from DINO prompt")
                 continue
             if target not in seen:
                 seen.add(target)
                 unique_targets.append(target)
 
         # Reconstruct with proper formatting
-        return ' . '.join(unique_targets) + ' .' if unique_targets else 'object .'
+        return " . ".join(unique_targets) + " ." if unique_targets else "object ."
 
     def describe_scene(self, frames_rgb: List[np.ndarray]) -> tuple[str, str]:
         """
@@ -156,7 +156,7 @@ class GPTSceneDescriber:
                 model=self.model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                max_tokens=500,
+                max_completion_tokens=500,
             )
 
             content = response.choices[0].message.content

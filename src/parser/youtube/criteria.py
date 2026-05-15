@@ -93,6 +93,7 @@ def get_feature_configs():
             "question": "Does the speech mention the brand {brand_name} at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
+                "Use semantic matching — the brand name does NOT need to appear as an exact phrase. Variations, abbreviations, or phonetic equivalents count (e.g., 'Chevy' matches 'Chevrolet').",
                 "Provide the exact timestamp when the brand {brand_name} is heard in the speech of the video.",
             ],
             "mode": "agentic",
@@ -108,6 +109,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse audio data from the first 5 seconds of the video.",
+                "Use semantic matching — the brand name does NOT need to appear as an exact phrase. Variations, abbreviations, or phonetic equivalents count (e.g., 'Chevy' matches 'Chevrolet').",
                 "Provide the exact timestamp when the brand {brand_name} is heard in the speech.",
                 "Return True if and only if the brand {brand_name} is heard in the first 5 seconds.",
             ],
@@ -124,6 +126,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "Query the extracted video data using the provided tools to answer the question.",
+                "Use semantic matching — the brand does NOT need to appear as an exact string. Partial matches, abbreviations, or visual references count (e.g., a logo without text, or 'GM' matching 'General Motors').",
                 "Provide the exact timestamp when the brand {brand_name} or brand logo {brand_name} is found.",
             ],
             "mode": "agentic",
@@ -139,6 +142,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse data from the first 5 seconds of the video.",
+                "Use semantic matching — the brand does NOT need to appear as an exact string. Partial matches, abbreviations, or visual references count.",
                 "Provide the exact timestamp when the brand {brand_name} or brand logo {brand_name} is found.",
             ],
             "mode": "agentic",
@@ -153,6 +157,7 @@ def get_feature_configs():
             "question": "Are any of the following products: {branded_products} or product categories: {branded_products_categories} heard at any time in the speech of the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
+                "Use semantic matching — an exact phrase is NOT required. Any speech that refers to the same product or category qualifies (e.g., 'SUV' matches 'sport utility vehicle', 'truck' matches 'pickup').",
                 "Provide the exact timestamp when the products {branded_products} or product categories {branded_products_categories} are heard in the speech of the video.",
                 "Return False if the products or product categories are not heard in the speech.",
                 "Only strictly use the speech of the video to answer, don't consider visual elements.",
@@ -170,6 +175,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse audio data from the first 5 seconds of the video.",
+                "Use semantic matching — an exact phrase is NOT required. Any speech that refers to the same product or category qualifies (e.g., 'SUV' matches 'sport utility vehicle', 'truck' matches 'pickup').",
                 "Provide the exact timestamp when the products {branded_products} or product categories {branded_products_categories} are heard in the speech.",
                 "Return False if the products or product categories are not heard in the speech.",
                 "Only strictly use the speech of the video to answer, don't consider visual elements.",
@@ -186,7 +192,8 @@ def get_feature_configs():
             "question": "Is any of the following products: {branded_products} or product categories: {branded_products_categories} present in any text or overlay at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Provide the exact timestamp when the products {branded_products} or product categories: {branded_products_categories} are found  in any text or overlay in the video.",
+                "Use semantic matching — an exact phrase is NOT required. Any text that refers to the same product or category qualifies (e.g., OCR text 'SILVERADO 1500' matches product 'Silverado').",
+                "Provide the exact timestamp when the products {branded_products} or product categories: {branded_products_categories} are found in any text or overlay in the video.",
             ],
             "mode": "agentic",
             "tool_group": "text",
@@ -201,6 +208,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse text data from the first 5 seconds of the video.",
+                "Use semantic matching — an exact phrase is NOT required. Any text that refers to the same product or category qualifies.",
                 "Provide the exact timestamp when the products {branded_products} or product categories: {branded_products_categories} are found in any text or overlay.",
             ],
             "mode": "agentic",
@@ -215,6 +223,7 @@ def get_feature_configs():
             "question": "Is any of the following products: {branded_products} or product categories: {branded_products_categories} visually present at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
+                "Use semantic matching — detected visual object labels do NOT need to exactly match the product names. Related labels count (e.g., 'sedan' or 'vehicle' matches product category 'car', 'pickup truck' matches 'truck').",
                 "Provide the exact timestamp when the products {branded_products} or product categories: {branded_products_categories} are visually present.",
                 "Return True if and only if the branded products or product categories are visually present in the video.",
             ],
@@ -231,6 +240,7 @@ def get_feature_configs():
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
                 "IMPORTANT: Only analyse visual data from the first 5 seconds of the video.",
+                "Use semantic matching — detected visual object labels do NOT need to exactly match the product names. Related labels count (e.g., 'sedan' or 'vehicle' matches product category 'car').",
                 "Provide the exact timestamp when the products {branded_products} or product categories: {branded_products_categories} are visually present.",
                 "Return True if and only if the branded products or product categories are visually present in the first 5 seconds.",
             ],
@@ -343,8 +353,9 @@ def get_feature_configs():
             "question": "Is any call to action heard or mentioned in the speech of the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Some examples of call to actions are: {call_to_actions}",
-                "Provide the exact timestamp when the call to actions are heard or mentioned in the speech of the video.",
+                "The following are categories of call-to-action intent: {call_to_actions}.",
+                "A match does NOT require the exact phrase — any speech that conveys the same intent qualifies (e.g., 'buy yours today' matches the 'buy now' intent, 'order at...' matches 'order now').",
+                "Provide the exact timestamp when the call to action is heard or mentioned in the speech of the video.",
             ],
             "mode": "agentic",
             "tool_group": "audio",
@@ -358,7 +369,8 @@ def get_feature_configs():
             "question": "Is any call to action detected in any text overlay at any time in the video?",
             "instructions": [
                 "Consider the following criteria for your answer: {criteria}",
-                "Some examples of call to actions are: {call_to_actions}",
+                "The following are categories of call-to-action intent: {call_to_actions}.",
+                "A match does NOT require the exact phrase — any text that conveys the same intent qualifies (e.g., 'PURCHASE FROM $63,076' matches the 'purchase now' intent, 'ORDER AT...' matches 'order now').",
                 "Query the extracted video data using the provided tools to answer the question.",
                 "Provide the exact timestamp when the call to action is detected in any text overlay in the video.",
             ],
