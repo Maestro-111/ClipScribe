@@ -47,7 +47,7 @@ def evaluate_baseline(
             avg_shot_duration = stats.get("avg_shot_duration")
             if avg_shot_duration is None:
                 return False
-            return avg_shot_duration > 2.0
+            return float(avg_shot_duration) > 2.0
 
         case "d_audio_speech_early_1st_5_secs":
             # Query for audio segments in first 5 seconds

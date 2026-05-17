@@ -45,3 +45,9 @@ This project includes third-party components:
 - GroundingDINO (Apache License 2.0 / MIT) [GroundingDINO](https://github.com/IDEA-Research/GroundingDINO)
 
 Their respective licenses are included in the source tree.
+
+## TO DO
+
+1) Docker logic
+2) API layer calling cli based image as long running job
+3) GCP support utils (BQ, video download)
