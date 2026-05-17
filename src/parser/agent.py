@@ -1,6 +1,8 @@
 """LangGraph ReAct agent for agentic feature evaluation."""
 
 import json
+import logging
+import re
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage
@@ -9,6 +11,14 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.errors import GraphRecursionError
 
 from src.parser.models import BaseAgentEvaluation
+
+logger = logging.getLogger(__name__)
+
+_NEGATION_RE = re.compile(
+    r"\b(?:not|no|never|neither|isn't|isn't|wasn't|aren't|don't)\b",
+    re.IGNORECASE,
+)
+_AFFIRMATIVE_RE = re.compile(r"\b(?:true|yes)\b", re.IGNORECASE)
 
 
 def _parse_agent_response(
@@ -25,7 +35,10 @@ def _parse_agent_response(
             explanation = str(parsed.get("explanation", "No explanation provided"))
             return agentic_eval(evaluation=evaluation, explanation=explanation)
 
-        evaluation = "true" in final_message.lower() or "yes" in final_message.lower()
+        logger.info("JSON parsing failed; falling back to heuristic text matching.")
+        has_affirmative = bool(_AFFIRMATIVE_RE.search(final_message))
+        has_negation = bool(_NEGATION_RE.search(final_message))
+        evaluation = has_affirmative and not has_negation
         return agentic_eval(evaluation=evaluation, explanation=final_message[:500])
 
     except Exception as e:
@@ -135,7 +148,10 @@ Use the tools to query the database, then provide your structured evaluation."""
         ):
             messages = chunk["messages"]
     except GraphRecursionError:
-        pass  # fall through — we still have the messages collected so far
+        logger.warning(
+            "Agent hit recursion limit (%d). Using last collected message as final answer.",
+            recursion_limit,
+        )
 
     # Find the last AI text message (skip tool calls)
     final_message = ""

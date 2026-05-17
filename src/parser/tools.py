@@ -1,8 +1,11 @@
 """LangGraph tool functions for querying ClipScribe database."""
 
 import json
+import logging
 from langchain_core.tools import tool
 from src.db import ClipScribeReaderDB
+
+_logger = logging.getLogger(__name__)
 
 TOOL_GROUP_TABLES: dict[str, list[str]] = {
     "audio": ["audio_segments", "scene_descriptions", "global_stats"],
@@ -56,8 +59,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
         try:
             segments = reader_db.get_audio_segments(run_id, max_start_time)
             return json.dumps(segments, indent=2)
-        except Exception:
-            return json.dumps([])
+        except Exception as e:
+            _logger.error("query_audio_segments failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
     def query_text_events(max_second: int | None = None) -> str:
@@ -77,8 +81,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
         try:
             events = reader_db.get_text_events(run_id, max_second)
             return json.dumps(events, indent=2)
-        except Exception:
-            return json.dumps([])
+        except Exception as e:
+            _logger.error("query_text_events failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
     def query_visual_objects(
@@ -112,8 +117,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
                 run_id, label_contains, max_lifespan_start
             )
             return json.dumps(objects, indent=2)
-        except Exception:
-            return json.dumps([])
+        except Exception as e:
+            _logger.error("query_visual_objects failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
     def query_global_stats() -> str:
@@ -136,8 +142,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             if not stats:
                 return json.dumps({})
             return json.dumps(stats, indent=2)
-        except Exception:
-            return json.dumps({})
+        except Exception as e:
+            _logger.error("query_global_stats failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": {}})
 
     @tool
     def query_scene_descriptions(
@@ -162,8 +169,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
                 run_id, max_start_time, max_end_time
             )
             return json.dumps(descriptions, indent=2)
-        except Exception:
-            return json.dumps([])
+        except Exception as e:
+            _logger.error("query_scene_descriptions failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
     def query_field_descriptions(table_name: str | None = None) -> str:
@@ -185,8 +193,9 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
         try:
             descriptions = reader_db.get_field_descriptions(table_name)
             return json.dumps(descriptions, indent=2)
-        except Exception:
-            return json.dumps([])
+        except Exception as e:
+            _logger.error("query_field_descriptions failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     # Map tool groups to relevant tools
     tool_map = {

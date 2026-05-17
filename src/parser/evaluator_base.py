@@ -219,9 +219,15 @@ class BaseEvaluator(ABC):
         # Pre-compute field contexts on the main thread to avoid concurrent
         # SQLite access from worker threads.
         unique_tool_groups = {f["tool_group"] for f in agentic_features}
-        field_contexts: dict[str, str | None] = {
-            tg: self._build_field_context(tg) for tg in unique_tool_groups
-        }
+        field_contexts: dict[str, str | None] = {}
+        for tg in unique_tool_groups:
+            try:
+                field_contexts[tg] = self._build_field_context(tg)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to build field context for tool group '%s': %s", tg, e
+                )
+                field_contexts[tg] = None
 
         with ThreadPoolExecutor(max_workers=self.max_parallel_agents) as executor:
             future_to_feature = {
