@@ -12,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_3QKe1Q__ZqY - Nov 2024 JeepWrangler.mp4"
+video_name = "JEEP_8bJ8lYL4f6M - Wrangler 4xe 0 Video Search Inventory  15s ENG NTL Oct 2024 Jeep Wrangler 4xe PR.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 

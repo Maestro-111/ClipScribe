@@ -84,11 +84,11 @@ class VideoInformationParser:
 
         return evaluator
 
-    def create_report_writer(self, output_path):
+    def create_report_writer(self, output_path: Path, scores_output_path: Path):
         report_writer = None
 
         if self.platform_name == "youtube":
-            report_writer = YouTubeReportWriter(output_path)  # noqa ignore
+            report_writer = YouTubeReportWriter(output_path, scores_output_path)  # noqa ignore
 
         return report_writer
 
@@ -108,15 +108,24 @@ class VideoInformationParser:
         self.logger.info(f"Starting parser for run {run_id}, video '{video_name}'")
 
         report_name = self.create_report_name()
-        output_path = Path(self.output_dir) / video_name / f"{report_name}_report.csv"
+
+        report_output_path = (
+            Path(self.output_dir) / video_name / f"{report_name}_report.csv"
+        )
+        scores_output_path = (
+            Path(self.output_dir) / video_name / f"{report_name}_scores.csv"
+        )
 
         evaluator = self.create_evaluator(reader_db)
-        report_writer = self.create_report_writer(output_path)
+        report_writer = self.create_report_writer(
+            report_output_path, scores_output_path
+        )
 
         if evaluator is not None:
             results = evaluator.evaluate_all(run_id, video_name)
-            report_writer.write_report(results)
+            report_writer.write_results(results)
+            self.logger.info(
+                f"Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
+            )
 
-            self.logger.info(f"Parser completed. Report written to: {output_path}")
-
-        return str(output_path)
+        return str(report_output_path)
