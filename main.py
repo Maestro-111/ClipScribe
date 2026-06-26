@@ -1,5 +1,5 @@
 """
-tmp entry point, should wrap into cli
+entry point for local dev
 """
 
 
@@ -12,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_8bJ8lYL4f6M - Wrangler 4xe 0 Video Search Inventory  15s ENG NTL Oct 2024 Jeep Wrangler 4xe PR.mp4"
+video_name = "RAM_jeVt2-Qp_IA - RAM HD Rebel - 15 FR - April.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 
@@ -24,12 +24,12 @@ clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "Jeep",
-    "youtube_branded_products": ["Jeep Wrangler"],
+    "youtube_brand_name": "RAM",
+    "youtube_branded_products": ["RAM HD", "RAM HD Rebel"],
     "youtube_branded_products_categories": [
-        "Jeep Wrangler Pick Up Truck",
-        "Jeep Wrangler Truck" "Jeep Wrangler Car",
-        "Jeep Wrangler SUV",
+        "RAM HD Rebel Pick Up Truck",
+        "RAM HD Rebel Truck" "RAM HD Rebel Car",
+        "RAM HD Rebel SUV",
     ],
     "youtube_call_to_actions": [
         "learn more",
@@ -39,6 +39,7 @@ platform_params = {
         "get now",
         "apply now",
         "lease now",
+        "accept now",
     ],
 }
 

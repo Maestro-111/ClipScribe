@@ -66,7 +66,7 @@ dino:
   # Text-to-image grounding confidence threshold (how well text prompt matches image regions)
   # Lower = more detections but noisier. Higher = fewer false positives
   # Range: 0.0-1.0. Default: 0.45
-  dino_text_conf: 0.35
+  dino_text_conf: 0.3
 
   # Bounding box confidence threshold for object proposals
   # Lower = more detections. Higher = only high-confidence boxes
@@ -97,11 +97,11 @@ taxonomy:
 
   hint_generation:
     # LLM model used to infer fallback hints from the video filename when enabled
-    model: "gpt-5.4-mini"
+    model: "gpt-5.4"
 
   target_generation:
     # LLM model used to generate scene-specific taxonomy targets
-    model: "gpt-5.4-mini"
+    model: "gpt-5.4"
 
 # ============================================================================
 # Audio Transcription (Whisper)
@@ -126,7 +126,7 @@ sam2:
 # ============================================================================
 scene_analysis:
   # GPT model for vision-based scene description
-  model: "gpt-5.4-mini"
+  model: "gpt-5.4"
 
   # Minimum number of frames to sample per shot (ensures at least some coverage)
   min_samples: 1
@@ -152,6 +152,6 @@ scene_analysis:
 # ============================================================================
 database:
   # Which database backend to use: "sqlite" or "postgresql"
-  backend: "postgresql"
+  backend: "sqlite"
   pool_size: 5
   max_overflow: 10

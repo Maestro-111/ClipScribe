@@ -87,6 +87,9 @@ class ClipScribeBuilder:
         self.db_params = _cfg.get("database", {})
         self.db_backend = self.db_params.get("backend", "sqlite")
 
+        self._assemble_db()
+        self._assemble_heavy_extractor_utils()
+
     def build_parser(
         self,
         clib_scribe_platform_name: str,
@@ -125,29 +128,17 @@ class ClipScribeBuilder:
         user_hints: list[str] | None,
         generate_hint_from_name: bool,
         clib_scribe_device: str,
-        models_weights_dir: str,
         clib_scribe_extractor_params: dict,
         dino_params: dict,
         scene_analysis_params: dict,
         face_detection_params: dict,
         taxonomy_params: dict,
         audio_params: dict,
-        sam2_params: dict,
     ):
-        sam2_size: str = sam2_params.get("size", "tiny")
-
-        taxonomy_objects_num: int = taxonomy_params["taxonomy_objects_num"]
-
         hint_generation_model = self.resolve_model(
             "taxonomy.hint_generation.model",
             taxonomy_params["hint_generation"].get(
                 "model", self.DEFAULT_HINT_GENERATION_MODEL
-            ),
-        )
-        target_generation_model = self.resolve_model(
-            "taxonomy.target_generation.model",
-            taxonomy_params["target_generation"].get(
-                "model", self.DEFAULT_TARGET_GENERATION_MODEL
             ),
         )
         scene_detection_model = self.resolve_model(
@@ -159,7 +150,6 @@ class ClipScribeBuilder:
 
         dino_text_conf: float = dino_params.get("dino_text_conf", 0.4)
         dino_box_conf: float = dino_params.get("dino_box_conf", 0.4)
-        dino_size: str = dino_params.get("dino_size", "base")
 
         torch_face_cong: float = face_detection_params.get("torch_face_cong", 0.9)
 
@@ -185,21 +175,11 @@ class ClipScribeBuilder:
         logger.info(f"dino_text_conf: {dino_text_conf}")
         logger.info(f"dino_box_conf: {dino_box_conf}")
 
-        profiles = ProfilesPile()
-
         combined_hints = user_hints
         if generate_hint_from_name:
             combined_hints = generate_hints_from_video_name(
                 video_name, logger, model=hint_generation_model, user_hints=user_hints
             )
-
-        taxonomy_resolver = TaxonomyResolver(logger)
-        taxonomy_generator = TaxonomyGenerator(
-            taxonomy_objects_num,
-            profiles,
-            logger,
-            model=target_generation_model,
-        )
 
         # Scene analysis configuration
         min_samples = scene_analysis_params.get("min_samples", 1)
@@ -208,18 +188,11 @@ class ClipScribeBuilder:
         max_frame_dim = scene_analysis_params.get("max_frame_dim", 512)
         image_detail = scene_analysis_params.get("image_detail", "low")
 
-        dino = DinoDetector(logger, dino_type=dino_size, weights_dir=models_weights_dir)
         scene_describer = GPTSceneDescriber(
             logger,
             model=scene_detection_model,
             max_frame_dim=max_frame_dim,
             image_detail=image_detail,
-        )
-
-        sam2_device = (
-            torch.device("mps")
-            if torch.backends.mps.is_available()
-            else torch.device("cpu")
         )
 
         dino_reid_device = (
@@ -228,56 +201,18 @@ class ClipScribeBuilder:
             else torch.device("cpu")
         )
 
-        whisper_device = (
-            torch.device("mps")
-            if torch.backends.mps.is_available()
-            else torch.device("cpu")
-        )
-
-        ocr = OCRSystem(logger)
-        sam2 = build_sam2_video_predictor(
-            sam2_size, "src.sam2.configs", models_weights_dir, logger, sam2_device.type
-        )
-
-        logger.info(
-            f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {dino_reid_device.type}..."
-        )
-
-        reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
-            dino_reid_device.type
-        )
-
-        reid_model.eval()
-
-        logger.info(f"loading whisper to {whisper_device.type}")
-
-        audio_model = whisper.load_model("base", device=whisper_device.type)
-
-        embedding_transform = transforms.Compose(
-            [
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-
-        face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
-
         info_extractor = VideoInformationExtractor(
-            sam2,
-            dino,
+            self.sam2,
+            self.dino,
             scene_describer,
-            ocr,
-            taxonomy_resolver,
-            taxonomy_generator,
+            self.ocr,
+            self.taxonomy_resolver,
+            self.taxonomy_generator,
             combined_hints,
-            reid_model,
-            audio_model,
-            embedding_transform,
-            face_detection,
+            self.reid_model,
+            self.audio_model,
+            self.embedding_transform,
+            self.face_detection,
             clib_scribe_device,
             dino_reid_device.type,
             word_similarity_threshold,
@@ -297,18 +232,7 @@ class ClipScribeBuilder:
 
         return info_extractor
 
-    def build_clip_scribe(
-        self,
-        video_name: str,
-        video_path: str,
-        video_type: str | None,
-        clib_scribe_mode: str,
-        clib_scribe_device: str,
-        clib_scribe_platform_name: str,
-        clib_scribe_platform_conf: BasePlatformConf,
-        user_hints: list[str] | None = None,
-        generate_hint_from_name: bool = False,
-    ) -> ClipScribeEngine:
+    def _assemble_db(self) -> None:
         try:
             if self.db_backend == "sqlite":
                 db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")
@@ -330,6 +254,123 @@ class ClipScribeBuilder:
             writer_db = ClipScribeWriterDB(engine=db_engine, logger=logger)
             reader_db = ClipScribeReaderDB(engine=db_engine, logger=logger)
 
+            self.writer_db = writer_db
+            self.reader_db = reader_db
+
+        except Exception as e:
+            logger.error(e)
+            raise e
+
+    def _assemble_heavy_extractor_utils(self) -> None:
+        try:
+            dino = DinoDetector(
+                logger,
+                dino_type=self.dino_params.get("dino_size", "tiny"),
+                weights_dir=self.models_weights_dir,
+            )
+
+            sam2_device = (
+                torch.device("mps")
+                if torch.backends.mps.is_available()
+                else torch.device("cpu")
+            )
+
+            dino_reid_device = (
+                torch.device("mps")
+                if torch.backends.mps.is_available()
+                else torch.device("cpu")
+            )
+
+            whisper_device = (
+                torch.device("mps")
+                if torch.backends.mps.is_available()
+                else torch.device("cpu")
+            )
+
+            ocr = OCRSystem(logger)
+
+            sam2 = build_sam2_video_predictor(
+                self.sam2_params.get("sam2_size", "tiny"),
+                "src.sam2.configs",
+                self.models_weights_dir,
+                logger,
+                sam2_device.type,
+            )
+
+            logger.info(
+                f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {dino_reid_device.type}..."
+            )
+
+            reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
+                dino_reid_device.type
+            )
+
+            reid_model.eval()
+
+            logger.info(f"loading whisper to {whisper_device.type}")
+
+            audio_model = whisper.load_model("base", device=whisper_device.type)
+
+            embedding_transform = transforms.Compose(
+                [
+                    transforms.ToPILImage(),
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    ),
+                ]
+            )
+
+            face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
+
+            profiles = ProfilesPile()
+            taxonomy_objects_num: int = self.taxonomy_params.get(
+                "taxonomy_objects_num", 100
+            )
+
+            target_generation_model = self.resolve_model(
+                "taxonomy.target_generation.model",
+                self.taxonomy_params.get("target_generation").get(
+                    "model", self.DEFAULT_TARGET_GENERATION_MODEL
+                ),
+            )
+
+            taxonomy_resolver = TaxonomyResolver(logger)
+            taxonomy_generator = TaxonomyGenerator(
+                taxonomy_objects_num,
+                profiles,
+                logger,
+                model=target_generation_model,
+            )
+
+            self.dino = dino
+            self.sam2 = sam2
+            self.ocr = ocr
+            self.reid_model = reid_model
+            self.audio_model = audio_model
+            self.embedding_transform = embedding_transform
+            self.face_detection = face_detection
+            self.taxonomy_resolver = taxonomy_resolver
+            self.taxonomy_generator = taxonomy_generator
+
+        except Exception as e:
+            logger.error(e)
+            raise e
+
+    def build_clip_scribe(
+        self,
+        video_name: str,
+        video_path: str,
+        video_type: str | None,
+        clib_scribe_mode: str,
+        clib_scribe_device: str,
+        clib_scribe_platform_name: str,
+        clib_scribe_platform_conf: BasePlatformConf,
+        user_hints: list[str] | None = None,
+        generate_hint_from_name: bool = False,
+    ) -> ClipScribeEngine:
+        try:
             info_extractor = None
             info_parser = None
 
@@ -339,14 +380,12 @@ class ClipScribeBuilder:
                     user_hints,
                     generate_hint_from_name,
                     clib_scribe_device,
-                    self.models_weights_dir,
                     self.clib_scribe_extractor_params,
                     self.dino_params,
                     self.scene_analysis_params,
                     self.face_detection_params,
                     self.taxonomy_params,
                     self.audio_params,
-                    self.sam2_params,
                 )
 
             if clib_scribe_mode in ["full", "parse"]:
@@ -365,8 +404,8 @@ class ClipScribeBuilder:
                 video_type=video_type,
                 extractor=info_extractor,
                 parser=info_parser,
-                reader_db=reader_db,
-                writer_db=writer_db,
+                reader_db=self.reader_db,
+                writer_db=self.writer_db,
             )
 
             return clib_scribe
