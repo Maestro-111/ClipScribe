@@ -78,7 +78,7 @@ The main configuration file is:
 src/clip_scribe/configs/clip_scribe.yaml
 ```
 
-The current checked-in config uses PostgreSQL by default. Switch `database.backend` to `sqlite` for local SQLite runs.
+The current checked-in config uses SQLite by default. Switch `database.backend` to `postgresql` (and set `POSTGRESQL_URL`) to use PostgreSQL.
 
 ## Running
 
