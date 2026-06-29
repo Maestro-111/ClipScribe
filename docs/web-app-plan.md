@@ -57,249 +57,209 @@ to make before that piece is built.
 
 ## 2. Repo restructure (monorepo)
 
+**Status: DONE.** Layout below reflects the current state on disk.
+
 ```
 clipscribe/
-  backend/
-    src/                          # existing Python, mostly untouched
+  backend/                        # Python project
+    pyproject.toml                # root of the uv project; readme line removed
+    uv.lock
+    main.py                       # CLI entry — instantiates ClipScribeBuilder and runs one job
+    src/                          # existing core, paths unchanged
       clip_scribe/  extractor/  ocr/  parser/  db/  dino/  sam2/  utils/
-    app/                          # NEW — web layer
-      main.py                     # FastAPI app + lifespan
-      deps.py                     # injection helpers (DB, redis, settings)
-      routes/
-        jobs.py                   # POST /jobs, GET /jobs, GET /jobs/{id}/events
-        runs.py                   # GET /runs, GET /runs/{id}/...
-        artifacts.py              # Range video, PNGs, /frames
-        health.py                 # /healthz, /readyz
-      models.py                   # Pydantic request/response schemas
+    app/                          # NEW — web layer (currently just __init__.py)
+      celery_app.py               # SHARED — Celery app + worker_process_init signal
+      tasks.py                    # WORKER-ONLY — imports ClipScribeBuilder (heavy)
+      main.py                     # API-ONLY — FastAPI app + lifespan
+      routes/                     # API-ONLY — jobs.py, runs.py, artifacts.py, health.py
+      models.py                   # SHARED — Pydantic request/response schemas
       events.py                   # ProgressReporter + Redis pub/sub helpers
-      tasks.py                    # Celery task definitions
-      celery_app.py               # Celery app + worker_process_init
-      progress.py                 # Event vocabulary + reducer reference
-    pyproject.toml
-    Dockerfile.api                # slim image
-    Dockerfile.worker             # heavy image
-  frontend/
+    docker/
+      api/
+        Dockerfile                # slim API image
+        deploy.sh
+      core/
+        Dockerfile                # heavy worker image (a.k.a. "scribe core")
+        deploy.sh
+    checkpoints/                  # all model weights live here (see §8)
+    data/                         # SQLite db lives here
+    input/                        # video inputs for CLI / picker
+    test/
+  frontend/                       # TS SPA
     src/
       api/                        # generated TS client from OpenAPI
       lib/                        # state, hooks, utils
       pages/                      # JobsList / NewJob / JobLive / RunInspector
       components/                 # VideoOverlay, Timeline, PhaseTree, LogTail
     package.json
-    Dockerfile
     vite.config.ts
-  docker-compose.yml              # api + worker + redis + postgres + nginx
+  docker-compose.yml              # dev stack: api + worker + redis + postgres
   Makefile
   docs/web-app-plan.md            # this file
 ```
 
-`backend/src/` is the current `src/`. The CLI entry (`main.py`) becomes a thin
-shim that calls into the same job-execution function the Celery task uses, so
-the CLI path keeps working.
+Notes on the layout as it stands:
 
-**Open question**: keep `src/` at the repo root and use a Python `src-layout` so
-the package import path doesn't change, or move under `backend/`? Moving means
-updating every `from src.x import y` site — there are many. Recommended: keep
-`src/` at root, put new web code at `app/` at root, and treat "backend" as
-logical not filesystem-level. Drop the `backend/` directory from the layout
-above if that's the call.
+- `from src.x import y` imports still work because `pyproject.toml` lives at
+  `backend/` and declares `packages = ["src"]`. After `uv sync` from `backend/`,
+  `src` is installed as a top-level package.
+- `PROJECT_ROOT = Path(__file__).resolve().parents[2]` inside
+  `build_clip_scribe.py` resolves to `backend/`, which is where `data/`,
+  `input/`, `checkpoints/` now live — so relative-path resolution works
+  without code changes.
+- Pre-commit must be invoked from `backend/` because the config lives at
+  `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
+- The root `Makefile` is still partially broken (it references paths that
+  moved). Either move it under `backend/` or update each target to
+  `cd backend && ...`. Tracked as a cleanup, not a blocker.
 
 ---
 
 ## 3. Builder refactor (load-once vs per-job)
 
-This is the single biggest non-trivial Python change. Without it, every job
-re-loads SAM2 + DINOv2 + Whisper + DINO + MTCNN + PaddleOCR (~30–60s).
+**Status: DONE.** Implemented in
+`backend/src/clip_scribe/build_clip_scribe.py`. The shape that landed is
+simpler than the original `ModelRegistry` / `JobAssembler` proposal — a
+single `ClipScribeBuilder` class whose `__init__` loads everything heavy,
+and whose existing `build_clip_scribe(...)` method becomes the cheap
+per-job entry point.
+
+### Why the refactor matters
+
+Without it, every job re-loads SAM2 + DINOv2 + Whisper + DINO + MTCNN +
+PaddleOCR + SBERT (~30–60s). A Celery worker is a long-lived process that
+should pay that cost once at boot and amortize it across every job it ever
+handles. The refactor is what makes that possible.
 
 ### Process model recap
 
-The API process and the worker process are **separate**. The API never imports
-torch and never loads a model — it only validates requests, reads the DB, and
-sends Celery tasks into Redis. The worker imports everything heavy. Workers
-can run on the same machine as the API or on remote machines (e.g. a GPU box);
-they only need network reach to Redis (broker + pubsub) and Postgres. Routing
+The API process and the worker process are **separate**. The API never
+imports torch and never loads a model — it only validates requests, reads
+the DB, and sends Celery tasks into Redis by name (see §8 on the import
+boundary trick). The worker imports everything heavy. Workers can run on
+the same machine as the API or on remote machines (e.g. a GPU box); they
+only need network reach to Redis (broker + pubsub) and Postgres. Routing
 is automatic via the Celery queue.
 
-For Mac dev: run the worker natively (so MPS works) and the rest in Docker.
-For Linux+GPU prod: everything in Docker, worker container gets `--gpus all`.
+### What actually changed
 
-### Current tangle (`src/clip_scribe/build_clip_scribe.py`)
+`ClipScribeBuilder.__init__` now calls two private setup methods:
 
-`ClipScribeBuilder.build_clip_scribe(...)` mixes process-level params (device,
-model weights, thresholds) with per-job params (`video_name`, `video_path`,
-`user_hints`, `clib_scribe_platform_conf`, `generate_hint_from_name`,
-`clib_scribe_mode`) in a single call. Inside `build_extractor`, the only lines
-that are actually per-job are:
-- 190–194: `combined_hints` derivation from `user_hints` + `video_name`.
-- 276: `taxonomy_user_hints=combined_hints` baked into the extractor
-  constructor.
+- `_assemble_db()` — builds the SQLAlchemy engine + reader + writer; stored
+  on `self.writer_db` / `self.reader_db`.
+- `_assemble_heavy_extractor_utils()` — loads every heavy model and stores
+  it on `self` (`self.dino`, `self.sam2`, `self.ocr`, `self.reid_model`,
+  `self.audio_model`, `self.embedding_transform`, `self.face_detection`,
+  `self.taxonomy_resolver`, `self.taxonomy_generator`).
 
-Everything else (lines 137–267) loads models or reads yaml defaults — all
-process-level. The "tangle" is therefore narrow: two locations in one method.
+`build_clip_scribe(...)` is now cheap: it consults `self.*` for the heavy
+deps, calls the OpenAI hint generator only if
+`generate_hint_from_name=True`, constructs a fresh
+`VideoInformationExtractor` (cheap — it's just storing pointers to the
+shared models) plus a fresh `VideoInformationParser`, and wraps both in a
+`ClipScribeEngine`.
 
-### Boot-vs-per-job classification
+Key consequences:
 
-Line numbers refer to `src/clip_scribe/build_clip_scribe.py` as of this writing.
+- **No `setup_for_job` method on the extractor was needed.** Because
+  `VideoInformationExtractor` is instantiated fresh per job, all per-run
+  state (`active_trackers`, `text_registry`, `object_registry`,
+  `audio_registry`, `scene_description_registry`, `obj_id_counter`,
+  `current_frame`) starts empty automatically. The heavy GPU-resident
+  models are passed by reference into the new instance, so no copies.
+- **No new `ModelRegistry` class.** The builder itself plays that role.
+- **`taxonomy_user_hints` is still a constructor arg of
+  `VideoInformationExtractor`** — that's fine because the extractor is
+  recreated per job.
+- **CLI is unchanged.** `main.py` still does
+  `builder = ClipScribeBuilder()` then
+  `builder.build_clip_scribe(...).run(run_id=...)` — same two lines as
+  before. Wall-clock for a single video is identical to pre-refactor; the
+  win shows up the moment a second job runs in the same process.
 
-#### Boot once (worker startup)
+### Boot vs per-job, current state
 
-| What | Source line(s) | Cost |
-|---|---|---|
-| Read `clip_scribe.yaml` | 66–88 | trivial |
-| DB engine + reader + writer | 313–331 | low |
-| `sam2_size`, `taxonomy_objects_num`, `dino_size` | 137, 139, 162 | trivial |
-| Resolved model names (hint/target/scene/parser) | 141–156, 104–108 | trivial |
-| Default thresholds (`audio_confidence`, `dino_text_conf`, `dino_box_conf`, `torch_face_cong`, `label_*_merge_threshold`, `word_similarity_threshold`, `detection_interval`, `reid_model_frame_check_freq`) | 158–181 | trivial |
-| Scene analysis numeric params (`min_samples`, `max_samples`, `sampling_rate`, `max_frame_dim`, `image_detail`) | 205–209 | trivial |
-| `ProfilesPile()` | 188 | trivial |
-| `TaxonomyResolver(logger)` (owns SBERT) | 196 | **HEAVY** |
-| `TaxonomyGenerator(...)` (OpenAI client + profiles) | 197–202 | low |
-| `DinoDetector(...)` | 211 | **HEAVY** (GroundingDINO checkpoint) |
-| `GPTSceneDescriber(...)` (OpenAI client) | 212–217 | low |
-| Device resolution (`sam2_device`, `dino_reid_device`, `whisper_device`) | 219–235 | trivial |
-| `OCRSystem(logger)` | 237 | **HEAVY** (PaddleOCR) |
-| `build_sam2_video_predictor(...)` | 238–240 | **HEAVY** (SAM2 checkpoint; biggest) |
-| `torch.hub.load("facebookresearch/dinov2", ...)` | 246–250 | **HEAVY** (DINOv2) |
-| `whisper.load_model("base", ...)` | 254 | **HEAVY** |
-| `embedding_transform` | 256–265 | trivial |
-| `MTCNN(keep_all=True, device="cpu")` | 267 | moderate |
-| `VideoInformationExtractor(...)` constructor (sans hints) | 269–296 | trivial — just stores refs |
-| Parser agent defaults (`parser_max_parallel`, `recursion_limit`, `parser_detection_model`) | 101–108 | trivial |
+#### Boot once (`ClipScribeBuilder()` → `__init__`)
 
-#### Per job (Celery task payload)
+- Read `clip_scribe.yaml`.
+- Resolve `models_weights_dir` and all yaml param dicts.
+- `_assemble_db()` → DB engine + reader + writer.
+- `_assemble_heavy_extractor_utils()` →
+  GroundingDINO, SAM2, PaddleOCR, DINOv2 (reid), Whisper,
+  MTCNN, `embedding_transform`, `ProfilesPile`, `TaxonomyResolver` (SBERT),
+  `TaxonomyGenerator`.
 
-| What | Source line(s) | Notes |
-|---|---|---|
-| `video_name`, `video_path`, `video_type` | 124, plus engine args | from request |
-| `mode` (`full`/`extract`/`parse`) | 305, 336, 352 | from request |
-| `user_hints` | 125, 190 | from request |
-| `generate_hint_from_name` + the `generate_hints_from_video_name` OpenAI call | 126, 191–194 | per-job because it depends on `video_name` |
-| `platform_name` + `platform_params` → `BasePlatformConf` | 307, 308 (built in `build_clip_scribe_plalform.py`) | per-job |
-| Optional threshold overrides | n/a today | new in the API |
-| `ProgressReporter` instance bound to `job_id` | n/a today | new in the API |
-| Per-run state inside `VideoInformationExtractor` (`active_trackers`, `text_registry`, `object_registry`, `audio_registry`, `scene_description_registry`, `obj_id_counter`, `current_frame`, `cap`, `video_writer`, `inference_state`, `shot_boundaries`, `global_stats`) | inside `extract()` | must be reset between jobs |
+#### Per job (`build_clip_scribe(...)`)
 
-### Refactor target
+- `video_name`, `video_path`, `video_type`, `mode`, `device`,
+  `platform_name`, `platform_conf`, `user_hints`, `generate_hint_from_name`
+  arrive as call args.
+- `combined_hints` derivation (only OpenAI-roundtrip if
+  `generate_hint_from_name=True`).
+- Fresh `GPTSceneDescriber` (cheap — OpenAI client wrapper, not a model).
+- Fresh `VideoInformationExtractor` wrapping `self.dino`, `self.sam2`, …
+- Fresh `VideoInformationParser` bound to the per-job `platform_conf`.
+- `ClipScribeEngine(...)` wrapper around extractor + parser + `self.*_db`.
 
-Split into three layers:
+Target cost: a few hundred ms (dominated by the optional hint-generation
+OpenAI call when enabled), versus 30–60s pre-refactor.
 
-1. **`ModelRegistry`** — owns everything in the "boot once" table above. Built
-   once at worker startup via Celery's `worker_process_init` signal. Holds a
-   single long-lived `VideoInformationExtractor` instance whose constructor
-   **no longer takes `taxonomy_user_hints`**.
+### Worker integration (the shape that will land in §10)
 
-2. **`JobAssembler`** — takes a `ModelRegistry` + per-job `JobParams` and
-   returns a `ClipScribeEngine` ready to call `.run()`. Cheap (target <100 ms).
-   It:
-   - resolves `combined_hints` (calling OpenAI only if
-     `generate_hint_from_name=True`),
-   - calls `registry.extractor.setup_for_job(...)` to rebind hints/reporter
-     and clear per-run state,
-   - builds the per-job `VideoInformationParser` via
-     `registry.build_parser_for_job(platform_conf, reporter)`,
-   - constructs the per-job `ClipScribeEngine` wrapper.
-
-3. **`ClipScribeEngine`** — unchanged conceptually. Accepts an already-built
-   extractor/parser. Gains a `reporter` arg and emits `job.started` /
-   `job.completed` / `job.failed` around the existing flow.
-
-### Required edits
-
-#### `src/extractor/extractor_core.py`
-- Remove `taxonomy_user_hints` from `__init__` (currently line 266).
-- Add a `setup_for_job(...)` method that does both rebind and reset:
-  ```python
-  def setup_for_job(
-      self,
-      user_hints: list[str] | None,
-      reporter: "ProgressReporter",
-      thresholds_override: dict | None = None,
-  ) -> None:
-      self.taxonomy_user_hints = user_hints
-      self.reporter = reporter
-
-      # reset per-run state
-      self.current_frame = 0
-      self.obj_id_counter = 1
-      self.active_trackers = {}
-      self.id_to_label = {}
-      self.text_registry = defaultdict(set)
-      self.object_registry = {}
-      self.audio_registry = []
-      self.scene_description_registry = []
-
-      # optional per-job threshold overrides (kept narrow)
-      if thresholds_override:
-          for k, v in thresholds_override.items():
-              if not hasattr(self, k):
-                  raise ValueError(f"unknown threshold override: {k}")
-              setattr(self, k, v)
-  ```
-- `extract()` signature stays as it is.
-- Sprinkle `self.reporter.emit(...)` calls at the hook sites listed in §5.
-
-#### `src/clip_scribe/build_clip_scribe.py`
-- Replace `build_extractor(...)` with **`build_extractor_models(self) -> ExtractorBundle`** that takes no per-job args. Returns the populated extractor + the resolver/generator references the assembler may need to introspect.
-- Replace `build_parser(...)` with two methods:
-  - **`build_parser_defaults(self) -> ParserDefaults`** — agent LLM, max_parallel, recursion_limit, output_dir.
-  - **`build_parser_for_job(self, defaults, platform_conf, reporter) -> VideoInformationParser`** — cheap, called per job.
-- Replace `build_clip_scribe(...)` with two distinct entry points:
-  - **`build_registry(self) -> ModelRegistry`** — boot path. Used by both the
-    worker (via `worker_process_init`) and the CLI.
-  - **`assemble_engine(self, registry, job_params) -> ClipScribeEngine`** —
-    per-job path. Used by both the Celery task and the CLI.
-
-#### `src/clip_scribe/engine.py`
-- Accept `reporter: ProgressReporter` as a constructor arg.
-- Wrap the existing `run()` body so it emits `job.started` /
-  `job.completed` / `job.failed` and propagates `reporter` into both the
-  extractor and parser.
-
-### Worker integration
+The actual Celery wiring is unchanged from the planned approach — it's
+just thinner now because there's no `ModelRegistry` / `assemble_engine`
+plumbing in the middle:
 
 ```python
-# app/celery_app.py
+# backend/app/celery_app.py
 from celery import Celery
-from celery.signals import worker_process_init
-from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+import os
+celery_app = Celery("clipscribe", broker=os.environ["REDIS_URL"])
+```
 
-celery_app = Celery("clipscribe", broker=settings.redis_url)
-REGISTRY = None  # set in worker_process_init
+```python
+# backend/app/tasks.py
+from celery.signals import worker_process_init
+from app.celery_app import celery_app
+from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+from src.clip_scribe.build_clip_scribe_plalform import build_platform
+
+BUILDER = None
 
 @worker_process_init.connect
-def boot_registry(**_):
-    global REGISTRY
-    REGISTRY = ClipScribeBuilder().build_registry()
+def boot(**_):
+    global BUILDER
+    BUILDER = ClipScribeBuilder()   # 30–60s, ONCE per worker process
+
+@celery_app.task(name="app.tasks.run_job")
+def run_job(job_params: dict):
+    platform_conf = build_platform(
+        job_params["platform_name"], **job_params["platform_params"]
+    )
+    engine = BUILDER.build_clip_scribe(
+        video_name=job_params["video_name"],
+        video_path=job_params["video_path"],
+        video_type=job_params["video_type"],
+        clib_scribe_mode=job_params["mode"],
+        clib_scribe_device=job_params["device"],
+        clib_scribe_platform_name=job_params["platform_name"],
+        clib_scribe_platform_conf=platform_conf,
+        user_hints=job_params.get("user_hints"),
+        generate_hint_from_name=job_params.get("generate_hint_from_name", False),
+    )
+    engine.run(run_id=job_params.get("run_id", ""))
 ```
 
-```python
-# app/tasks.py
-@celery_app.task(bind=True)
-def run_clip_scribe(self, job_params_json: dict):
-    params = JobParams.model_validate(job_params_json)
-    reporter = RedisProgressReporter(params.job_id, REGISTRY.redis)
-    engine = ClipScribeBuilder().assemble_engine(REGISTRY, params, reporter)
-    engine.run(run_id=params.run_id)
-```
+### What still needs to happen in this file later (tracked elsewhere)
 
-The worker boots once (slow: ~30–60s), then services jobs in a tight loop
-where each job costs only the `assemble_engine` call (<100 ms) plus the actual
-extraction work.
-
-### CLI compatibility
-
-`main.py` (the existing entry point at line 65) collapses to:
-
-```python
-builder = ClipScribeBuilder()
-registry = builder.build_registry()
-job_params = JobParams(...)   # populated from the hardcoded values currently in main.py
-engine = builder.assemble_engine(registry, job_params, NullProgressReporter())
-engine.run(run_id="")
-```
-
-Same wall-clock as today (models were going to load anyway), but the code path
-is now identical to the worker — guaranteeing parity between CLI runs and
-API-driven runs.
+- Inject a `ProgressReporter` into the engine + extractor + parser
+  (§5; needed for live UI updates).
+- Pass `download_root` to `whisper.load_model` and the equivalent dirs to
+  `OCRSystem` so all weight downloads land under
+  `backend/checkpoints/` instead of `~/.cache/...` (§8).
+- Optional cleanup: move `hint_generation_model` and `scene_detection_model`
+  string resolution into `__init__` for consistency with
+  `target_generation_model`. Cost-neutral.
 
 ---
 
@@ -529,7 +489,7 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
    - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
      `video_type`, `device`, `mode`, `platform`).
    - Video field: upload OR pick from server-side `input/` directory (see
-     Open question §8).
+     Open question §9).
    - Defaults pre-populated from `GET /defaults` so the form shows the yaml
      values and the user only overrides what they care about.
    - Submit → `POST /jobs` → redirect to `/jobs/{id}`.
@@ -583,7 +543,175 @@ sketch.
 
 ---
 
-## 8. Things we have not nailed down yet (open questions)
+## 8. Docker & checkpoint strategy
+
+Two images, two roles, one shared volume for weights. Both Dockerfiles
+live under `backend/docker/`:
+
+```
+backend/docker/
+  api/
+    Dockerfile          # slim — fastapi/pydantic/redis/sqlalchemy only
+    deploy.sh
+  core/
+    Dockerfile          # heavy — full torch + CV stack + weights story
+    deploy.sh
+```
+
+### Image responsibilities
+
+| | API image (`docker/api/`) | Core image (`docker/core/`) |
+|---|---|---|
+| Role | FastAPI; never executes ML | Celery worker; runs the pipeline |
+| Heavy deps | none (no `torch`, no `whisper`, no `paddleocr`) | full stack |
+| Imports `src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
+| Imports `app/tasks.py`? | **no** — sends tasks by name | yes |
+| Talks to Redis | yes (broker client + pubsub subscriber) | yes (broker consumer + pubsub publisher) |
+| Talks to Postgres | yes (read-mostly + jobs writes) | yes (writer + reader) |
+| Mounts `backend/checkpoints/`? | no | yes in dev, baked in prod |
+| Approx size | ~300 MB | 8–15 GB |
+
+### The import-boundary trick (avoids dragging torch into the API)
+
+To enqueue without importing the task:
+
+```python
+# backend/app/routes/jobs.py — API only
+from app.celery_app import celery_app          # lightweight (just Celery)
+celery_app.send_task("app.tasks.run_job", args=[params.model_dump()])
+```
+
+`backend/app/celery_app.py` is small and lives in both images.
+`backend/app/tasks.py` contains the heavy imports (`ClipScribeBuilder`,
+torch transitively) and is **only ever imported by the worker**, never by
+the API. The contract between them is the string task name.
+
+### Checkpoint / weight strategy
+
+All model weights live under `backend/checkpoints/`, organized by source:
+
+```
+backend/checkpoints/
+  dino/         GroundingDINO .pth   (explicit path; loaded today)
+  sam2/         SAM2 .pt             (explicit path; loaded today)
+  torch_hub/    ← TORCH_HOME         (DINOv2 + MTCNN auto-download)
+  huggingface/  ← HF_HOME            (SBERT inside TaxonomyResolver)
+  whisper/      ← download_root arg  (Whisper auto-download)
+  paddleocr/    ← model_dir arg      (PaddleOCR auto-download)
+  nltk/         ← NLTK_DATA          (WordNet)
+```
+
+Env vars set once at process start (`.env` in dev, Dockerfile `ENV` block
+in prod) redirect every auto-downloader into a subdir of
+`backend/checkpoints/`:
+
+```bash
+TORCH_HOME=$REPO/backend/checkpoints/torch_hub
+HF_HOME=$REPO/backend/checkpoints/huggingface
+NLTK_DATA=$REPO/backend/checkpoints/nltk
+```
+
+The builder reads them implicitly — the underlying libraries
+(`torch.hub.load`, `sentence-transformers`, `facenet_pytorch`, `nltk`)
+honor those env vars and write into the right place.
+
+Two libraries don't honor env vars and need explicit args from the
+builder:
+
+- **Whisper**:
+  `whisper.load_model("base", device=..., download_root=str(self.models_weights_dir / "whisper"))`
+- **PaddleOCR**: pass `det_model_dir` / `rec_model_dir` / `cls_model_dir`
+  through `OCRSystem` to the PaddleOCR constructor.
+
+A `backend/scripts/prewarm.py` one-liner triggers every download by
+constructing the builder:
+
+```python
+# backend/scripts/prewarm.py
+from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+ClipScribeBuilder()
+print("prewarm complete")
+```
+
+### Dev image — mount strategy
+
+`backend/docker/core/Dockerfile` (dev variant) is slim: install deps, copy
+code, no weight downloads. The `docker-compose.yml` does the work:
+
+```yaml
+worker:
+  build:
+    context: .
+    dockerfile: backend/docker/core/Dockerfile
+  env_file: backend/.env                       # TORCH_HOME, HF_HOME, NLTK_DATA
+  volumes:
+    - ./backend/checkpoints:/app/backend/checkpoints   # persist weights
+    - ./backend/src:/app/backend/src                   # hot-reload code
+    - ./backend/app:/app/backend/app
+```
+
+- First worker boot ever to use the volume: downloads ~5–10 GB (~5 min).
+- Every subsequent boot: instant, cache is reused.
+- Optional manual prewarm to avoid lazy first-job downloads:
+  `docker compose run --rm worker uv run python scripts/prewarm.py`.
+
+### Prod image — bake strategy
+
+A separate Dockerfile path (could be a multi-stage with build args, or a
+distinct `Dockerfile.prod`; choice deferred) sets the env vars at build
+time and runs `prewarm.py` as a `RUN` step so weights are baked into an
+image layer:
+
+```dockerfile
+ENV TORCH_HOME=/app/backend/checkpoints/torch_hub \
+    HF_HOME=/app/backend/checkpoints/huggingface \
+    NLTK_DATA=/app/backend/checkpoints/nltk
+RUN cd /app/backend && uv run python scripts/prewarm.py
+```
+
+No volume mount needed at runtime. Image is 8–15 GB and starts instantly.
+Good for prod where images are pushed rarely.
+
+### MPS in Docker on Mac — important caveat
+
+MPS is not available inside Linux containers. Two consequences:
+
+- **Mac dev**: run the worker natively (so `device=mps` works), and put
+  the rest (API + Redis + Postgres + frontend) in `docker-compose`.
+  Document this in the README.
+- **Prod on Linux + NVIDIA**: everything in Docker, worker container gets
+  `--gpus all`. No special handling beyond that.
+
+The same `core` image *can* run on Mac if you accept CPU fallback — useful
+for verifying the worker integration end-to-end, but ~10× slower than
+native MPS. Treat it as smoke-test only.
+
+### API image — always slim
+
+The `docker/api/Dockerfile` only installs the lean dependency set,
+copies `backend/app/`, `backend/src/db/`, and
+`backend/src/clip_scribe/platform_configs/`. It never copies the rest of
+`src/` and never installs torch. Rebuilds in seconds.
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY backend/pyproject.toml backend/uv.lock /app/backend/
+COPY backend/app /app/backend/app
+COPY backend/src/db /app/backend/src/db
+COPY backend/src/clip_scribe/platform_configs /app/backend/src/clip_scribe/platform_configs
+RUN cd /app/backend && uv sync --no-dev   # consider an `api` extra to skip torch entirely
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0"]
+```
+
+To keep the API image truly slim, the eventual `pyproject.toml`
+should split `[project.optional-dependencies]` into `api` and `worker`
+extras so `uv sync --no-dev --extra api` skips torch / whisper /
+paddleocr entirely.
+
+---
+
+## 9. Things we have not nailed down yet (open questions)
 
 These are decisions to make before the corresponding implementation step.
 
@@ -623,11 +751,9 @@ These are decisions to make before the corresponding implementation step.
    behavior and we now have a writer worker + reader API hitting it. Local CLI
    keeps SQLite for convenience.
 
-7. **MPS in Docker on Mac.**
-   Doesn't work — MPS is not available inside Linux containers. Dev on Mac:
-   run worker natively, dockerize only API + Redis + Postgres + frontend.
-   Prod on Linux+NVIDIA: full docker-compose with `--gpus all`. Document both
-   in the README.
+7. **MPS in Docker on Mac.** Resolved — see §8 "Docker & checkpoint
+   strategy". Dev on Mac runs the worker natively; everything else can be
+   dockerized.
 
 8. **Cost & telemetry.**
    Each job calls OpenAI for hint generation, target generation, scene
@@ -687,7 +813,7 @@ These are decisions to make before the corresponding implementation step.
 
 ---
 
-## 9. Sequencing — what to build first
+## 10. Sequencing — what to build first
 
 Strictly ordered; each step is shippable on its own.
 
@@ -695,8 +821,10 @@ Strictly ordered; each step is shippable on its own.
    `shot_boundaries`.** Alembic baseline + first migration. No behavior
    change yet; just schema.
 
-2. **Builder refactor: `ModelRegistry` + `JobAssembler`.** CLI still works.
-   Models load once. No FastAPI yet. This is the load-bearing refactor.
+2. **Builder refactor: load-once via `ClipScribeBuilder.__init__`.**
+   **DONE.** Heavy assembly moved into `__init__` (`_assemble_db`,
+   `_assemble_heavy_extractor_utils`). `build_clip_scribe(...)` is now
+   the cheap per-job entry point. CLI works unchanged. See §3.
 
 3. **`ProgressReporter` interface + Null impl.** Wire publish calls into
    `extractor_core.py` and `parser_core.py`. CLI passes Null; nothing changes
@@ -739,7 +867,7 @@ Strictly ordered; each step is shippable on its own.
 
 ---
 
-## 10. Risks / things that could derail this
+## 11. Risks / things that could derail this
 
 - **Builder refactor is bigger than it looks.** Hints get passed deep into
   the extractor and into the GPT taxonomy generator. Untangling these so the
