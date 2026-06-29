@@ -33,6 +33,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 7. **Parser:** `src/parser/` evaluates persisted data against platform-specific criteria such as YouTube rules.
 
 ## Setup And Environment
+- **Repository layout:** This is a monorepo. The Python project lives in `backend/` (alongside `frontend/`), but the git root is the repository root. Run all backend commands (`uv ...`, `pre-commit`, `make`) from `backend/` so relative paths like `pyproject.toml` and `src/clip_scribe` resolve.
 - Python requirement: `>=3.12`.
 - Install project dependencies with `uv sync`.
 - Install development dependencies with `uv sync --extra dev`.
@@ -45,7 +46,8 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 ## Commands
 - `uv run pytest -q` - run tests. Current repo state may collect no tests until coverage is added.
 - `uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser` - typecheck the editable core.
-- `uv run pre-commit run --all-files` - run formatting, lint, and type hooks.
+- `uv run pre-commit run --all-files` - run formatting, lint, and type hooks. Must be invoked from `backend/`: the config is `backend/.pre-commit-config.yaml` (pre-commit discovers the config from the current directory), but hooks always execute from the git root with paths relative to it. This is why the `exclude` patterns are prefixed with `backend/` and the mypy hook is a local hook that `cd backend` before running `uv run mypy`. Running from the repo root fails with `.pre-commit-config.yaml is not a file`.
+  - Corollary: the third-party `backend/src/sam2/` and `backend/src/dino/groundingdino/` trees are protected only by the `backend/`-prefixed `exclude`. If the layout changes, update that regex or `ruff --fix` will strip side-effect imports from their `__init__.py` files (notably the GroundingDINO model-registry imports) and break model loading.
 - `make setup` - download checkpoints and pre-cache large models. Ask before running.
 - `make checkpoints` - download DINO and SAM2 checkpoints. Ask before running.
 - `make clean` - remove checkpoint files.

@@ -36,6 +36,12 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 
 ## Setup
 
+ClipScribe is a monorepo: the Python backend lives in `backend/` (alongside `frontend/`), while the git root is the repository root. **Run all backend commands below from the `backend/` directory** so `uv` and relative paths resolve correctly.
+
+```bash
+cd backend
+```
+
 ClipScribe requires Python 3.12 or newer.
 
 Install project dependencies:
@@ -106,11 +112,13 @@ Run type checks:
 uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser
 ```
 
-Run all pre-commit hooks:
+Run all pre-commit hooks (from `backend/`):
 
 ```bash
 uv run pre-commit run --all-files
 ```
+
+> **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
 Clean downloaded checkpoints:
 

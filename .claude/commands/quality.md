@@ -7,6 +7,8 @@ argument-hint: "[optional changed-file scope]"
 
 Run quality checks for the editable project code. Do not inspect or modify `src/dino/groundingdino/**` or `src/sam2/**`.
 
+Run all commands below from the `backend/` directory (the Python project lives in `backend/` in this monorepo). pre-commit in particular must be invoked from `backend/`, since it discovers `backend/.pre-commit-config.yaml` from the current directory but executes hooks from the git root.
+
 1. Identify the relevant changed files from `$ARGUMENTS` or `git status --short`.
 2. Run the test suite:
 
