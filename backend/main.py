@@ -28,10 +28,12 @@ platform_params = {
     "youtube_branded_products": ["Jeep Wrangler", "Jeep Adventure Days"],
     "youtube_branded_products_categories": [
         "Jeep Wrangler Pick Up Truck",
-        "Jeep Wrangler Truck" "RAM HD Rebel Car",
+        "Jeep Wrangler Truck",
+        "RAM HD Rebel Car",
         "Jeep Wrangler SUV",
         "Jeep Adventure Days Pick Up Truck",
-        "Jeep Adventure Days Truck" "RAM HD Rebel Car",
+        "Jeep Adventure Days Truck",
+        "RAM HD Rebel Car",
         "Jeep Adventure Days SUV",
     ],
     "youtube_call_to_actions": [

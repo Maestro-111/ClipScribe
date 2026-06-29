@@ -88,7 +88,6 @@ class ClipScribeBuilder:
         self.db_backend = self.db_params.get("backend", "sqlite")
 
         self._assemble_db()
-        self._assemble_heavy_extractor_utils()
 
     def build_parser(
         self,
@@ -290,7 +289,7 @@ class ClipScribeBuilder:
             ocr = OCRSystem(logger)
 
             sam2 = build_sam2_video_predictor(
-                self.sam2_params.get("sam2_size", "tiny"),
+                self.sam2_params.get("size", "tiny"),
                 "src.sam2.configs",
                 self.models_weights_dir,
                 logger,
@@ -375,6 +374,7 @@ class ClipScribeBuilder:
             info_parser = None
 
             if clib_scribe_mode in ["full", "extract"]:
+                self._assemble_heavy_extractor_utils()
                 info_extractor = self.build_extractor(
                     video_name,
                     user_hints,
