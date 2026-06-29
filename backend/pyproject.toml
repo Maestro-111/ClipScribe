@@ -1,0 +1,71 @@
+[project]
+name = "clip_scribe"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+dependencies = [
+    "colorlog>=6.10.1",
+    "hydra-core>=1.3.2",
+    "iopath>=0.1.10",
+    "opencv-python>=4.13.0.90",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "transformers",
+    "supervision>=0.22.0",
+    "paddleocr>=2.0.1",
+    "scikit-learn>=1.8.0",
+    "spacy>=3.8.11",
+    "scenedetect>=0.6.7.1",
+    "python-dotenv>=1.2.1",
+    "openai-agents>=0.7.0",
+    "pydantic>=2.12.5",
+    "nltk>=3.9.2",
+    "sentence-transformers>=5.2.2",
+    "facenet-pytorch>=2.5.3",
+    "openai-whisper>=20250625",
+    "paddlepaddle",
+    "addict",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "yapf",
+    "pycocotools",
+    "timm",
+    "PyYAML==6.0.3",
+    "types-PyYAML",
+    "sqlalchemy>=2.0.0"
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg2-binary>=2.9.0"]
+dev = [
+    "mypy>=1.11.0",
+    "pandas-stubs>=2.2.0",
+    "pre-commit==4.2.0",
+    "pytest==9.0.2",
+    "pytest-cov==7.0.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "sam2.*",
+    "dino.*",
+    "groundingdino.*",
+    "utils.sam2_utils",
+    "utils.position_encoding",
+    "utils.misc",
+    "src.sam2.*",
+    "src.dino.*"
+]
+ignore_errors = true
+follow_imports = "skip"
