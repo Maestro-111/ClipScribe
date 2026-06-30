@@ -5,7 +5,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from src.db.engine import resolve_database_url
+from src.db.engine import ensure_sqlite_parent_directory, resolve_database_url
 from src.db.schema import metadata_obj
 
 # this is the Alembic Config object, which provides
@@ -43,6 +43,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode against a live connection."""
+    ensure_sqlite_parent_directory(DATABASE_URL)
     connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:

@@ -15,6 +15,8 @@ from unittest import mock
 
 import pytest
 
+from src.db.engine import ensure_sqlite_parent_directory
+
 BACKEND = Path(__file__).resolve().parents[1]
 MAIN_PY = BACKEND / "main.py"
 
@@ -50,6 +52,15 @@ def test_main_branded_categories_are_not_concatenated():
     # No entry should be the tell-tale concatenated artifact.
     for c in categories:
         assert "TruckRAM" not in c, f"implicit-concat artifact survived: {c!r}"
+
+
+def test_sqlite_parent_directory_is_created(tmp_path):
+    db_path = tmp_path / "nested" / "clip_scribe.db"
+
+    ensure_sqlite_parent_directory(f"sqlite:///{db_path}")
+
+    assert db_path.parent.is_dir()
+    assert not db_path.exists()
 
 
 @pytest.fixture
