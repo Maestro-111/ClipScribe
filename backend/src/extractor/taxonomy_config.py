@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import List
+
+from pydantic import BaseModel, Field
 
 
 class TaxonomyProfile(BaseModel):
@@ -44,11 +45,11 @@ class ProfilesPile:
     data holder to extract appropriate profile by name
     """
 
-    def __init__(self):
-        self.__type_to_profile = {}
+    def __init__(self) -> None:
+        self.__type_to_profile: dict[str, TaxonomyProfile] = {}
         self.__create_profiles()
 
-    def __create_profiles(self):
+    def __create_profiles(self) -> None:
         car_ad_profile = TaxonomyProfile(
             video_type="car ad",
             focus_categories=[
@@ -87,7 +88,7 @@ class ProfilesPile:
         self.__type_to_profile["car ad"] = car_ad_profile
         self.__type_to_profile["general profile"] = general_profile
 
-    def get_video_profile(self, video_type: str | None):
+    def get_video_profile(self, video_type: str | None) -> TaxonomyProfile:
         if video_type not in self.__type_to_profile or video_type is None:
             return self.__type_to_profile["general profile"]
         return self.__type_to_profile[video_type]

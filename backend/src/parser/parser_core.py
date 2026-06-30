@@ -7,6 +7,7 @@ from src.db import ClipScribeReaderDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
+from src.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 
 
@@ -22,6 +23,7 @@ class VideoInformationParser:
         logger: logging.Logger,
         max_parallel_agents: int = 5,
         recursion_limit: int = 20,
+        progress_reporter: ProgressReporter | None = None,
     ):
         """
         Initialize the video information parser.
@@ -41,6 +43,7 @@ class VideoInformationParser:
         self.max_parallel_agents = max_parallel_agents
         self.recursion_limit = recursion_limit
         self.model = self.create_agent_model(agent)
+        self.progress = progress_reporter or NullProgressReporter()
 
     def __repr__(self) -> str:
         return f"VideoInformationParser(model={self.model.model_name}, output_dir={self.output_dir})"
@@ -121,11 +124,16 @@ class VideoInformationParser:
             report_output_path, scores_output_path
         )
 
+        self.progress.phase_started(Phase.PARSE)
+
         if evaluator is not None:
             results = evaluator.evaluate_all(run_id, video_name)
             report_writer.write_results(results)
             self.logger.info(
                 f"Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
             )
+            self.progress.phase_completed(Phase.PARSE, {"criteria_count": len(results)})
+        else:
+            self.progress.phase_completed(Phase.PARSE, {"criteria_count": 0})
 
         return str(report_output_path)

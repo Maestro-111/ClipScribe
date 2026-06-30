@@ -48,14 +48,9 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser` - typecheck the editable core.
 - `uv run pre-commit run --all-files` - run formatting, lint, and type hooks. Must be invoked from `backend/`: the config is `backend/.pre-commit-config.yaml` (pre-commit discovers the config from the current directory), but hooks always execute from the git root with paths relative to it. This is why the `exclude` patterns are prefixed with `backend/` and the mypy hook is a local hook that `cd backend` before running `uv run mypy`. Running from the repo root fails with `.pre-commit-config.yaml is not a file`.
   - Corollary: the third-party `backend/src/sam2/` and `backend/src/dino/groundingdino/` trees are protected only by the `backend/`-prefixed `exclude`. If the layout changes, update that regex or `ruff --fix` will strip side-effect imports from their `__init__.py` files (notably the GroundingDINO model-registry imports) and break model loading.
-- `make setup` - download checkpoints and pre-cache large models. Ask before running.
-- `make checkpoints` - download DINO and SAM2 checkpoints. Ask before running.
-- `make clean` - remove checkpoint files.
 
 ## Current Caveats
-- `main.py` is a temporary hardcoded entry point, not a stable CLI.
-- `make run_extractor` currently references `src.extractor.extractor`, but the implementation lives in `src/extractor/extractor_core.py`.
-- `make help` currently prints only a header.
+- `main.py` is an entry point to run the pipeline for local dev, not a stable CLI.
 - The test suite is minimal.
 - Generated media, databases, logs, and parser/extractor artifacts should usually be ignored during code review unless the task is about outputs.
 

@@ -1,19 +1,38 @@
+from __future__ import annotations
+
 import cv2
 import os
 
 import re
 import logging
 import numpy as np
+import numpy.typing as npt
 import math
 
 import json
 import torch
 
-from typing import TYPE_CHECKING, Any
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Mapping,
+    NotRequired,
+    Protocol,
+    Sequence,
+    TypedDict,
+    TypeAlias,
+)
 
 from scenedetect import detect, ContentDetector
 from collections import defaultdict
 from nltk.corpus import wordnet as wn
+
+from src.utils.progress import (
+    NullProgressReporter,
+    Phase,
+    ProgressEvent,
+    ProgressReporter,
+)
 
 if TYPE_CHECKING:
     import whisper
@@ -25,12 +44,109 @@ if TYPE_CHECKING:
     from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
 
 
+Box: TypeAlias = Sequence[float]
+Embedding: TypeAlias = npt.NDArray[np.floating[Any]]
+
+
+class TrackerData(TypedDict):
+    box: Box
+    label: str
+
+
+class OCRDetection(TypedDict):
+    box: Box
+    text: str
+    confidence: float
+    label: NotRequired[str]
+
+
+class DetectionResult(TypedDict):
+    box: Box
+    label: str
+    score: float
+
+
+class ObjectRegistryEntry(TypedDict):
+    label: str
+    shot_id: int
+    embedding_sum: Embedding
+    embedding_count: int
+    boxes: list[Box]
+    timestamps: list[float]
+    last_embedding_frame: float
+
+
+class VisualObjectOccurrence(TypedDict):
+    shot_index: int
+    lifespan: list[float]
+    screen_coverage: float
+    velocity_px_sec: float
+    growth_factor: float
+    direction: str
+    centrality_score: float
+    screen_time_ratio: float
+    quadrant: str
+
+
+class VisualObjectSummary(TypedDict):
+    global_id: int
+    label: str
+    occurrences: list[VisualObjectOccurrence]
+
+
+class TextEvent(TypedDict):
+    second: int
+    text: list[str]
+
+
+class AudioSegment(TypedDict):
+    start: float
+    end: float
+    text: str
+    confidence: float
+
+
+class SceneDescriptionRecord(TypedDict):
+    shot_index: int
+    start_time: float
+    end_time: float
+    description: str
+
+
+class ShotData(TypedDict):
+    index: int
+    start: float
+    end: float
+    duration: float
+
+
+class RapidFireInterval(TypedDict):
+    start_time: float
+    end_time: float
+    shot_count: int
+    duration: float
+    shot_indices: list[int]
+
+
+class ExtractionSummary(TypedDict):
+    global_stats: dict[str, object]
+    visual_objects: list[VisualObjectSummary]
+    text_events: list[TextEvent]
+    audio_segments: list[AudioSegment]
+    scene_descriptions: list[SceneDescriptionRecord]
+
+
+class ReIDModel(Protocol):
+    def forward_features(self, x: torch.Tensor) -> Mapping[str, torch.Tensor]:
+        ...
+
+
 class NumpyEncoder(json.JSONEncoder):
     """
     helper to encode information to json
     """
 
-    def default(self, obj):
+    def default(self, obj: Any) -> Any:
         if isinstance(obj, (np.integer, int)):
             return int(obj)
         elif isinstance(obj, (np.floating, float)):
@@ -47,7 +163,7 @@ class VideoInformationExtractor:
     """
 
     @staticmethod
-    def get_schema_descriptions():
+    def get_schema_descriptions() -> dict[str, dict[str, str]]:
         """
         Returns a flat dictionary mapping DB table names to their column descriptions.
         Structure: {table_name: {column_name: description_string}}
@@ -110,7 +226,7 @@ class VideoInformationExtractor:
         }
 
     @staticmethod
-    def _calculate_iou(boxA, boxB):
+    def _calculate_iou(boxA: Box, boxB: Box) -> float:
         """Compute Intersection over Union between two [x1, y1, x2, y2] boxes."""
         # Determine intersection rectangle
         xA = max(boxA[0], boxB[0])
@@ -133,17 +249,17 @@ class VideoInformationExtractor:
         return iou
 
     @staticmethod
-    def _mask_to_box(mask):
+    def _mask_to_box(mask: npt.NDArray[Any]) -> list[int] | None:
         """Converts SAM mask to bounding box [x1, y1, x2, y2]"""
         if len(mask.shape) == 3:
             mask = mask[0]
         y, x = np.where(mask > 0)
         if len(x) == 0:
             return None
-        return [np.min(x), np.min(y), np.max(x), np.max(y)]
+        return [int(np.min(x)), int(np.min(y)), int(np.max(x)), int(np.max(y))]
 
     @staticmethod
-    def _labels_match(label_a, label_b):
+    def _labels_match(label_a: str, label_b: str) -> bool:
         """
         Fuzzy match for labels using string inclusion and WordNet semantics.
         Checks for synonyms and direct hypernym/hyponym relationships.
@@ -196,7 +312,9 @@ class VideoInformationExtractor:
         return False
 
     @staticmethod
-    def _is_valid_text(text_data, frame_height, max_text_height):
+    def _is_valid_text(
+        text_data: OCRDetection, frame_height: int, max_text_height: float
+    ) -> bool:
         """
         Robust filter for OCR noise and irrelevant fine print.
         Returns True only if the text is significant.
@@ -264,7 +382,7 @@ class VideoInformationExtractor:
         taxonomy_resolver: "TaxonomyResolver",
         taxonomy_generator: "TaxonomyGenerator",
         taxonomy_user_hints: list[str] | None,
-        reid_model: torch.nn.Module,
+        reid_model: ReIDModel,
         audio_model: "whisper.Whisper",
         embedding_transform: "transforms.Compose",
         face_detection: "MTCNN",
@@ -283,7 +401,8 @@ class VideoInformationExtractor:
         min_samples: int = 1,
         max_samples: int = 12,
         sampling_rate: float = 2.0,
-    ):
+        progress_reporter: "ProgressReporter | None" = None,
+    ) -> None:
         # helper models
 
         self.sam_model = sam_model
@@ -302,11 +421,11 @@ class VideoInformationExtractor:
         self.current_frame = 0
         self.obj_id_counter = 1
 
-        self.active_trackers: dict[int, dict] = {}
+        self.active_trackers: dict[int, TrackerData] = {}
         self.id_to_label: dict[int, str] = {}
 
-        self.text_registry: dict[int, set] = defaultdict(set)
-        self.object_registry: dict[int, dict] = {}
+        self.text_registry: dict[int, set[str]] = defaultdict(set)
+        self.object_registry: dict[int, ObjectRegistryEntry] = {}
 
         self.taxonomy_resolver = taxonomy_resolver
         self.taxonomy_generator = taxonomy_generator
@@ -326,8 +445,9 @@ class VideoInformationExtractor:
         self.dino_reid_device = dino_reid_device
         self.logger = logger
 
-        self.audio_registry: list[dict] = []
-        self.scene_description_registry: list[dict] = []
+        self.audio_registry: list[AudioSegment] = []
+        self.scene_description_registry: list[SceneDescriptionRecord] = []
+        self.global_stats: dict[str, object] = {}
         self.audio_confidence = audio_confidence
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
@@ -337,10 +457,12 @@ class VideoInformationExtractor:
         self.max_samples = max_samples
         self.sampling_rate = sampling_rate
 
+        self.progress = progress_reporter or NullProgressReporter()
+
     def __repr__(self) -> str:
         return f"InformationExtractor: device: {self.device}"
 
-    def _state_init(self, artifact_path: str, video_path: str):
+    def _state_init(self, artifact_path: str, video_path: str) -> None:
         """Open the video capture, initialize the video writer, and set up SAM inference state."""
         if not os.path.exists(artifact_path):
             os.makedirs(artifact_path)
@@ -375,7 +497,7 @@ class VideoInformationExtractor:
         self.logger.info(f"Video opened: {video_path}")
         self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Release resources"""
 
         if hasattr(self, "cap") and self.cap is not None:
@@ -385,7 +507,7 @@ class VideoInformationExtractor:
             self.video_writer.release()
             self.logger.info("Video writer released. Output saved.")
 
-    def _is_new_object(self, new_box, new_label):
+    def _is_new_object(self, new_box: Box, new_label: str) -> bool:
         """
         Returns True if the box does NOT overlap significantly with
         an active tracker OF THE SAME CLASS.
@@ -406,13 +528,15 @@ class VideoInformationExtractor:
 
         return True
 
-    def _get_next_obj_id(self):
+    def _get_next_obj_id(self) -> int:
         """Return the next available object ID and increment the counter."""
         current_id = self.obj_id_counter
         self.obj_id_counter += 1
         return current_id
 
-    def _extract_embedding(self, frame_bgr, box):
+    def _extract_embedding(
+        self, frame_bgr: npt.NDArray[Any], box: Box
+    ) -> Embedding | None:
         """
         Crops the object and returns a DINOv2 embedding vector.
         Uses self.reid_model (DINOv2) instead of self.dingo_model (GroundingDINO).
@@ -441,8 +565,14 @@ class VideoInformationExtractor:
         return embedding.cpu().numpy().flatten()
 
     def _save_metadata(
-        self, frame_idx, obj_ids, masks, frame_text, shot_idx, current_frame_img
-    ):
+        self,
+        frame_idx: int,
+        obj_ids: Sequence[int],
+        masks: torch.Tensor,
+        frame_text: Sequence[OCRDetection],
+        shot_idx: int,
+        current_frame_img: npt.NDArray[Any],
+    ) -> None:
         """
         Record per-frame tracking data: filter and store OCR text, convert SAM masks
         to bounding boxes, and periodically accumulate DINOv2 embeddings for re-ID.
@@ -453,7 +583,7 @@ class VideoInformationExtractor:
 
         h, w, _ = current_frame_img.shape
 
-        max_text_height = 0
+        max_text_height = 0.0
         if frame_text:
             max_text_height = max((t["box"][3] - t["box"][1]) for t in frame_text)
 
@@ -533,7 +663,9 @@ class VideoInformationExtractor:
             else:
                 self.active_trackers.pop(obj_id, None)
 
-    def _calculate_metrics(self, boxes, timestamps):
+    def _calculate_metrics(
+        self, boxes: Sequence[Box], timestamps: Sequence[float]
+    ) -> tuple[float, float, float, str, float, float, str]:
         """
         Derive motion and spatial metrics from a sequence of bounding boxes:
         velocity, growth factor, screen coverage, direction, centrality, screen time, and quadrant.
@@ -542,7 +674,7 @@ class VideoInformationExtractor:
             return 0.0, 0.0, 0.0, "unknown", 0.0, 0.0, "center"
 
         centroids = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
-        dist = 0
+        dist = 0.0
         for k in range(1, len(centroids)):
             d = math.sqrt(
                 (centroids[k][0] - centroids[k - 1][0]) ** 2
@@ -579,7 +711,7 @@ class VideoInformationExtractor:
 
         # Centrality (0.0 = perfectly centered, 1.0 = at the very corner)
         video_center = (width / 2, height / 2)
-        avg_dist_from_center = 0
+        avg_dist_from_center = 0.0
         max_possible_dist = math.sqrt(video_center[0] ** 2 + video_center[1] ** 2)
 
         for c in centroids:
@@ -629,14 +761,14 @@ class VideoInformationExtractor:
             quadrant,
         )
 
-    def _resolve_identities(self):
+    def _resolve_identities(self) -> dict[int, int]:
         """
         Merge local object IDs into global identities across shots using DINOv2
         cosine similarity and semantic label matching. Returns a local-to-global ID map.
         """
         self.logger.info("Resolving identities across shots...")
 
-        id_map = {}
+        id_map: dict[int, int] = {}
         next_global_id = 0
 
         object_ids = sorted(
@@ -708,13 +840,21 @@ class VideoInformationExtractor:
                 if should_merge:
                     id_map[id_b] = current_global_id
                     end_a = max(end_a, end_b)
+                    self.progress.emit(
+                        ProgressEvent.IDENTITY_MERGED,
+                        {
+                            "from_ids": [id_a, id_b],
+                            "to_global_id": current_global_id,
+                            "similarity": round(float(visual_sim), 2),
+                        },
+                    )
 
         return id_map
 
-    def _finalize_data(self):
+    def _finalize_data(self) -> ExtractionSummary:
         """Resolve cross-shot identities, compute per-object metrics, and assemble the final output dict."""
         global_id_map = self._resolve_identities()
-        final_objects = {}
+        final_objects: dict[int, VisualObjectSummary] = {}
 
         for local_id, data in self.object_registry.items():
             g_id = global_id_map.get(local_id, -1)
@@ -729,7 +869,7 @@ class VideoInformationExtractor:
                 quadrant,
             ) = self._calculate_metrics(data["boxes"], data["timestamps"])
 
-            occurence_data = {
+            occurence_data: VisualObjectOccurrence = {
                 "shot_index": data["shot_id"],
                 "lifespan": [
                     round(data["timestamps"][0], 2),
@@ -753,20 +893,25 @@ class VideoInformationExtractor:
             else:
                 final_objects[g_id]["occurrences"].append(occurence_data)
 
-        final_text = [
+        final_text: list[TextEvent] = [
             {"second": sec, "text": list(txt_set)}
             for sec, txt_set in sorted(self.text_registry.items())
         ]
 
         return {
-            "global_stats": self.global_stats if hasattr(self, "global_stats") else {},
+            "global_stats": self.global_stats,
             "visual_objects": list(final_objects.values()),
             "text_events": final_text,
             "audio_segments": self.audio_registry,
             "scene_descriptions": self.scene_description_registry,
         }
 
-    def visualize_sam_tracking(self, frame_idx, obj_ids, masks):
+    def visualize_sam_tracking(
+        self,
+        frame_idx: int,
+        obj_ids: Sequence[int],
+        masks: torch.Tensor | npt.NDArray[Any],
+    ) -> None:
         """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
         if not self.video_writer.isOpened():
             self.logger.error("Error: Video Writer is NOT open.")
@@ -781,7 +926,7 @@ class VideoInformationExtractor:
 
         vis_frame = frame.copy()
 
-        if hasattr(masks, "cpu"):
+        if isinstance(masks, torch.Tensor):
             masks = masks.cpu().numpy()
 
         for i, obj_id in enumerate(obj_ids):
@@ -827,7 +972,7 @@ class VideoInformationExtractor:
         if frame_idx % 30 == 0:
             self.logger.info(f"Wrote frame {frame_idx} to video.")
 
-    def _digest_video(self, video_path: str):
+    def _digest_video(self, video_path: str) -> None:
         """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
         self.logger.info("--- Step 1: Analyzing Shots ---")
         self.logger.info("Detecting scenes...")
@@ -847,7 +992,7 @@ class VideoInformationExtractor:
 
         self.logger.info(f"Found {len(self.shot_boundaries)} scenes.")
 
-        shot_data = []
+        shot_data: list[ShotData] = []
 
         for i, (start_f, end_f) in enumerate(self.shot_boundaries):
             shot_data.append(
@@ -865,14 +1010,14 @@ class VideoInformationExtractor:
         shots_in_first_5s = [s for s in shot_data if s["start"] < 5.0]
         has_quick_pacing_start = len(shots_in_first_5s) >= 5
 
-        rapid_fire_intervals = []
+        rapid_fire_intervals: list[RapidFireInterval] = []
 
         for start_idx in range(len(shot_data)):
             window_start = shot_data[start_idx]["start"]
             window_end = window_start + 5.0  # Exactly 5 seconds from this start point
 
             shot_count = 0
-            shot_indices = []
+            shot_indices: list[int] = []
 
             for idx in range(start_idx, len(shot_data)):
                 if shot_data[idx]["start"] < window_end:
@@ -920,7 +1065,9 @@ class VideoInformationExtractor:
 
         self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
-    def _save_results_to_json(self, information, artifact_path: str):
+    def _save_results_to_json(
+        self, information: ExtractionSummary, artifact_path: str
+    ) -> None:
         """Serialize the extraction results dict to extraction_summary.json."""
         output_file = os.path.join(artifact_path, "extraction_summary.json")
         try:
@@ -930,7 +1077,7 @@ class VideoInformationExtractor:
         except Exception as e:
             self.logger.error(f"Error saving JSON: {e}")
 
-    def _add_new_tracker(self, box, label):
+    def _add_new_tracker(self, box: Box, label: str) -> None:
         """Helper to register the new object with SAM and internal state"""
 
         new_id = self._get_next_obj_id()
@@ -950,7 +1097,7 @@ class VideoInformationExtractor:
             box=box,
         )
 
-    def _analyze_audio(self, video_path: str):
+    def _analyze_audio(self, video_path: str) -> None:
         """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
         self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
 
@@ -974,20 +1121,23 @@ class VideoInformationExtractor:
                 )
                 continue
 
-            self.audio_registry.append(
-                {
-                    "start": round(segment["start"], 2),
-                    "end": round(segment["end"], 2),
-                    "text": segment["text"].strip(),
-                    "confidence": round(confidence, 2),  # Useful to save this metric
-                }
-            )
+            kept_segment: AudioSegment = {
+                "start": round(segment["start"], 2),
+                "end": round(segment["end"], 2),
+                "text": segment["text"].strip(),
+                "confidence": round(confidence, 2),  # Useful to save this metric
+            }
+            self.audio_registry.append(kept_segment)
+
+            self.progress.emit(ProgressEvent.AUDIO_SEGMENT, dict(kept_segment))
 
         self.logger.info(
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
-    def extract(self, video_type: str | None, video_path: str, video_name: str):
+    def extract(
+        self, video_type: str | None, video_path: str, video_name: str
+    ) -> ExtractionSummary:
         """
         Main entry point. Runs the full pipeline: scene analysis, audio transcription,
         per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
@@ -996,12 +1146,37 @@ class VideoInformationExtractor:
         artifact_path = f"extractor_artifacts/{video_name}/"
         self._state_init(artifact_path, video_path)
 
+        self.progress.phase_started(Phase.SCENE_DETECTION)
         self._digest_video(video_path)
+        self.progress.phase_completed(
+            Phase.SCENE_DETECTION,
+            {
+                "total_shots": len(self.shot_boundaries),
+                "video_duration": self.global_stats.get("video_duration"),
+            },
+        )
+
+        self.progress.phase_started(Phase.AUDIO)
         self._analyze_audio(video_path)
+        self.progress.phase_completed(
+            Phase.AUDIO, {"segments_kept": len(self.audio_registry)}
+        )
 
         self.logger.info("--- Step 3: Tracking/OCR ---")
 
+        self.progress.phase_started(
+            Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
+        )
+
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
+            self.progress.emit(
+                ProgressEvent.SHOT_STARTED,
+                {
+                    "shot_idx": shot_idx,
+                    "start": round(start_f / self.fps, 2),
+                    "end": round(end_f / self.fps, 2),
+                },
+            )
             self.sam_model.reset_state(self.inference_state)
 
             self.active_trackers = {}
@@ -1062,6 +1237,15 @@ class VideoInformationExtractor:
                 }
             )
 
+            self.progress.emit(
+                ProgressEvent.SHOT_SCENE_DESCRIBED,
+                {
+                    "shot_idx": shot_idx,
+                    "description": combined_raw_context,
+                    "dino_prompt": combined_final_context,
+                },
+            )
+
             dynamic_taxonomy = self.taxonomy_generator.generate_targets(
                 video_type,
                 scene_context=combined_raw_context,
@@ -1069,6 +1253,14 @@ class VideoInformationExtractor:
                 user_hints=self.taxonomy_user_hints,
             )
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
+
+            self.progress.emit(
+                ProgressEvent.SHOT_TAXONOMY_RESOLVED,
+                {
+                    "shot_idx": shot_idx,
+                    "targets": [item.anchor for item in dynamic_taxonomy],
+                },
+            )
 
             self.logger.info(f"Dino Shot Prompt: {combined_final_context}")
 
@@ -1122,7 +1314,7 @@ class VideoInformationExtractor:
                     label = box_info["label"]
 
                     self.logger.info(
-                        f"trying to match {label} with {video_type} taxonomy targets"
+                        f"trying to match dino label {label} with {video_type} taxonomy targets"
                     )
 
                     best_semantic = self.taxonomy_resolver.resolve(
@@ -1131,12 +1323,14 @@ class VideoInformationExtractor:
 
                     if best_semantic is None:
                         self.logger.warning(
-                            f"No proper semantic found for label: {label}. skipping..."
+                            f"No proper semantic found for dino label: {label}. skipping..."
                         )
                         continue
 
                     if self._is_new_object(box, best_semantic):
                         self._add_new_tracker(box, best_semantic)
+
+                num_faces = 0
 
                 try:
                     boxes, probs = self.face_detection.detect(raw_image_rgb)
@@ -1145,7 +1339,7 @@ class VideoInformationExtractor:
                     boxes, probs = None, None
 
                 if boxes is not None:
-                    mapping = []
+                    mapping: list[DetectionResult] = []
 
                     for box, prob in zip(boxes, probs):
                         if prob < self.torch_face_cong:
@@ -1167,13 +1361,25 @@ class VideoInformationExtractor:
                         if self._is_new_object(tracker_box, forced_label):
                             self._add_new_tracker(tracker_box, forced_label)
 
+                    num_faces = len(mapping)
                     self.logger.info(
-                        f"Detected #{len(mapping)} faces in the current frame"
+                        f"Detected #{num_faces} faces in the current frame"
                     )
                     if mapping:
                         self.dingo_model.map_results(
                             raw_image_rgb, mapping, face_viz_path
                         )
+
+                self.progress.emit(
+                    ProgressEvent.SHOT_FRAME_PROCESSED,
+                    {
+                        "shot_idx": shot_idx,
+                        "frame_idx": self.current_frame,
+                        "detections": len(detected_objects_data),
+                        "ocr_lines": len(detected_text_data),
+                        "faces": num_faces,
+                    },
+                )
 
                 frames_left_in_shot = end_f - self.current_frame
                 frames_to_track = min(self.detection_interval, frames_left_in_shot)
@@ -1209,9 +1415,18 @@ class VideoInformationExtractor:
 
                 self.current_frame = last_propagated_frame + 1
 
+            self.progress.emit(
+                ProgressEvent.SHOT_COMPLETED,
+                {"shot_idx": shot_idx, "objects_tracked": len(self.active_trackers)},
+            )
+
+        self.progress.phase_completed(Phase.SHOT_PROCESSING)
+
         self.logger.info("Video Processing Complete. Finalizing data...")
 
+        self.progress.phase_started(Phase.FINALIZE)
         information = self._finalize_data()
+        self.progress.phase_completed(Phase.FINALIZE)
         self._save_results_to_json(information, artifact_path)
 
         return information

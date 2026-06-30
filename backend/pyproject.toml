@@ -32,7 +32,8 @@ dependencies = [
     "timm",
     "PyYAML==6.0.3",
     "types-PyYAML",
-    "sqlalchemy>=2.0.0"
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.18.5",
 ]
 
 [project.optional-dependencies]

@@ -1,11 +1,45 @@
 """Engine factory, upsert helper, and base DB class."""
 
 import logging
+import os
 from pathlib import Path
 
+import yaml  # type: ignore
 from sqlalchemy import Engine, Table, create_engine, event
 
-from .schema import metadata_obj
+
+# backend/ — matches PROJECT_ROOT in build_clip_scribe.py (parents[2] there too).
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_CONFIG_PATH = (
+    Path(__file__).resolve().parents[1] / "clip_scribe" / "configs" / "clip_scribe.yaml"
+)
+
+
+def resolve_database_url() -> str:
+    """Resolve the active database URL from config + environment.
+
+    Single source of truth shared by the builder's ``_assemble_db`` and the
+    Alembic ``env.py`` so the two never drift. Mirrors the original inline
+    logic: read ``database.backend`` from ``clip_scribe.yaml``; for sqlite use
+    ``SQLITE_URL`` (default ``sqlite:///data/clip_scribe.db``) resolved against
+    the project root; for postgresql require ``POSTGRESQL_URL``.
+    """
+    backend = "sqlite"
+    try:
+        with open(_CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f) or {}
+        backend = cfg.get("database", {}).get("backend", "sqlite")
+    except FileNotFoundError:
+        pass
+
+    if backend == "sqlite":
+        db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")
+        if db_url.startswith("sqlite:///") and not db_url.startswith("sqlite:////"):
+            relative_path = db_url[len("sqlite:///") :]
+            db_url = f"sqlite:///{_PROJECT_ROOT / relative_path}"
+        return db_url
+
+    return os.environ["POSTGRESQL_URL"]
 
 
 def create_db_engine(
@@ -53,7 +87,10 @@ def create_db_engine(
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
-    metadata_obj.create_all(engine)
+    # Schema is owned by Alembic migrations (run `alembic upgrade head`), not
+    # auto-created here. This keeps a single source of truth and avoids the
+    # CREATE-collision that would occur if both create_all and a migration
+    # tried to build the same tables.
     return engine
 
 
