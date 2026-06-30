@@ -4,10 +4,10 @@ from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
 
 LOG_FILE_NAME = f"{datetime.now():%Y_%m_%d-%I_%M_%S_%p}_" + "_clip_scribe"
 LOG_DIR = os.path.join(os.path.join(BASE_DIR, "logs"))
+_CONFIGURED = False
 
 GENERAL_LOGGING_CONFIG = {
     "version": 1,
@@ -53,5 +53,17 @@ GENERAL_LOGGING_CONFIG = {
     },
 }
 
-logging.config.dictConfig(GENERAL_LOGGING_CONFIG)
+
+def configure_logging() -> None:
+    """Configure ClipScribe application logging once per process."""
+    global _CONFIGURED
+
+    if _CONFIGURED:
+        return
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+    logging.config.dictConfig(GENERAL_LOGGING_CONFIG)
+    _CONFIGURED = True
+
+
 logger = logging.getLogger("clip_scribe")

@@ -39,6 +39,13 @@ clip_scribe:
     # Range: 10-50 frames. Default: 20
     reid_model_frame_check_freq: 10
 
+    # DINOv2 viewpoint-novelty gate for accumulating re-ID embeddings within a shot
+    # A new embedding is folded into an object's running mean only when its cosine
+    # similarity to the current mean is BELOW this value (i.e. a sufficiently new angle).
+    # Lower = stricter (keep only very different views); higher = accumulate more readily.
+    # Range: 0.0-1.0. Default: 0.8
+    reid_similarity_difference: 0.8
+
   # --------------------------------------------------------------------------
   # Parser Settings
   # --------------------------------------------------------------------------

@@ -2,11 +2,15 @@ from typing import List, cast
 import base64
 import io
 import json
+import logging
+
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+
+logger = logging.getLogger("clip_scribe")
 
 
 class SceneDescription(BaseModel):
@@ -28,19 +32,16 @@ class GPTSceneDescriber:
 
     def __init__(
         self,
-        logger,
         model: str = "gpt-4o-mini",
         max_frame_dim: int = 512,
         image_detail: str = "low",
     ):
         """
         Args:
-            logger: Logger instance
             model: GPT model to use for vision analysis
             max_frame_dim: Maximum dimension (width or height) for frame resizing
             image_detail: OpenAI image detail mode ("low" or "high"). "low" uses 85 tokens/image.
         """
-        self.logger = logger
         self.model = model
         self.max_frame_dim = max_frame_dim
         self.image_detail = image_detail
@@ -82,7 +83,7 @@ class GPTSceneDescriber:
         unique_targets = []
         for target in targets:
             if target == "text":
-                self.logger.warning("Filtered out 'text' from DINO prompt")
+                logger.warning("Filtered out 'text' from DINO prompt")
                 continue
             if target not in seen:
                 seen.add(target)
@@ -102,7 +103,7 @@ class GPTSceneDescriber:
             Tuple of (dino_prompt, scene_description) matching the old API shape
         """
         if not frames_rgb:
-            self.logger.warning("No frames provided to describe_scene, using defaults")
+            logger.warning("No frames provided to describe_scene, using defaults")
             return ("object .", "")
 
         # Prepare frames as base64-encoded images
@@ -120,7 +121,7 @@ class GPTSceneDescriber:
                 }
             )
 
-        self.logger.info(f"Sending {len(frames_rgb)} frames to GPT for scene analysis")
+        logger.info(f"Sending {len(frames_rgb)} frames to GPT for scene analysis")
 
         # Build the message content with text + images
         messages = [
@@ -167,17 +168,17 @@ class GPTSceneDescriber:
 
             scene_desc = SceneDescription(**parsed)
 
-            self.logger.info(
+            logger.info(
                 f"GPT Scene Description: {scene_desc.scene_description[:100]}..."
             )
-            self.logger.info(f"GPT DINO Prompt (raw): {scene_desc.dino_prompt}")
+            logger.info(f"GPT DINO Prompt (raw): {scene_desc.dino_prompt}")
 
             # Sanitize the DINO prompt to remove duplicates and 'text' keyword
             sanitized_prompt = self._sanitize_dino_prompt(scene_desc.dino_prompt)
-            self.logger.info(f"GPT DINO Prompt (sanitized): {sanitized_prompt}")
+            logger.info(f"GPT DINO Prompt (sanitized): {sanitized_prompt}")
 
             return (sanitized_prompt, scene_desc.scene_description)
 
         except Exception as e:
-            self.logger.error(f"GPT scene analysis failed: {e}, using fallback")
+            logger.error(f"GPT scene analysis failed: {e}, using fallback")
             return ("object .", "")

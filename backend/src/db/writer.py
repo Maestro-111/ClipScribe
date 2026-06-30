@@ -17,6 +17,8 @@ from .schema import (
     field_descriptions_table,
 )
 
+logger = logging.getLogger("clip_scribe")
+
 
 def _native(val):
     """Convert numpy scalars to Python native types for DB compatibility."""
@@ -28,9 +30,9 @@ def _native(val):
 
 
 class ClipScribeWriterDB(ClipScribeBaseDB):
-    def __init__(self, engine: Engine, logger: logging.Logger):
-        super().__init__(engine, logger)
-        self.logger.info("ClipScribeWriterDB ready.")
+    def __init__(self, engine: Engine):
+        super().__init__(engine)
+        logger.info("ClipScribeWriterDB ready.")
 
     def save_run(
         self,
@@ -61,7 +63,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
             self._insert_field_descriptions(conn, field_descriptions)
 
-        self.logger.info(f"Saved run {run_id} for '{video_name}'")
+        logger.info(f"Saved run {run_id} for '{video_name}'")
         return run_id
 
     def _insert_run(

@@ -2,7 +2,7 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet migrate
+.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet migrate revision
 
 # -------------------------------------------------------------------------
 # Database migrations (Alembic owns the schema; create_all was removed).
@@ -13,6 +13,16 @@ migrate:
 	@cd backend && uv run alembic upgrade head
 	@echo "Database is at head."
 
+# Authoring step (dev only): diff schema.py against the DB and WRITE a new
+# migration script under alembic/versions/. Does NOT change the DB. Requires
+# the DB to already be at head (run `make migrate` first). Pass a message:
+#   make revision m="add foo table"
+# Always review the generated script; if the diff was empty, delete the file.
+revision:
+	@echo "\n--- Generating migration script (no DB changes) ---"
+	@cd backend && uv run alembic revision --autogenerate -m "$(m)"
+	@echo "Review the new file in backend/alembic/versions/ (delete it if empty)."
+
 setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 	@echo "\nProject Setup Complete! You can now run the extractor."
 
@@ -21,6 +31,7 @@ setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 # -------------------------------------------------------------------------
 checkpoints:
 	@echo "\n--- 1. Downloading Checkpoints ---"
+	@cd backend
 	@$(PYTHON) checkpoints/download_dino.py
 	@chmod +x checkpoints/download_sam_ckpts.sh
 	@cd checkpoints && ./download_sam_ckpts.sh
@@ -83,6 +94,7 @@ download_wordnet:
 
 clean:
 	@echo "Cleaning up..."
+	@cd backend
 	@rm -f checkpoints/*.pth
 	@rm -f checkpoints/*.pt
 	@echo "Checkpoints removed."

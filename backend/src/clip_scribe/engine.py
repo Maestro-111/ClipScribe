@@ -1,3 +1,5 @@
+import logging
+
 from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
 from src.parser.parser_core import VideoInformationParser
 from src.utils.progress import (
@@ -6,6 +8,8 @@ from src.utils.progress import (
     ProgressEvent,
     ProgressReporter,
 )
+
+logger = logging.getLogger("clip_scribe")
 
 
 class ClipScribeEngine:
@@ -17,7 +21,6 @@ class ClipScribeEngine:
     def __init__(
         self,
         mode: str,
-        logger,
         video_name: str,
         video_path: str,
         video_type: str | None,
@@ -35,7 +38,6 @@ class ClipScribeEngine:
 
         self.extractor = extractor
         self.parser = parser
-        self.logger = logger
         self.writer_db = writer_db
         self.reader_db = reader_db
         self.progress = progress_reporter or NullProgressReporter()
@@ -117,7 +119,7 @@ class ClipScribeEngine:
                     raise ValueError(f"run_id '{run_id}' not found in database")
                 self._run_parser(run_id)
             else:
-                self.logger.warning("Empty run_id is given to parse!")
+                logger.warning("Empty run_id is given to parse!")
 
         except Exception as e:
             raise e
@@ -147,7 +149,7 @@ class ClipScribeEngine:
             self.parse(run_id)
 
         else:
-            self.logger.warning("No video metadata to parse")
+            logger.warning("No video metadata to parse")
 
         return
 
@@ -160,19 +162,17 @@ class ClipScribeEngine:
                 video_type=self.video_type,
             )
 
-            self.logger.info("Extraction finished successfully.")
+            logger.info("Extraction finished successfully.")
             return metadata
         except KeyboardInterrupt:
-            self.logger.error("\n!!! Interrupted by User. Saving video... !!!")
+            logger.error("\n!!! Interrupted by User. Saving video... !!!")
             return None
         except Exception as e:
-            self.logger.error(
-                f"_extract_information error occurred: {e}", exc_info=True
-            )
+            logger.error(f"_extract_information error occurred: {e}", exc_info=True)
             return None
         finally:
             self.extractor.cleanup()
-            self.logger.info("Done!")
+            logger.info("Done!")
 
     def _save_metadata_to_db(
         self,
@@ -206,4 +206,4 @@ class ClipScribeEngine:
             run_id=run_id, reader_db=self.reader_db, video_name=self.video_name
         )
 
-        self.logger.info(f"Parser report generated: {report_path}")
+        logger.info(f"Parser report generated: {report_path}")

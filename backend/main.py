@@ -12,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "JEEP_-06ZPnShpv4 - 2024 Jeep Wrangler ｜ Jeep Adventure Days ｜ LEASE ｜ September.mp4"
+video_name = "DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 
@@ -24,17 +24,13 @@ clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "JEEP",
-    "youtube_branded_products": ["Jeep Wrangler", "Jeep Adventure Days"],
+    "youtube_brand_name": "Dodge",
+    "youtube_branded_products": ["Dodge Hornet"],
     "youtube_branded_products_categories": [
-        "Jeep Wrangler Pick Up Truck",
-        "Jeep Wrangler Truck",
-        "RAM HD Rebel Car",
-        "Jeep Wrangler SUV",
-        "Jeep Adventure Days Pick Up Truck",
-        "Jeep Adventure Days Truck",
-        "RAM HD Rebel Car",
-        "Jeep Adventure Days SUV",
+        "Dodge Hornet Pick Up Truck",
+        "Dodge Hornet Truck",
+        "Dodge Hornet Car",
+        "Dodge HornetSUV",
     ],
     "youtube_call_to_actions": [
         "learn more",

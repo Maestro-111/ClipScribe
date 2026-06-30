@@ -8,6 +8,7 @@ import yaml  # type: ignore
 from sqlalchemy import Engine, Table, create_engine, event
 from sqlalchemy.engine import make_url
 
+logger = logging.getLogger("clip_scribe")
 
 # backend/ — matches PROJECT_ROOT in build_clip_scribe.py (parents[2] there too).
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -56,7 +57,6 @@ def create_db_engine(
     database_url: str,
     pool_size: int = 5,
     max_overflow: int = 10,
-    logger: logging.Logger | None = None,
 ) -> Engine:
     """Create a SQLAlchemy engine with appropriate settings for the dialect.
 
@@ -65,10 +65,8 @@ def create_db_engine(
     """
     is_sqlite = database_url.startswith("sqlite")
 
-    if logger:
-        logger.info(
-            f"Creating database engine for {"sqlite" if is_sqlite else "postgresql"}"
-        )
+    database_backend = "sqlite" if is_sqlite else "postgresql"
+    logger.info(f"Creating database engine for {database_backend}")
 
     if is_sqlite:
         ensure_sqlite_parent_directory(database_url)
@@ -126,10 +124,9 @@ def _upsert_ignore(
 
 
 class ClipScribeBaseDB:
-    def __init__(self, engine: Engine, logger: logging.Logger):
+    def __init__(self, engine: Engine):
         self._engine = engine
-        self.logger = logger
 
     def close(self) -> None:
         self._engine.dispose()
-        self.logger.info("ClipScribeDB engine disposed.")
+        logger.info("ClipScribeDB engine disposed.")

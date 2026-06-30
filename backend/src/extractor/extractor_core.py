@@ -34,6 +34,8 @@ from src.utils.progress import (
     ProgressReporter,
 )
 
+logger = logging.getLogger("clip_scribe")
+
 if TYPE_CHECKING:
     import whisper
     from torchvision import transforms
@@ -395,9 +397,9 @@ class VideoInformationExtractor:
         audio_confidence: float,
         label_match_merge_threshold: float,
         label_no_match_merge_threshold: float,
-        logger: logging.Logger,
         detection_interval: int = 10,
         reid_model_frame_check_freq: int = 20,
+        reid_similarity_difference: float = 0.8,
         min_samples: int = 1,
         max_samples: int = 12,
         sampling_rate: float = 2.0,
@@ -443,7 +445,6 @@ class VideoInformationExtractor:
 
         self.device = device
         self.dino_reid_device = dino_reid_device
-        self.logger = logger
 
         self.audio_registry: list[AudioSegment] = []
         self.scene_description_registry: list[SceneDescriptionRecord] = []
@@ -451,6 +452,7 @@ class VideoInformationExtractor:
         self.audio_confidence = audio_confidence
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
+        self.reid_similarity_difference = reid_similarity_difference
 
         # Adaptive frame sampling parameters
         self.min_samples = min_samples
@@ -489,13 +491,13 @@ class VideoInformationExtractor:
         self.video_writer = cv2.VideoWriter(
             output_filename, fourcc, fps, (width, height)
         )
-        self.logger.info(f"Recording video to: {output_filename}")
+        logger.info(f"Recording video to: {output_filename}")
 
         self.inference_state = self.sam_model.init_state(video_path=video_path)
         self.total_frames = self.inference_state["num_frames"]
 
-        self.logger.info(f"Video opened: {video_path}")
-        self.logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
+        logger.info(f"Video opened: {video_path}")
+        logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
 
     def cleanup(self) -> None:
         """Release resources"""
@@ -505,7 +507,7 @@ class VideoInformationExtractor:
 
         if hasattr(self, "video_writer") and self.video_writer is not None:
             self.video_writer.release()
-            self.logger.info("Video writer released. Output saved.")
+            logger.info("Video writer released. Output saved.")
 
     def _is_new_object(self, new_box: Box, new_label: str) -> bool:
         """
@@ -518,7 +520,7 @@ class VideoInformationExtractor:
 
             iou = self._calculate_iou(new_box, active_box)
 
-            self.logger.info(
+            logger.info(
                 f"Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}"
             )
 
@@ -645,13 +647,13 @@ class VideoInformationExtractor:
                                     norm_new * norm_mean
                                 )
 
-                                if cos_sim < 0.85:
+                                if cos_sim < self.reid_similarity_difference:
                                     self.object_registry[obj_id][
                                         "embedding_sum"
                                     ] += new_emb
                                     self.object_registry[obj_id]["embedding_count"] += 1
 
-                                    self.logger.info(
+                                    logger.info(
                                         f"New viewpoint for ID {obj_id} captured. Sim: {cos_sim:.2f}"
                                     )
                         self.object_registry[obj_id]["last_embedding_frame"] = frame_idx
@@ -766,7 +768,7 @@ class VideoInformationExtractor:
         Merge local object IDs into global identities across shots using DINOv2
         cosine similarity and semantic label matching. Returns a local-to-global ID map.
         """
-        self.logger.info("Resolving identities across shots...")
+        logger.info("Resolving identities across shots...")
 
         id_map: dict[int, int] = {}
         next_global_id = 0
@@ -826,13 +828,13 @@ class VideoInformationExtractor:
                 should_merge = False
 
                 if labels_match and visual_sim > self.label_match_merge_threshold:
-                    self.logger.info(
+                    logger.info(
                         f"Merge (Standard): {obj_a['label']} matches. Sim: {visual_sim:.2f}"
                     )
                     should_merge = True
 
                 elif visual_sim > self.label_no_match_merge_threshold:
-                    self.logger.info(
+                    logger.info(
                         f"Merge (Visual Override): Labels '{obj_a['label']}'/'{obj_b['label']}' differ, but visual sim is high ({visual_sim:.2f})"
                     )
                     should_merge = True
@@ -914,14 +916,14 @@ class VideoInformationExtractor:
     ) -> None:
         """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
         if not self.video_writer.isOpened():
-            self.logger.error("Error: Video Writer is NOT open.")
+            logger.error("Error: Video Writer is NOT open.")
             return
 
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = self.cap.read()
 
         if not ret:
-            self.logger.error(f"Error: Could not read frame {frame_idx}.")
+            logger.error(f"Error: Could not read frame {frame_idx}.")
             return
 
         vis_frame = frame.copy()
@@ -970,12 +972,12 @@ class VideoInformationExtractor:
         self.video_writer.write(vis_frame)
 
         if frame_idx % 30 == 0:
-            self.logger.info(f"Wrote frame {frame_idx} to video.")
+            logger.info(f"Wrote frame {frame_idx} to video.")
 
     def _digest_video(self, video_path: str) -> None:
         """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
-        self.logger.info("--- Step 1: Analyzing Shots ---")
-        self.logger.info("Detecting scenes...")
+        logger.info("--- Step 1: Analyzing Shots ---")
+        logger.info("Detecting scenes...")
 
         # 1. Run Scene Detection
         # threshold=27.0 compares adjacent frames' content (HSV).
@@ -990,7 +992,7 @@ class VideoInformationExtractor:
         if not self.shot_boundaries:
             self.shot_boundaries = [(0, self.total_frames)]
 
-        self.logger.info(f"Found {len(self.shot_boundaries)} scenes.")
+        logger.info(f"Found {len(self.shot_boundaries)} scenes.")
 
         shot_data: list[ShotData] = []
 
@@ -1063,7 +1065,7 @@ class VideoInformationExtractor:
             },
         }
 
-        self.logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
+        logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
     def _save_results_to_json(
         self, information: ExtractionSummary, artifact_path: str
@@ -1073,16 +1075,16 @@ class VideoInformationExtractor:
         try:
             with open(output_file, "w") as f:
                 json.dump(information, f, cls=NumpyEncoder, indent=4)
-            self.logger.info(f"Extraction results successfully saved to: {output_file}")
+            logger.info(f"Extraction results successfully saved to: {output_file}")
         except Exception as e:
-            self.logger.error(f"Error saving JSON: {e}")
+            logger.error(f"Error saving JSON: {e}")
 
     def _add_new_tracker(self, box: Box, label: str) -> None:
         """Helper to register the new object with SAM and internal state"""
 
         new_id = self._get_next_obj_id()
 
-        self.logger.info(f"  + New object {new_id} ({label})")
+        logger.info(f"New object {new_id} ({label})")
         self.id_to_label[new_id] = label
 
         self.active_trackers[new_id] = {
@@ -1099,7 +1101,7 @@ class VideoInformationExtractor:
 
     def _analyze_audio(self, video_path: str) -> None:
         """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
-        self.logger.info("--- Step 2: Transcribing Audio with Whisper ---")
+        logger.info("--- Step 2: Transcribing Audio with Whisper ---")
 
         result = self.audio_model.transcribe(
             audio=video_path,
@@ -1116,7 +1118,7 @@ class VideoInformationExtractor:
             confidence = math.exp(segment["avg_logprob"])
 
             if confidence < self.audio_confidence:
-                self.logger.info(
+                logger.info(
                     f"Skipping audio segment '{segment['text']}' (Conf: {confidence:.2f})"
                 )
                 continue
@@ -1131,7 +1133,7 @@ class VideoInformationExtractor:
 
             self.progress.emit(ProgressEvent.AUDIO_SEGMENT, dict(kept_segment))
 
-        self.logger.info(
+        logger.info(
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
@@ -1162,7 +1164,7 @@ class VideoInformationExtractor:
             Phase.AUDIO, {"segments_kept": len(self.audio_registry)}
         )
 
-        self.logger.info("--- Step 3: Tracking/OCR ---")
+        logger.info("--- Step 3: Tracking/OCR ---")
 
         self.progress.phase_started(
             Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
@@ -1185,7 +1187,7 @@ class VideoInformationExtractor:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
             ret, frame = self.cap.read()
 
-            self.logger.info(f"Processing Shot {shot_idx}: Frames {start_f} to {end_f}")
+            logger.info(f"Processing Shot {shot_idx}: Frames {start_f} to {end_f}")
 
             if not ret:
                 break
@@ -1201,7 +1203,7 @@ class VideoInformationExtractor:
             )
             shot_length = end_f - start_f
 
-            self.logger.info(
+            logger.info(
                 f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
             )
 
@@ -1262,7 +1264,7 @@ class VideoInformationExtractor:
                 },
             )
 
-            self.logger.info(f"Dino Shot Prompt: {combined_final_context}")
+            logger.info(f"Dino Shot Prompt: {combined_final_context}")
 
             while self.current_frame < end_f:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
@@ -1282,7 +1284,7 @@ class VideoInformationExtractor:
 
                 detected_text_data = self.ocr_engine.detect(raw_image_rgb)
 
-                self.logger.info(
+                logger.info(
                     f"Detected #{len(detected_objects_data)} general objects in the current frame"
                 )
 
@@ -1313,7 +1315,7 @@ class VideoInformationExtractor:
                     box = box_info["box"]
                     label = box_info["label"]
 
-                    self.logger.info(
+                    logger.info(
                         f"trying to match dino label {label} with {video_type} taxonomy targets"
                     )
 
@@ -1322,7 +1324,7 @@ class VideoInformationExtractor:
                     )
 
                     if best_semantic is None:
-                        self.logger.warning(
+                        logger.warning(
                             f"No proper semantic found for dino label: {label}. skipping..."
                         )
                         continue
@@ -1335,7 +1337,7 @@ class VideoInformationExtractor:
                 try:
                     boxes, probs = self.face_detection.detect(raw_image_rgb)
                 except Exception as e:
-                    self.logger.warning(f"MTCNN Error: {e}")
+                    logger.warning(f"MTCNN Error: {e}")
                     boxes, probs = None, None
 
                 if boxes is not None:
@@ -1362,9 +1364,7 @@ class VideoInformationExtractor:
                             self._add_new_tracker(tracker_box, forced_label)
 
                     num_faces = len(mapping)
-                    self.logger.info(
-                        f"Detected #{num_faces} faces in the current frame"
-                    )
+                    logger.info(f"Detected #{num_faces} faces in the current frame")
                     if mapping:
                         self.dingo_model.map_results(
                             raw_image_rgb, mapping, face_viz_path
@@ -1422,7 +1422,7 @@ class VideoInformationExtractor:
 
         self.progress.phase_completed(Phase.SHOT_PROCESSING)
 
-        self.logger.info("Video Processing Complete. Finalizing data...")
+        logger.info("Video Processing Complete. Finalizing data...")
 
         self.progress.phase_started(Phase.FINALIZE)
         information = self._finalize_data()
