@@ -4,9 +4,9 @@
    concatenated (``"A" "B"`` -> ``"AB"``). They must be separate entries.
 2. SAM2 size config key: builder must read ``sam2.size`` (not ``sam2_size``)
    so the configured model size actually reaches ``build_sam2_video_predictor``.
-3. Heavy model load gating: constructing the builder and running a parser-only
-   build must NOT load the heavy extractor models; only ``extract``/``full``
-   modes load them.
+3. Heavy model load-once: constructing the builder loads the heavy extractor
+   models exactly once (the worker load-once contract, web-app-plan §3);
+   ``build_clip_scribe`` never reloads them per job, for any mode.
 """
 
 import ast
@@ -95,21 +95,28 @@ def test_sam2_size_key_flows_from_config(patched_heavy):
     assert bcs.build_sam2_video_predictor.call_args.args[0] == "tiny"
 
 
-def test_construction_does_not_load_heavy_models(patched_heavy):
+def test_construction_loads_heavy_models_once(patched_heavy):
+    """Heavy models load exactly once, at construction — the load-once
+    contract a long-lived worker relies on (web-app-plan §3). __init__ pays
+    the 30-60s model-load cost a single time so every later job amortizes it.
+    """
     bcs = patched_heavy
     with mock.patch.object(
         bcs.ClipScribeBuilder, "_assemble_heavy_extractor_utils"
     ) as heavy:
         bcs.ClipScribeBuilder()
         print(f"\nheavy load calls after __init__: {heavy.call_count}")
-        assert heavy.call_count == 0
+        assert heavy.call_count == 1
 
 
-@pytest.mark.parametrize(
-    "mode,expect_heavy",
-    [("parse", 0), ("extract", 1), ("full", 1)],
-)
-def test_heavy_load_gated_by_mode(patched_heavy, mode, expect_heavy):
+@pytest.mark.parametrize("mode", ["parse", "extract", "full"])
+def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
+    """Per-job builds never re-trigger the heavy load, for any mode.
+
+    The models are loaded once at construction and shared by reference into
+    each freshly-built extractor, so ``build_clip_scribe`` must add zero
+    further heavy loads regardless of mode.
+    """
     bcs = patched_heavy
     with mock.patch.object(
         bcs.ClipScribeBuilder, "_assemble_heavy_extractor_utils"
@@ -119,6 +126,9 @@ def test_heavy_load_gated_by_mode(patched_heavy, mode, expect_heavy):
         bcs.ClipScribeBuilder, "build_parser", return_value=mock.MagicMock()
     ), mock.patch.object(bcs, "ClipScribeEngine", mock.MagicMock()):
         builder = bcs.ClipScribeBuilder()
+        assert heavy.call_count == 1, "heavy models should load once at construction"
+
+        heavy.reset_mock()
         builder.build_clip_scribe(
             video_name="v.mp4",
             video_path="input/v.mp4",
@@ -128,5 +138,5 @@ def test_heavy_load_gated_by_mode(patched_heavy, mode, expect_heavy):
             clib_scribe_platform_name="youtube",
             clib_scribe_platform_conf=mock.MagicMock(),
         )
-        print(f"\nmode={mode!r} -> heavy load calls={heavy.call_count}")
-        assert heavy.call_count == expect_heavy
+        print(f"\nmode={mode!r} -> per-job heavy load calls={heavy.call_count}")
+        assert heavy.call_count == 0, "build_clip_scribe must not reload heavy models"

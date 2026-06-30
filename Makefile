@@ -2,7 +2,16 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet
+.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet migrate
+
+# -------------------------------------------------------------------------
+# Database migrations (Alembic owns the schema; create_all was removed).
+# Run this after a fresh checkout / new DB and after pulling new migrations.
+# -------------------------------------------------------------------------
+migrate:
+	@echo "\n--- Applying database migrations ---"
+	@cd backend && uv run alembic upgrade head
+	@echo "Database is at head."
 
 setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 	@echo "\nProject Setup Complete! You can now run the extractor."
@@ -24,17 +33,6 @@ spacy:
 	@echo "\n--- 2. Installing spaCy Model ---"
 	@$(PIP) "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 	@echo "spaCy model installed."
-
-# -------------------------------------------------------------------------
-# 3. Pre-fetch BLIP Model (Hugging Face)
-# -------------------------------------------------------------------------
-blip:
-	@echo "\n--- 3. Pre-fetching BLIP Model ---"
-	@echo "This triggers the download now so it doesn't hang during execution."
-	@$(PYTHON) -c "from transformers import BlipProcessor, BlipForConditionalGeneration; \
-	print('Downloading Processor...'); BlipProcessor.from_pretrained('Salesforce/blip-image-captioning-base'); \
-	print('Downloading Model...'); BlipForConditionalGeneration.from_pretrained('Salesforce/blip-image-captioning-base')"
-	@echo "BLIP model cached."
 
 # -------------------------------------------------------------------------
 # 4. Pre-fetch DINOv2 Model (Torch Hub)
@@ -88,11 +86,6 @@ clean:
 	@rm -f checkpoints/*.pth
 	@rm -f checkpoints/*.pt
 	@echo "Checkpoints removed."
-
-run_extractor:
-	@echo "Running extractor"
-	@$(PYTHON_MODULE) src.extractor.extractor
-
 
 .PHONY: help
 help:

@@ -20,13 +20,18 @@ from src.ocr.paddle_wrapper import OCRSystem
 
 from src.sam2.sam.build_sam import build_sam2_video_predictor
 from src.utils.clip_scribe_logging import logger
-from src.db import ClipScribeWriterDB, ClipScribeReaderDB, create_db_engine
+from src.db import (
+    ClipScribeWriterDB,
+    ClipScribeReaderDB,
+    create_db_engine,
+    resolve_database_url,
+)
+from src.utils.progress import NullProgressReporter, ProgressReporter
 
 from .engine import ClipScribeEngine
 from .platform_configs import BasePlatformConf
 
 from pathlib import Path
-import os
 import yaml  # type: ignore
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +93,7 @@ class ClipScribeBuilder:
         self.db_backend = self.db_params.get("backend", "sqlite")
 
         self._assemble_db()
+        self._assemble_heavy_extractor_utils()
 
     def build_parser(
         self,
@@ -95,6 +101,7 @@ class ClipScribeBuilder:
         clib_scribe_platform_conf: BasePlatformConf,
         clib_scribe_parser_params: dict,
         parser_agent_params: dict,
+        progress_reporter: ProgressReporter | None = None,
     ) -> VideoInformationParser:
         parser_output_dir = PROJECT_ROOT / clib_scribe_parser_params.get(
             "output_dir", "parser_artifacts"
@@ -117,6 +124,7 @@ class ClipScribeBuilder:
             logger=logger,
             max_parallel_agents=parser_max_parallel,
             recursion_limit=recursion_limit,
+            progress_reporter=progress_reporter,
         )
 
         return info_parser
@@ -133,6 +141,7 @@ class ClipScribeBuilder:
         face_detection_params: dict,
         taxonomy_params: dict,
         audio_params: dict,
+        progress_reporter: ProgressReporter | None = None,
     ):
         hint_generation_model = self.resolve_model(
             "taxonomy.hint_generation.model",
@@ -227,21 +236,14 @@ class ClipScribeBuilder:
             min_samples,
             max_samples,
             sampling_rate,
+            progress_reporter=progress_reporter,
         )
 
         return info_extractor
 
     def _assemble_db(self) -> None:
         try:
-            if self.db_backend == "sqlite":
-                db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")
-                if db_url.startswith("sqlite:///") and not db_url.startswith(
-                    "sqlite:////"
-                ):
-                    relative_path = db_url[len("sqlite:///") :]
-                    db_url = f"sqlite:///{PROJECT_ROOT / relative_path}"
-            else:
-                db_url = os.environ["POSTGRESQL_URL"]
+            db_url = resolve_database_url()
 
             db_engine = create_db_engine(
                 database_url=db_url,
@@ -368,13 +370,18 @@ class ClipScribeBuilder:
         clib_scribe_platform_conf: BasePlatformConf,
         user_hints: list[str] | None = None,
         generate_hint_from_name: bool = False,
+        progress_reporter: ProgressReporter | None = None,
     ) -> ClipScribeEngine:
         try:
+            # One reporter per job, shared by engine + extractor + parser. The
+            # CLI leaves this None (Null = no-op); the Celery worker will pass a
+            # RedisProgressReporter bound to the job id.
+            reporter = progress_reporter or NullProgressReporter()
+
             info_extractor = None
             info_parser = None
 
             if clib_scribe_mode in ["full", "extract"]:
-                self._assemble_heavy_extractor_utils()
                 info_extractor = self.build_extractor(
                     video_name,
                     user_hints,
@@ -386,6 +393,7 @@ class ClipScribeBuilder:
                     self.face_detection_params,
                     self.taxonomy_params,
                     self.audio_params,
+                    progress_reporter=reporter,
                 )
 
             if clib_scribe_mode in ["full", "parse"]:
@@ -394,6 +402,7 @@ class ClipScribeBuilder:
                     clib_scribe_platform_conf,
                     self.clib_scribe_parser_params,
                     self.parser_agent_params,
+                    progress_reporter=reporter,
                 )
 
             clib_scribe = ClipScribeEngine(
@@ -406,6 +415,7 @@ class ClipScribeBuilder:
                 parser=info_parser,
                 reader_db=self.reader_db,
                 writer_db=self.writer_db,
+                progress_reporter=reporter,
             )
 
             return clib_scribe

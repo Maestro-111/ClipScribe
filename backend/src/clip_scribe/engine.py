@@ -1,5 +1,11 @@
-from src.extractor.extractor_core import VideoInformationExtractor
+from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
 from src.parser.parser_core import VideoInformationParser
+from src.utils.progress import (
+    NullProgressReporter,
+    Phase,
+    ProgressEvent,
+    ProgressReporter,
+)
 
 
 class ClipScribeEngine:
@@ -19,6 +25,7 @@ class ClipScribeEngine:
         parser: VideoInformationParser | None,
         reader_db=None,
         writer_db=None,
+        progress_reporter: ProgressReporter | None = None,
     ):
         self.mode = mode
 
@@ -31,6 +38,11 @@ class ClipScribeEngine:
         self.logger = logger
         self.writer_db = writer_db
         self.reader_db = reader_db
+        self.progress = progress_reporter or NullProgressReporter()
+
+        # Populated when the extractor's run is persisted; surfaced on
+        # job.completed so live subscribers can navigate to the finished run.
+        self.run_id: str = ""
 
     def __repr__(self) -> str:
         return (
@@ -39,23 +51,52 @@ class ClipScribeEngine:
             f"(extractor={self.extractor}, parser={self.parser})"
         )
 
-    def run(self, run_id: str = ""):
-        if self.mode == "full":
-            self.parse_extract()
-        elif self.mode == "extract":
-            self.extract()
-        elif self.mode == "parse":
-            self.parse(run_id)
-        else:
-            raise ValueError(
-                f"Invalid mode: {self.mode}. Supported modes: 'full', 'extract', 'parse'"
-            )
+    def _phases_for_mode(self) -> list[str]:
+        """The ordered phase names a UI should expect for the current mode."""
+        extract_phases = [
+            Phase.SCENE_DETECTION,
+            Phase.AUDIO,
+            Phase.SHOT_PROCESSING,
+            Phase.FINALIZE,
+        ]
+        if self.mode == "extract":
+            return extract_phases
+        if self.mode == "parse":
+            return [Phase.PARSE]
+        return [*extract_phases, Phase.PARSE]
 
-    def extract(self):
+    def run(self, run_id: str = ""):
+        self.run_id = run_id
+        self.progress.emit(
+            ProgressEvent.JOB_STARTED,
+            {
+                "video_name": self.video_name,
+                "mode": self.mode,
+                "phases": self._phases_for_mode(),
+            },
+        )
+        try:
+            if self.mode == "full":
+                self.parse_extract()
+            elif self.mode == "extract":
+                self.extract()
+            elif self.mode == "parse":
+                self.parse(run_id)
+            else:
+                raise ValueError(
+                    f"Invalid mode: {self.mode}. Supported modes: 'full', 'extract', 'parse'"
+                )
+        except Exception as e:
+            self.progress.emit(ProgressEvent.JOB_FAILED, {"error": str(e)})
+            raise
+        else:
+            self.progress.emit(ProgressEvent.JOB_COMPLETED, {"run_id": self.run_id})
+
+    def extract(self) -> ExtractionSummary | None:
         if self.extractor is None:
             raise ValueError("No extractor defined; extract method cannot be called")
 
-        video_metadata: dict | None = {}
+        video_metadata: ExtractionSummary | None = None
 
         try:
             video_metadata = self._run_extractor()
@@ -102,6 +143,7 @@ class ClipScribeEngine:
         if video_metadata:
             metadata_descriptions = self.extractor.get_schema_descriptions()
             run_id = self._save_metadata_to_db(video_metadata, metadata_descriptions)
+            self.run_id = run_id
             self.parse(run_id)
 
         else:
@@ -109,7 +151,7 @@ class ClipScribeEngine:
 
         return
 
-    def _run_extractor(self) -> dict | None:
+    def _run_extractor(self) -> ExtractionSummary | None:
         assert self.extractor is not None
         try:
             metadata = self.extractor.extract(
@@ -133,7 +175,9 @@ class ClipScribeEngine:
             self.logger.info("Done!")
 
     def _save_metadata_to_db(
-        self, video_metadata: dict, field_descriptions: dict
+        self,
+        video_metadata: ExtractionSummary,
+        field_descriptions: dict[str, dict[str, str]],
     ) -> str:
         if self.writer_db is None:
             raise Exception("_save_metadata_to_db called without a writer_db")

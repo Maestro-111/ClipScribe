@@ -4,7 +4,10 @@ from sqlalchemy import (
     MetaData,
     Table,
     Column,
+    Boolean,
+    Index,
     Integer,
+    JSON,
     Text,
     Float,
     UniqueConstraint,
@@ -102,4 +105,91 @@ field_descriptions_table = Table(
     Column("column_name", Text, nullable=False),
     Column("description", Text, nullable=False),
     UniqueConstraint("table_name", "column_name"),
+)
+
+# ---------------------------------------------------------------------------
+# Web-app tables (see docs/web-app-plan.md §4). Orchestration state, raw
+# per-frame detections for the UI overlay, persisted parser output, and
+# per-shot temporal boundaries.
+# ---------------------------------------------------------------------------
+
+jobs_table = Table(
+    "jobs",
+    metadata_obj,
+    # ULID, also exposed in API URLs.
+    Column("job_id", Text, primary_key=True),
+    # Populated when the extractor writes the run; null until then (or on
+    # failure before a run exists).
+    Column("run_id", Text),
+    # queued | running | completed | failed | canceled
+    Column("status", Text, nullable=False, server_default=text("'queued'")),
+    Column("celery_task_id", Text),
+    # full | extract | parse
+    Column("mode", Text),
+    Column("video_name", Text),
+    Column("video_path", Text),
+    Column("video_type", Text),
+    Column("device", Text),
+    Column("platform", Text),
+    # Full request payload for reproducibility.
+    Column("params_json", JSON),
+    Column("error_text", Text),
+    Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    Column("started_at", Text),
+    Column("finished_at", Text),
+    # Nullable until auth lands.
+    Column("created_by", Text),
+)
+
+frame_detections_table = Table(
+    "frame_detections",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Text, nullable=False),
+    Column("shot_index", Integer),
+    Column("frame_idx", Integer),
+    Column("timestamp_sec", Float),
+    # dino | ocr | mtcnn | sam_mask
+    Column("source", Text),
+    # Resolved taxonomy label, or null.
+    Column("label", Text),
+    # OCR text, or null.
+    Column("text", Text),
+    Column("box_x1", Float),
+    Column("box_y1", Float),
+    Column("box_x2", Float),
+    Column("box_y2", Float),
+    Column("confidence", Float),
+    # Local SAM2 id, joinable to global_id.
+    Column("object_id", Integer),
+    Index("ix_frame_detections_run_frame", "run_id", "frame_idx"),
+    Index("ix_frame_detections_run_object", "run_id", "object_id"),
+)
+
+parser_results_table = Table(
+    "parser_results",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Text, nullable=False),
+    Column("platform", Text),
+    Column("feature_category", Text),
+    Column("feature_name", Text),
+    Column("feature_criteria", Text),
+    Column("evaluation", Boolean),
+    Column("llm_prompt", Text),
+    Column("llm_explanation", Text),
+    # Link to LangSmith trace.
+    Column("langsmith_run_id", Text),
+    Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+)
+
+shot_boundaries_table = Table(
+    "shot_boundaries",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Text, nullable=False),
+    Column("shot_index", Integer),
+    Column("start_sec", Float),
+    Column("end_sec", Float),
+    Column("duration_sec", Float),
 )
