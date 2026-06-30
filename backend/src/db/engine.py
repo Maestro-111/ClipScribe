@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml  # type: ignore
 from sqlalchemy import Engine, Table, create_engine, event
+from sqlalchemy.engine import make_url
 
 
 # backend/ — matches PROJECT_ROOT in build_clip_scribe.py (parents[2] there too).
@@ -42,6 +43,15 @@ def resolve_database_url() -> str:
     return os.environ["POSTGRESQL_URL"]
 
 
+def ensure_sqlite_parent_directory(database_url: str) -> None:
+    url = make_url(database_url)
+    if not url.drivername.startswith("sqlite"):
+        return
+
+    if url.database and url.database != ":memory:":
+        Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+
+
 def create_db_engine(
     database_url: str,
     pool_size: int = 5,
@@ -61,13 +71,7 @@ def create_db_engine(
         )
 
     if is_sqlite:
-        # Ensure parent directory exists for SQLite file
-        # sqlite:///relative/path  or  sqlite:////absolute/path
-        url_path = database_url.split("///", 1)[-1]
-        if url_path:
-            db_file = Path(url_path)
-            db_file.parent.mkdir(parents=True, exist_ok=True)
-
+        ensure_sqlite_parent_directory(database_url)
         engine = create_engine(database_url)
     else:
         engine = create_engine(
