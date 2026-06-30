@@ -11,7 +11,7 @@ from src.utils.progress import (
 class ClipScribeEngine:
 
     """
-    Core
+    Coordinates extraction, persistence, parsing, and job-level progress events.
     """
 
     def __init__(

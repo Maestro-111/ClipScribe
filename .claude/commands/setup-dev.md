@@ -9,33 +9,35 @@ Use this workflow to prepare or inspect the local development environment.
 
 1. Read `CLAUDE.md` or `AGENTS.md` before making changes.
 2. Confirm the requested setup scope from the user input: `$ARGUMENTS`.
-3. Prefer lightweight checks first:
+3. Run Python project commands from `backend/` unless explicitly using the root `Makefile`.
+4. Prefer lightweight checks first:
 
 ```bash
 uv --version
 uv run python --version
 ```
 
-4. Install project dependencies when requested:
+5. Install project dependencies when requested:
 
 ```bash
 uv sync
 ```
 
-5. Install development tools when requested:
+6. Install development tools when requested:
 
 ```bash
 uv sync --extra dev
 ```
 
-6. Do not run heavyweight setup without explicit user approval:
+7. Apply database migrations when preparing a fresh database:
 
 ```bash
-make setup
-make checkpoints
+uv run alembic upgrade head
 ```
 
-7. Check environment variables only at the level needed for the task:
+8. Do not run heavyweight setup without explicit user approval. The root `Makefile` setup/checkpoint/clean targets are stale after the backend move, so verify or fix them before relying on them.
+
+9. Check environment variables only at the level needed for the task:
    - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work.
    - `POSTGRESQL_URL` when `database.backend` is `postgresql`.
    - `SQLITE_URL` only when using SQLite.

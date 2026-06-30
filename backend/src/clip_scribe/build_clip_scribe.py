@@ -372,6 +372,13 @@ class ClipScribeBuilder:
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
     ) -> ClipScribeEngine:
+        """Build a per-job engine using the builder's long-lived dependencies.
+
+        Heavy models and DB handles are initialized once in ``__init__``. This
+        method creates fresh extractor/parser wrappers for the requested job
+        and wires the same progress reporter into the engine and active stages.
+        Passing ``None`` uses ``NullProgressReporter`` for CLI/tests.
+        """
         try:
             # One reporter per job, shared by engine + extractor + parser. The
             # CLI leaves this None (Null = no-op); the Celery worker will pass a

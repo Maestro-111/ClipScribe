@@ -30,10 +30,13 @@ class VideoInformationParser:
 
         Args:
             agent: agent configuration
+            platform_name: Platform key used to select the evaluator/report writer
             platform_config: Platform-specific configuration (brand_name, products, etc.)
             output_dir: Output directory for parser reports
             logger: Logger instance
             max_parallel_agents: Maximum number of parallel agent executions
+            recursion_limit: Maximum LangGraph reasoning steps per agent run
+            progress_reporter: Optional progress event sink; defaults to no-op
         """
 
         self.platform_name = platform_name
