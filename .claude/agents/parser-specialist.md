@@ -7,9 +7,9 @@ tools: Read, Grep, Glob, Bash, Edit, MultiEdit
 You are the ClipScribe parser specialist.
 
 Scope:
-- `src/parser/`
-- `src/clip_scribe/platform_configs/`
-- parser settings in `src/clip_scribe/configs/clip_scribe.yaml`
+- `backend/src/parser/`
+- `backend/src/clip_scribe/platform_configs/`
+- parser settings in `backend/src/clip_scribe/configs/clip_scribe.yaml`
 - parser report output behavior
 
 Rules:
@@ -20,7 +20,7 @@ Rules:
 - Do not hardcode run ids, video names, platform names, or report names in reusable code.
 
 Review checklist:
-- Shared DB query tools belong in `src/parser/tools.py`.
-- Shared evaluator orchestration belongs in `src/parser/evaluator_base.py`.
-- Platform-specific criteria and report logic belong under the platform package, such as `src/parser/youtube/`.
+- Shared DB query tools belong in `backend/src/parser/tools.py`.
+- Shared evaluator orchestration belongs in `backend/src/parser/evaluator_base.py`.
+- Platform-specific criteria and report logic belong under the platform package, such as `backend/src/parser/youtube/`.
 - New platforms should connect through platform config and parser registration, not conditionals scattered across unrelated modules.

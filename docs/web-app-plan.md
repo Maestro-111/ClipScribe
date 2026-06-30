@@ -49,15 +49,16 @@ to make before that piece is built.
 - **Worker container**: big (8–15 GB), GPU/MPS-bound, one job at a time per
   GPU. Multiple machines = multiple workers, same Redis queue.
 - **Redis**: both the Celery broker and the live-progress pub/sub channel.
-- **Postgres**: existing schema (`src/db/schema.py`) plus three new tables
-  (`jobs`, `frame_detections`, `parser_results`) and one widened table
-  (`shot_boundaries` extracted from `global_stats`).
+- **Postgres**: existing schema (`backend/src/db/schema.py`) plus four web-app
+  tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`).
 
 ---
 
 ## 2. Repo restructure (monorepo)
 
-**Status: DONE.** Layout below reflects the current state on disk.
+**Status: PARTIAL.** The Python project has moved under `backend/`; the web
+API, frontend, and Docker files below are the target shape unless marked as
+existing placeholders.
 
 ```
 clipscribe/
@@ -67,25 +68,25 @@ clipscribe/
     main.py                       # CLI entry — instantiates ClipScribeBuilder and runs one job
     src/                          # existing core, paths unchanged
       clip_scribe/  extractor/  ocr/  parser/  db/  dino/  sam2/  utils/
-    app/                          # NEW — web layer (currently just __init__.py)
-      celery_app.py               # SHARED — Celery app + worker_process_init signal
-      tasks.py                    # WORKER-ONLY — imports ClipScribeBuilder (heavy)
-      main.py                     # API-ONLY — FastAPI app + lifespan
-      routes/                     # API-ONLY — jobs.py, runs.py, artifacts.py, health.py
-      models.py                   # SHARED — Pydantic request/response schemas
-      events.py                   # ProgressReporter + Redis pub/sub helpers
+    app/                          # web layer placeholder (currently just __init__.py)
+      celery_app.py               # PLANNED — Celery app + worker_process_init signal
+      tasks.py                    # PLANNED/WORKER-ONLY — imports ClipScribeBuilder
+      main.py                     # PLANNED/API-ONLY — FastAPI app + lifespan
+      routes/                     # PLANNED — jobs.py, runs.py, artifacts.py, health.py
+      models.py                   # PLANNED — Pydantic request/response schemas
+      events.py                   # PLANNED — Redis pub/sub progress helpers
     docker/
       api/
-        Dockerfile                # slim API image
+        Dockerfile                # existing placeholder for slim API image
         deploy.sh
       core/
-        Dockerfile                # heavy worker image (a.k.a. "scribe core")
+        Dockerfile                # existing placeholder for heavy worker image
         deploy.sh
     checkpoints/                  # all model weights live here (see §8)
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
-  frontend/                       # TS SPA
+  frontend/                       # PLANNED TS SPA
     src/
       api/                        # generated TS client from OpenAPI
       lib/                        # state, hooks, utils
@@ -93,7 +94,7 @@ clipscribe/
       components/                 # VideoOverlay, Timeline, PhaseTree, LogTail
     package.json
     vite.config.ts
-  docker-compose.yml              # dev stack: api + worker + redis + postgres
+  docker-compose.yml              # currently Postgres-only scaffolding
   Makefile
   docs/web-app-plan.md            # this file
 ```
@@ -109,9 +110,10 @@ Notes on the layout as it stands:
   without code changes.
 - Pre-commit must be invoked from `backend/` because the config lives at
   `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
-- The root `Makefile` is still partially broken (it references paths that
-  moved). Either move it under `backend/` or update each target to
-  `cd backend && ...`. Tracked as a cleanup, not a blocker.
+- The root `Makefile` is still partially broken (setup/checkpoint/clean targets
+  reference paths that moved and `setup` still depends on removed `blip`).
+  `make migrate` is the reliable target because it delegates to
+  `cd backend && uv run alembic upgrade head`.
 
 ---
 
@@ -250,10 +252,11 @@ def run_job(job_params: dict):
     engine.run(run_id=job_params.get("run_id", ""))
 ```
 
-### What still needs to happen in this file later (tracked elsewhere)
+### What still needs to happen in this area later (tracked elsewhere)
 
-- Inject a `ProgressReporter` into the engine + extractor + parser
-  (§5; needed for live UI updates).
+- Implement a worker/web `RedisProgressReporter` and log bridge. The core
+  already accepts `ProgressReporter` and defaults to `NullProgressReporter`
+  (§5).
 - Pass `download_root` to `whisper.load_model` and the equivalent dirs to
   `OCRSystem` so all weight downloads land under
   `backend/checkpoints/` instead of `~/.cache/...` (§8).
@@ -265,7 +268,7 @@ def run_job(job_params: dict):
 
 ## 4. Database changes
 
-### Existing (`src/db/schema.py`) — keep
+### Existing (`backend/src/db/schema.py`) — keep
 - `runs`, `global_stats`, `visual_object_occurrences`, `text_events`,
   `audio_segments`, `scene_descriptions`, `field_descriptions`.
 
@@ -348,8 +351,14 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 
 ### Migrations
 
-- Adopt Alembic. SQLite + Postgres both supported via SQLAlchemy already.
-- First migration is the new tables only; existing tables are untouched.
+- Alembic is adopted under `backend/alembic/`. SQLite + Postgres both use the
+  same SQLAlchemy metadata from `backend/src/db/schema.py`.
+- Current revisions are a baseline migration for the existing schema followed
+  by a migration adding `jobs`, `frame_detections`, `parser_results`, and
+  `shot_boundaries`.
+- Runtime DB setup no longer calls `metadata.create_all`; run
+  `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
+  repository root).
 
 ### Default backend
 
@@ -359,6 +368,11 @@ single-machine dev. `docker-compose.yml` already has Postgres scaffolding.
 ---
 
 ## 5. Event vocabulary (worker → UI live updates)
+
+**Core status: DONE for engine/extractor/parser phase events.** The checked-in
+core emits event type + payload through `backend/src/utils/progress.py`. Redis
+pub/sub, timestamp/job-id envelopes, SSE multiplexing, log mirroring, and
+per-criterion parser events are still worker/API work.
 
 Worker publishes to two Redis pub/sub channels per job:
 - `job:{id}:events` — structured JSON events (the vocabulary below)
@@ -390,6 +404,7 @@ FastAPI's SSE endpoint subscribes to both and multiplexes into one stream.
 {"type":"identity.merged",   "data":{"from_ids":[2,7],"to_global_id":1,"similarity":0.91}}
 {"type":"phase.completed",   "phase":"finalize"}
 
+// Reserved for a future parser-evaluator hook; current parser emits parse phase events only.
 {"type":"parser.criterion_started","data":{"feature_name":"Brand Mention (Speech)"}}
 {"type":"parser.criterion_completed","data":{"feature_name":"...","evaluation":true}}
 
@@ -402,30 +417,33 @@ FastAPI's SSE endpoint subscribes to both and multiplexes into one stream.
 | Event | Hook |
 |---|---|
 | `job.started` / `job.failed` / `job.completed` | `ClipScribeEngine.run` outer try/except |
-| `phase.started/completed (scene_detection)` | around `_digest_video` (`extractor_core.py:999`) |
-| `phase.started (audio)` + `audio.segment` + `phase.completed` | `_analyze_audio` segment loop (`extractor_core.py:966`) |
-| `phase.started (shot_processing)` | top of shot loop (`extractor_core.py:1004`) |
+| `phase.started/completed (scene_detection)` | around `_digest_video` in `extractor_core.py` |
+| `phase.started (audio)` + `audio.segment` + `phase.completed` | `_analyze_audio` segment loop in `extractor_core.py` |
+| `phase.started (shot_processing)` | top of shot loop in `extractor_core.py` |
 | `shot.started` | start of each iteration |
-| `shot.scene_described` | after `describe_scene` (`extractor_core.py:1054`) |
-| `shot.taxonomy_resolved` | after `set_active_targets` (`extractor_core.py:1071`) |
-| `shot.frame_processed` | bottom of inner frame loop (after `extractor_core.py:1207`) |
+| `shot.scene_described` | after `describe_scene` |
+| `shot.taxonomy_resolved` | after `set_active_targets` |
+| `shot.frame_processed` | bottom of inner frame loop |
 | `shot.completed` | end of shot iteration |
-| `identity.merged` | inside `_resolve_identities` when `should_merge=True` (`extractor_core.py:708`) |
-| `parser.criterion_*` | `src/parser/parser_core.py` per-criterion run |
+| `identity.merged` | inside `_resolve_identities` when `should_merge=True` |
+| `phase.started/completed (parse)` | around `VideoInformationParser.parse` evaluation |
+| `parser.criterion_*` | reserved; constants exist but no per-criterion emit is wired yet |
 
 ### Implementation
 
-A `ProgressReporter` interface injected into the extractor and parser. Two
-implementations:
+A `ProgressReporter` interface is injected into the engine, extractor, and
+parser. Current implementation:
+- `NullProgressReporter()` — used by CLI and tests.
+
+Planned implementation:
 - `RedisProgressReporter(job_id, redis_client)` — used in worker.
-- `NullProgressReporter()` — used in CLI and tests.
 
 `extractor_core.py` only depends on the interface, not Redis. Same applies to
 the parser.
 
-A custom `logging.Handler` is attached at task start that mirrors `INFO+` log
-records to `job:{id}:logs`. The handler reads job id from a contextvar so no
-function signatures change.
+A custom `logging.Handler` is still planned for task start to mirror `INFO+`
+log records to `job:{id}:logs`. The handler should read job id from a
+contextvar so no function signatures change.
 
 ---
 
@@ -545,8 +563,9 @@ sketch.
 
 ## 8. Docker & checkpoint strategy
 
-Two images, two roles, one shared volume for weights. Both Dockerfiles
-live under `backend/docker/`:
+Two images, two roles, one shared volume for weights. Placeholder Dockerfiles
+already live under `backend/docker/`; the actual image contents still need to
+be filled in:
 
 ```
 backend/docker/
@@ -725,7 +744,7 @@ These are decisions to make before the corresponding implementation step.
    - Probably (c) first, (a) when multi-user. (b) only if deploying to cloud.
 
 2. **Artifact storage.**
-   `extractor_artifacts/<video_name>/` is currently keyed by video filename. If
+   `backend/extractor_artifacts/<video_name>/` is currently keyed by video filename. If
    two jobs share a video name they collide. Switch to
    `artifacts/<run_id>/` once we have ULIDs. Decide: filesystem (shared volume)
    vs object storage. Object storage is more cloud-friendly but adds
@@ -790,7 +809,7 @@ These are decisions to make before the corresponding implementation step.
     front does the same thing.
 
 14. **Disk retention.**
-    `extractor_artifacts/` grows unboundedly. Decide a retention policy
+    `backend/extractor_artifacts/` grows unboundedly. Decide a retention policy
     (delete after N days, keep last K runs, manual purge) before the disk
     fills. Add a `POST /runs/{id}` DELETE endpoint that cleans both DB rows
     and artifact directory.
@@ -818,8 +837,8 @@ These are decisions to make before the corresponding implementation step.
 Strictly ordered; each step is shippable on its own.
 
 1. **DB migrations: `jobs`, `frame_detections`, `parser_results`,
-   `shot_boundaries`.** Alembic baseline + first migration. No behavior
-   change yet; just schema.
+   `shot_boundaries`.** **DONE.** Alembic baseline + second migration are in
+   `backend/alembic/versions/`; schema creation is migration-owned.
 
 2. **Builder refactor: load-once via `ClipScribeBuilder.__init__`.**
    **DONE.** Heavy assembly moved into `__init__` (`_assemble_db`,
@@ -827,8 +846,8 @@ Strictly ordered; each step is shippable on its own.
    the cheap per-job entry point. CLI works unchanged. See §3.
 
 3. **`ProgressReporter` interface + Null impl.** Wire publish calls into
-   `extractor_core.py` and `parser_core.py`. CLI passes Null; nothing changes
-   for the user. Unit test the event ordering.
+   `engine.py`, `extractor_core.py`, and `parser_core.py`. **DONE.** CLI/tests
+   pass Null by default; event ordering has focused unit coverage.
 
 4. **Persist raw detections.** Hook `frame_detections` writes inside
    `_save_metadata` and OCR/MTCNN branches. Persist `shot_boundaries` from
@@ -848,7 +867,7 @@ Strictly ordered; each step is shippable on its own.
    where the project starts to feel real.
 
 8. **Celery + Redis.** Move `POST /jobs` to enqueue. `worker_process_init`
-   builds `ModelRegistry`. One worker, concurrency 1. `jobs` table tracks
+   builds one long-lived `ClipScribeBuilder`. One worker, concurrency 1. `jobs` table tracks
    status transitions.
 
 9. **Redis pub/sub bridge + SSE.** Swap `NullProgressReporter` for
@@ -859,8 +878,9 @@ Strictly ordered; each step is shippable on its own.
 10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
     parser. `POST /jobs/{id}/cancel`. Partial result handling.
 
-11. **Docker split.** `Dockerfile.api` (slim) + `Dockerfile.worker` (heavy).
-    `docker-compose.yml` for the full stack. Document Mac-MPS caveat.
+11. **Docker split.** Fill in `backend/docker/api/Dockerfile` (slim) and
+    `backend/docker/core/Dockerfile` (heavy). Expand `docker-compose.yml` for
+    the full stack and document Mac-MPS caveat.
 
 12. **Polish:** retention policy, auth (if/when needed), cost tracking,
     OpenAPI codegen in CI, expand tests.
@@ -883,7 +903,7 @@ Strictly ordered; each step is shippable on its own.
   burn through credits. Cost cap or per-user budget should exist before
   this is anything but internal.
 
-- **Disk usage.** Unbounded `extractor_artifacts/`. Retention story needs to
+- **Disk usage.** Unbounded `backend/extractor_artifacts/`. Retention story needs to
   exist before turning the app on for more than one person.
 
 - **Cancellation correctness.** Hard-killing a worker mid-job leaves OpenCV

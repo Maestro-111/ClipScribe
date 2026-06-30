@@ -36,7 +36,7 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 
 ## Setup
 
-ClipScribe is a monorepo: the Python backend lives in `backend/` (alongside `frontend/`), while the git root is the repository root. **Run all backend commands below from the `backend/` directory** so `uv` and relative paths resolve correctly.
+ClipScribe is a monorepo: the Python backend lives in `backend/`, while the git root is the repository root. **Run `uv`, Alembic, and pre-commit commands below from the `backend/` directory** so project config and relative paths resolve correctly.
 
 ```bash
 cd backend
@@ -56,13 +56,7 @@ Install development dependencies:
 uv sync --extra dev
 ```
 
-Download checkpoints and pre-cache large models only when you need to run extraction:
-
-```bash
-make setup
-```
-
-`make setup` can download large model files and may take a while.
+Download checkpoints and pre-cache large models only when you need to run extraction. The helper scripts live in `backend/checkpoints/`, but the root `Makefile` setup/checkpoint targets still reference pre-monorepo paths and need cleanup before use.
 
 ## Environment
 
@@ -75,10 +69,16 @@ Common environment variables:
 The main configuration file is:
 
 ```text
-src/clip_scribe/configs/clip_scribe.yaml
+backend/src/clip_scribe/configs/clip_scribe.yaml
 ```
 
 The current checked-in config uses SQLite by default. Switch `database.backend` to `postgresql` (and set `POSTGRESQL_URL`) to use PostgreSQL.
+
+Database schema is managed by Alembic. Apply migrations after creating a fresh database or pulling new migrations:
+
+```bash
+uv run alembic upgrade head
+```
 
 ## Running
 
@@ -120,44 +120,48 @@ uv run pre-commit run --all-files
 
 > **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
-Clean downloaded checkpoints:
+Apply database migrations from the repository root via the Makefile:
 
 ```bash
-make clean
+make migrate
 ```
+
+The root Makefile currently has stale setup/checkpoint/clean targets after the backend move; `make migrate` is the reliable target in the checked-in Makefile.
 
 ## Project Structure
 
 ```text
-src/clip_scribe/        Engine, builders, platform config, main app config
-src/extractor/          Scene extraction, taxonomy, tracking, scene description
-src/parser/             Parser agents, tools, evaluators, reports
-src/ocr/                PaddleOCR wrapper and OCR post-processing
-src/db/                 SQLAlchemy schema, engine, reader, writer
-src/dino/dino_wrapper.py Safe wrapper around GroundingDINO
-checkpoints/            Model checkpoint download helpers
-input/                  Local input videos
-extractor_artifacts/    Generated extraction outputs
-parser_artifacts/       Generated parser reports
-data/                   Local database files
-logs/                   Runtime logs
+backend/src/clip_scribe/        Engine, builders, platform config, main app config
+backend/src/extractor/          Scene extraction, taxonomy, tracking, scene description
+backend/src/parser/             Parser agents, tools, evaluators, reports
+backend/src/ocr/                PaddleOCR wrapper and OCR post-processing
+backend/src/db/                 SQLAlchemy schema, engine, reader, writer
+backend/src/utils/progress.py   Progress event interface and null reporter
+backend/src/dino/dino_wrapper.py Safe wrapper around GroundingDINO
+backend/alembic/                Alembic migration environment and versions
+backend/checkpoints/            Model checkpoint download helpers
+backend/input/                  Local input videos
+backend/extractor_artifacts/    Generated extraction outputs
+backend/parser_artifacts/       Generated parser reports
+backend/data/                   Local database files
+backend/logs/                   Runtime logs
 ```
 
 ## Artifacts And Data
 
 Generated artifacts are intentionally kept out of the core source tree:
 
-- `extractor_artifacts/` - detection visualizations, OCR outputs, tracked videos, extraction summaries.
-- `parser_artifacts/` - generated parser reports and scores.
-- `data/` - local database files.
-- `logs/` - runtime logs.
+- `backend/extractor_artifacts/` - detection visualizations, OCR outputs, tracked videos, extraction summaries.
+- `backend/parser_artifacts/` - generated parser reports and scores.
+- `backend/data/` - local database files.
+- `backend/logs/` - runtime logs.
 
 Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values.
 
 ## Current Caveats
 
 - `main.py` is hardcoded and should become a real CLI.
-- `make run_extractor` is stale and points at a module that does not currently exist.
+- Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
 - `make help` currently prints only a header.
 - Test coverage is minimal.
 - Full extraction is resource-intensive and can trigger model downloads and API calls.

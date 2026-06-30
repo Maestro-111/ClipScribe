@@ -1,1 +1,9 @@
-Generic single-database configuration.
+ClipScribe Alembic migrations.
+
+Run from backend/:
+
+    uv run alembic upgrade head
+
+The Alembic environment resolves the active database URL through
+src.db.engine.resolve_database_url(), so migrations target the same SQLite or
+PostgreSQL database configured for the application.
