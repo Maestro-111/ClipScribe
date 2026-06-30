@@ -5,6 +5,7 @@ from sklearn.cluster import DBSCAN
 from scipy.cluster.hierarchy import fclusterdata
 
 logging.getLogger("ppocr").setLevel(logging.WARNING)  # suprres ocr logs?
+logger = logging.getLogger("clip_scribe")
 
 
 class OCRSystem:
@@ -171,7 +172,6 @@ class OCRSystem:
 
     def __init__(
         self,
-        logger,
         lang="en",
         use_textline_orientation=True,
         merge_lines=True,
@@ -186,10 +186,7 @@ class OCRSystem:
             merge_lines: Whether to merge adjacent text boxes into lines
             merge_method: 'hierarchical', 'dbscan', or 'simple' (the old greedy method)
         """
-
-        self.logger = logger
-
-        self.logger.info(f"Loading PaddleOCR (lang={lang})...")
+        logger.info(f"Loading PaddleOCR (lang={lang})...")
 
         self.ocr_engine = PaddleOCR(
             use_textline_orientation=use_textline_orientation,
@@ -200,7 +197,7 @@ class OCRSystem:
 
         self.merge_lines = merge_lines
         self.merge_method = merge_method
-        self.logger.info("PaddleOCR loaded.")
+        logger.info("PaddleOCR loaded.")
 
     def detect(self, image_cv2):
         """
@@ -383,4 +380,4 @@ class OCRSystem:
 
         vis_img = self.visualize_results(image, results, **kwargs)
         cv2.imwrite(output_path, vis_img)
-        self.logger.info(f"Visualization saved to: {output_path}")
+        logger.info(f"Visualization saved to: {output_path}")

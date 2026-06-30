@@ -13,13 +13,14 @@ from src.extractor.scene_describer import GPTSceneDescriber
 
 from torchvision import transforms
 from facenet_pytorch import MTCNN
+import logging
 import torch
 import whisper
 
 from src.ocr.paddle_wrapper import OCRSystem
 
 from src.sam2.sam.build_sam import build_sam2_video_predictor
-from src.utils.clip_scribe_logging import logger
+from src.utils.clip_scribe_logging import configure_logging
 from src.db import (
     ClipScribeWriterDB,
     ClipScribeReaderDB,
@@ -36,6 +37,8 @@ import yaml  # type: ignore
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_DIR = Path(__file__).resolve().parent
+
+logger = logging.getLogger("clip_scribe")
 
 
 class ClipScribeBuilder:
@@ -68,6 +71,8 @@ class ClipScribeBuilder:
         return "gpt-5.4-mini"
 
     def __init__(self):
+        configure_logging()
+
         with open(LOCAL_DIR / "configs" / "clip_scribe.yaml") as f:
             _cfg = yaml.safe_load(f)
 
@@ -121,7 +126,6 @@ class ClipScribeBuilder:
             platform_name=clib_scribe_platform_name,
             platform_config=clib_scribe_platform_conf,
             output_dir=str(parser_output_dir),
-            logger=logger,
             max_parallel_agents=parser_max_parallel,
             recursion_limit=recursion_limit,
             progress_reporter=progress_reporter,
@@ -178,6 +182,10 @@ class ClipScribeBuilder:
             "reid_model_frame_check_freq", 20
         )
 
+        reid_similarity_difference: float = clib_scribe_extractor_params.get(
+            "reid_similarity_difference", 0.8
+        )
+
         logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
 
         logger.info(f"dino_text_conf: {dino_text_conf}")
@@ -186,7 +194,7 @@ class ClipScribeBuilder:
         combined_hints = user_hints
         if generate_hint_from_name:
             combined_hints = generate_hints_from_video_name(
-                video_name, logger, model=hint_generation_model, user_hints=user_hints
+                video_name, model=hint_generation_model, user_hints=user_hints
             )
 
         # Scene analysis configuration
@@ -197,7 +205,6 @@ class ClipScribeBuilder:
         image_detail = scene_analysis_params.get("image_detail", "low")
 
         scene_describer = GPTSceneDescriber(
-            logger,
             model=scene_detection_model,
             max_frame_dim=max_frame_dim,
             image_detail=image_detail,
@@ -230,9 +237,9 @@ class ClipScribeBuilder:
             audio_confidence,
             label_match_merge_threshold,
             label_no_match_merge_threshold,
-            logger,
             detection_interval,
             reid_model_frame_check_freq,
+            reid_similarity_difference,
             min_samples,
             max_samples,
             sampling_rate,
@@ -249,11 +256,10 @@ class ClipScribeBuilder:
                 database_url=db_url,
                 pool_size=self.db_params.get("pool_size", 5),
                 max_overflow=self.db_params.get("max_overflow", 10),
-                logger=logger,
             )
 
-            writer_db = ClipScribeWriterDB(engine=db_engine, logger=logger)
-            reader_db = ClipScribeReaderDB(engine=db_engine, logger=logger)
+            writer_db = ClipScribeWriterDB(engine=db_engine)
+            reader_db = ClipScribeReaderDB(engine=db_engine)
 
             self.writer_db = writer_db
             self.reader_db = reader_db
@@ -265,7 +271,6 @@ class ClipScribeBuilder:
     def _assemble_heavy_extractor_utils(self) -> None:
         try:
             dino = DinoDetector(
-                logger,
                 dino_type=self.dino_params.get("dino_size", "tiny"),
                 weights_dir=self.models_weights_dir,
             )
@@ -288,7 +293,7 @@ class ClipScribeBuilder:
                 else torch.device("cpu")
             )
 
-            ocr = OCRSystem(logger)
+            ocr = OCRSystem()
 
             sam2 = build_sam2_video_predictor(
                 self.sam2_params.get("size", "tiny"),
@@ -337,11 +342,10 @@ class ClipScribeBuilder:
                 ),
             )
 
-            taxonomy_resolver = TaxonomyResolver(logger)
+            taxonomy_resolver = TaxonomyResolver()
             taxonomy_generator = TaxonomyGenerator(
                 taxonomy_objects_num,
                 profiles,
-                logger,
                 model=target_generation_model,
             )
 
@@ -414,7 +418,6 @@ class ClipScribeBuilder:
 
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
-                logger=logger,
                 video_name=video_name,
                 video_path=video_path,
                 video_type=video_type,

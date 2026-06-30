@@ -1,4 +1,6 @@
 from typing import List, Optional
+import logging
+
 from pydantic import BaseModel, Field
 import torch
 from sentence_transformers import SentenceTransformer, util
@@ -6,9 +8,11 @@ from agents import Agent, Runner
 import re
 from .taxonomy_config import ProfilesPile
 
+logger = logging.getLogger("clip_scribe")
+
 
 def generate_hints_from_video_name(
-    video_name: str, logger, model: str, user_hints: list[str] | None = None
+    video_name: str, model: str, user_hints: list[str] | None = None
 ) -> list[str]:
     """Infer 10-20 object hints from a descriptive video filename.
     Returns [] if the name looks generic / auto-generated."""
@@ -59,19 +63,18 @@ class StructuredLeafList(BaseModel):
 
 
 class TaxonomyResolver:
-    def __init__(self, logger, device: str = "cpu"):
-        self.logger = logger
+    def __init__(self, device: str = "cpu"):
         self.device = device
         self.targets: List[LeafItem] = []
 
-        self.logger.info("Loading SBERT Bi-Encoder...")
+        logger.info("Loading SBERT Bi-Encoder...")
         self.embed_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
         self.target_embeddings: Optional[torch.Tensor] = None
         self.active_target_names: list[str] = []
 
     def set_active_targets(self, targets: List[LeafItem]):
-        self.logger.info(f"Encoding {len(targets)} active targets...")
+        logger.info(f"Encoding {len(targets)} active targets...")
         self.targets = targets
         self.active_target_names = [t.anchor for t in targets]
 
@@ -98,7 +101,7 @@ class TaxonomyResolver:
 
         best_candidate = self.active_target_names[best_idx]
 
-        self.logger.info(
+        logger.info(
             f"Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})"
         )
 
@@ -108,13 +111,13 @@ class TaxonomyResolver:
                     f" {cand} " in f" {clean_label} "
                     or f" {clean_label} " in f" {cand} "
                 ):
-                    self.logger.info(
+                    logger.info(
                         f"MATCH (String Fallback): '{clean_label}' mapped to '{cand}'"
                     )
                     return cand
 
         if best_score >= threshold:
-            self.logger.info(f"MATCH: '{clean_label}' mapped to '{best_candidate}'")
+            logger.info(f"MATCH: '{clean_label}' mapped to '{best_candidate}'")
             return best_candidate
 
         return None
@@ -125,12 +128,10 @@ class TaxonomyGenerator:
         self,
         num_objects: int,
         profiles: ProfilesPile,
-        logger,
         model: str,
     ):
         self.model = model
         self.profiles = profiles
-        self.logger = logger
         self.num_objects = num_objects
 
         self.leaf_agent = Agent(

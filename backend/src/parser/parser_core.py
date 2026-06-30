@@ -10,6 +10,8 @@ from src.clip_scribe.platform_configs import BasePlatformConf
 from src.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 
+logger = logging.getLogger("clip_scribe")
+
 
 class VideoInformationParser:
     """Main entry point for parsing and evaluating video metadata."""
@@ -20,7 +22,6 @@ class VideoInformationParser:
         platform_name: str,
         platform_config: BasePlatformConf,
         output_dir: str,
-        logger: logging.Logger,
         max_parallel_agents: int = 5,
         recursion_limit: int = 20,
         progress_reporter: ProgressReporter | None = None,
@@ -33,7 +34,6 @@ class VideoInformationParser:
             platform_name: Platform key used to select the evaluator/report writer
             platform_config: Platform-specific configuration (brand_name, products, etc.)
             output_dir: Output directory for parser reports
-            logger: Logger instance
             max_parallel_agents: Maximum number of parallel agent executions
             recursion_limit: Maximum LangGraph reasoning steps per agent run
             progress_reporter: Optional progress event sink; defaults to no-op
@@ -42,7 +42,6 @@ class VideoInformationParser:
         self.platform_name = platform_name
         self.platform_config = platform_config
         self.output_dir = output_dir
-        self.logger = logger
         self.max_parallel_agents = max_parallel_agents
         self.recursion_limit = recursion_limit
         self.model = self.create_agent_model(agent)
@@ -83,7 +82,6 @@ class VideoInformationParser:
                 model=self.model,
                 platform_config=self.platform_config,
                 agentic_eval=YouTubeAgentEvaluation,  # noqa ignore
-                logger=self.logger,
                 max_parallel_agents=self.max_parallel_agents,
                 recursion_limit=self.recursion_limit,
             )
@@ -111,7 +109,7 @@ class VideoInformationParser:
             Path to the generated CSV report
         """
 
-        self.logger.info(f"Starting parser for run {run_id}, video '{video_name}'")
+        logger.info(f"Starting parser for run {run_id}, video '{video_name}'")
 
         report_name = self.create_report_name()
 
@@ -132,7 +130,7 @@ class VideoInformationParser:
         if evaluator is not None:
             results = evaluator.evaluate_all(run_id, video_name)
             report_writer.write_results(results)
-            self.logger.info(
+            logger.info(
                 f"Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
             )
             self.progress.phase_completed(Phase.PARSE, {"criteria_count": len(results)})

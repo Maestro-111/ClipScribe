@@ -7,11 +7,13 @@ from sqlalchemy import Engine, text
 
 from .engine import ClipScribeBaseDB
 
+logger = logging.getLogger("clip_scribe")
+
 
 class ClipScribeReaderDB(ClipScribeBaseDB):
-    def __init__(self, engine: Engine, logger: logging.Logger):
-        super().__init__(engine, logger)
-        self.logger.info("ClipScribeReaderDB ready.")
+    def __init__(self, engine: Engine):
+        super().__init__(engine)
+        logger.info("ClipScribeReaderDB ready.")
 
     def get_run(self, run_id: str) -> dict | None:
         """Fetch a specific run by its run_id."""

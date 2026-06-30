@@ -12,7 +12,7 @@ from langgraph.errors import GraphRecursionError
 
 from src.parser.models import BaseAgentEvaluation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("clip_scribe")
 
 _NEGATION_RE = re.compile(
     r"\b(?:not|no|never|neither|isn't|isn't|wasn't|aren't|don't)\b",

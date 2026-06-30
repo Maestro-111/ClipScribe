@@ -1,21 +1,23 @@
+import logging
+import os
+
 import torch
 import cv2
 from PIL import Image
 from .groundingdino.datasets import transforms as T
 from .groundingdino.util.inference import load_model, predict
 import torchvision.ops as ops
-import os
+
+logger = logging.getLogger("clip_scribe")
 
 
 class DinoDetector:
     def __init__(
         self,
-        logger,
         dino_type="tiny",
         weights_dir="checkpoints",
         device="cpu",
     ):
-        self.logger = logger
         self.device = device
 
         if dino_type == "tiny":
@@ -27,13 +29,13 @@ class DinoDetector:
         else:
             raise ValueError("dino_type must be 'tiny' or 'base'")
 
-        self.logger.info(f"configured paths for {dino_type} dino")
-        self.logger.info(f"config_path {config_path}; weights_path {weights_path}")
+        logger.info(f"configured paths for {dino_type} dino")
+        logger.info(f"config_path {config_path}; weights_path {weights_path}")
 
         self.model = load_model(
             config_path, os.path.join(weights_dir, weights_path), device=self.device
         )
-        self.logger.info(f"Grounding DINO loaded on {self.device}")
+        logger.info(f"Grounding DINO loaded on {self.device}")
 
     def detect(self, image_cv2, text_prompt, box_threshold=0.35, text_threshold=0.25):
         """
@@ -41,7 +43,7 @@ class DinoDetector:
         Output: List of dicts [{'box': [x1, y1, x2, y2], 'label': 'car', 'score': 0.99}, ...]
         """
 
-        self.logger.info("dino detection")
+        logger.info("dino detection")
 
         # DINO requires PIL Image in RGB
         image_pil = Image.fromarray(cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB))
@@ -133,4 +135,4 @@ class DinoDetector:
             )
 
         cv2.imwrite(output_path, vis_img)
-        self.logger.info(f"Saved visualization to {output_path}")
+        logger.info(f"Saved visualization to {output_path}")
