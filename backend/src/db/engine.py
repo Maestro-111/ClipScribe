@@ -104,18 +104,25 @@ def _upsert_ignore(
     """Build an INSERT ... ON CONFLICT DO NOTHING statement for the engine dialect."""
     dialect = engine.dialect.name
     if dialect == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert
-    else:
-        from sqlalchemy.dialects.postgresql import insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    stmt = (
-        insert(table)
+        return (
+            sqlite_insert(table)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=conflict_columns,
+            )
+        )
+
+    from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+
+    return (
+        postgresql_insert(table)
         .values(rows)
         .on_conflict_do_nothing(
             index_elements=conflict_columns,
         )
     )
-    return stmt
 
 
 class ClipScribeBaseDB:
