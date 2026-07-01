@@ -12,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "DODGE_lA2DSd8Ik3Y - Sept 2023 Dodge Hornet.mp4"
+video_name = "RAM_jeVt2-Qp_IA - RAM HD Rebel - 15 FR - April.mp4"
 video_path = f"input/{video_name}"
 video_type = "car ad"
 
@@ -24,13 +24,13 @@ clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "Dodge",
-    "youtube_branded_products": ["Dodge Hornet"],
+    "youtube_brand_name": "RAM",
+    "youtube_branded_products": ["RAM HD Rebe"],
     "youtube_branded_products_categories": [
-        "Dodge Hornet Pick Up Truck",
-        "Dodge Hornet Truck",
-        "Dodge Hornet Car",
-        "Dodge HornetSUV",
+        "RAM HD Rebel Pick Up Truck",
+        "RAM HD Rebel Truck",
+        "RAM HD Rebel Car",
+        "RAM HD Rebel SUV",
     ],
     "youtube_call_to_actions": [
         "learn more",

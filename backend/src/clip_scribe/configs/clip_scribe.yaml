@@ -155,6 +155,20 @@ scene_analysis:
   image_detail: "low"
 
 # ============================================================================
+# Artifacts
+# ============================================================================
+artifacts:
+  # Cap on per-frame visualization PNGs written per run (DINO/OCR/face viz).
+  # null = unlimited. The tracked mp4 and extraction_summary.json are always
+  # kept. Keeps the per-run artifact directory bounded for long videos.
+  max_artifact_files: 200
+
+  # When true, the finished run's artifact directory is bundled and uploaded to
+  # remote storage (GCS) at the end of the pipeline. Currently SIMULATED (logs
+  # the upload it would perform); flip to true to exercise the call site.
+  remote_artifact_write: false
+
+# ============================================================================
 # Database Storage
 # ============================================================================
 database:

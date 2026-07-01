@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from src.db import ClipScribeReaderDB
+from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
@@ -96,7 +96,13 @@ class VideoInformationParser:
 
         return report_writer
 
-    def parse(self, run_id: str, video_name: str, reader_db: ClipScribeReaderDB) -> str:
+    def parse(
+        self,
+        run_id: str,
+        video_name: str,
+        reader_db: ClipScribeReaderDB,
+        writer_db: ClipScribeWriterDB,
+    ) -> str:
         """
         Parse and evaluate video information for all platform criteria.
 
@@ -104,6 +110,8 @@ class VideoInformationParser:
             run_id: Run identifier from database
             video_name: Name of the video
             reader_db: connection to reader database
+            writer_db: writer used to persist per-criterion results to the
+                parser_results table
 
         Returns:
             Path to the generated CSV report
@@ -130,6 +138,7 @@ class VideoInformationParser:
         if evaluator is not None:
             results = evaluator.evaluate_all(run_id, video_name)
             report_writer.write_results(results)
+            writer_db.save_parser_results(run_id, self.platform_name, results)
             logger.info(
                 f"Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
             )

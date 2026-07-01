@@ -1,0 +1,169 @@
+"""Tests for step-3 raw-artifact persistence and supporting seams.
+
+Covers the new writer paths (frame_detections, shot_boundaries via save_run;
+parser_results via save_parser_results), the ULID id helper, and the artifact
+uploader factory. The extractor's collection logic needs models to run, so it
+is exercised end-to-end via main.py rather than here.
+"""
+
+import logging
+import types
+
+import pytest
+from sqlalchemy import create_engine, select
+
+from src.db.schema import (
+    metadata_obj,
+    frame_detections_table,
+    shot_boundaries_table,
+    parser_results_table,
+    runs_table,
+)
+from src.db.writer import ClipScribeWriterDB
+from src.utils.ids import new_ulid
+from src.utils.artifacts import (
+    NullArtifactUploader,
+    SimulatedGCSArtifactUploader,
+    run_artifact_dir,
+)
+
+
+@pytest.fixture
+def writer(tmp_path):
+    """A writer over a throwaway file-backed SQLite DB with the schema created.
+
+    Uses metadata.create_all directly (tests own their schema); production
+    schema is owned by Alembic.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'persist.db'}")
+    metadata_obj.create_all(engine)
+    return ClipScribeWriterDB(engine=engine), engine
+
+
+def _rows(engine, table):
+    with engine.connect() as conn:
+        return [dict(r._mapping) for r in conn.execute(select(table))]
+
+
+def test_save_run_persists_shot_boundaries_and_frame_detections(writer):
+    db, engine = writer
+    run_id = new_ulid()
+
+    video_metadata = {
+        "global_stats": {},
+        "visual_objects": [],
+        "text_events": [],
+        "audio_segments": [],
+        "scene_descriptions": [],
+        "shot_boundaries": [
+            {"index": 0, "start": 0.0, "end": 1.5, "duration": 1.5},
+            {"index": 1, "start": 1.5, "end": 3.0, "duration": 1.5},
+        ],
+        "frame_detections": [
+            {
+                "shot_index": 0,
+                "frame_idx": 9,
+                "timestamp_sec": 0.3,
+                "source": "dino",
+                "label": "car",
+                "text": None,
+                "box_x1": 1.0,
+                "box_y1": 2.0,
+                "box_x2": 3.0,
+                "box_y2": 4.0,
+                "confidence": 0.8,
+                "object_id": None,
+            },
+            {
+                "shot_index": 0,
+                "frame_idx": 9,
+                "timestamp_sec": 0.3,
+                "source": "sam_mask",
+                "label": "car",
+                "text": None,
+                "box_x1": 1.0,
+                "box_y1": 2.0,
+                "box_x2": 3.0,
+                "box_y2": 4.0,
+                "confidence": None,
+                "object_id": 7,
+            },
+        ],
+    }
+
+    returned = db.save_run(
+        run_id=run_id,
+        video_name="v.mp4",
+        video_path="input/v.mp4",
+        video_type="car ad",
+        video_metadata=video_metadata,
+        field_descriptions={},
+    )
+
+    # The caller-supplied run_id is honored (not regenerated) and keys the rows.
+    assert returned == run_id
+    assert _rows(engine, runs_table)[0]["run_id"] == run_id
+
+    shots = _rows(engine, shot_boundaries_table)
+    assert len(shots) == 2
+    assert {s["shot_index"] for s in shots} == {0, 1}
+    assert all(s["run_id"] == run_id for s in shots)
+
+    dets = _rows(engine, frame_detections_table)
+    assert len(dets) == 2
+    assert {d["source"] for d in dets} == {"dino", "sam_mask"}
+    sam = next(d for d in dets if d["source"] == "sam_mask")
+    assert sam["object_id"] == 7
+    assert all(d["run_id"] == run_id for d in dets)
+
+
+def test_save_parser_results_maps_feature_fields(writer):
+    db, engine = writer
+    run_id = new_ulid()
+
+    # One rich (YouTube-shaped) result, one bare result lacking feature fields.
+    rich = types.SimpleNamespace(
+        platform="youtube",
+        feature_category="Brand",
+        feature_name="Brand Mention (Speech)",
+        feature_criteria="brand said aloud",
+        evaluation=True,
+        llm_prompt="prompt",
+        llm_explanation="because",
+    )
+    bare = types.SimpleNamespace(platform="youtube", evaluation=False)
+
+    db.save_parser_results(run_id, "youtube", [rich, bare])
+
+    rows = sorted(_rows(engine, parser_results_table), key=lambda r: r["id"])
+    assert len(rows) == 2
+    assert rows[0]["feature_name"] == "Brand Mention (Speech)"
+    assert rows[0]["evaluation"] is True
+    assert rows[0]["run_id"] == run_id
+    # Missing feature fields persist as NULL, common columns still set.
+    assert rows[1]["feature_name"] is None
+    assert rows[1]["evaluation"] is False
+    assert rows[1]["platform"] == "youtube"
+
+
+def test_new_ulid_is_sortable_and_26_chars():
+    a = new_ulid()
+    b = new_ulid()
+    assert len(a) == 26 and len(b) == 26
+    assert a != b
+    # ULIDs are lexicographically time-ordered; later id sorts >= earlier.
+    assert b >= a
+
+
+def test_run_artifact_dir_keys_by_run_id():
+    assert run_artifact_dir("01ABC") == "artifacts/01ABC"
+
+
+def test_artifact_uploaders(caplog):
+    # No-op uploader logs nothing; simulated one logs the bundle it would push.
+    with caplog.at_level(logging.INFO, logger="clip_scribe"):
+        NullArtifactUploader().upload_run_artifacts("rid", "artifacts/rid")
+        assert "would bundle" not in caplog.text
+        SimulatedGCSArtifactUploader().upload_run_artifacts("rid", "artifacts/rid")
+    assert "would bundle" in caplog.text
+    assert "gs://clipscribe-artifacts/rid/artifacts.tar.gz" in caplog.text

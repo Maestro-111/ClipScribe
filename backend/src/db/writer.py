@@ -1,8 +1,8 @@
 """Write access for ClipScribe database."""
 
 import json
-import uuid
 import logging
+from typing import Any, Mapping
 
 from sqlalchemy import Engine
 
@@ -15,6 +15,9 @@ from .schema import (
     audio_segments_table,
     scene_descriptions_table,
     field_descriptions_table,
+    frame_detections_table,
+    shot_boundaries_table,
+    parser_results_table,
 )
 
 logger = logging.getLogger("clip_scribe")
@@ -36,14 +39,19 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
 
     def save_run(
         self,
+        run_id: str,
         video_name: str,
         video_path: str,
-        video_type: str,
-        video_metadata: dict,
-        field_descriptions: dict,
+        video_type: str | None,
+        video_metadata: Mapping[str, Any],
+        field_descriptions: Mapping[str, Any],
     ) -> str:
-        run_id = str(uuid.uuid4())
+        """Persist a full extraction run under the caller-supplied ``run_id``.
 
+        The id is generated up front by the engine (a ULID) so the extractor
+        can key its artifact directory and raw detections by the same value
+        before the run row exists.
+        """
         with self._engine.begin() as conn:
             self._insert_run(conn, run_id, video_name, video_path, video_type)
             self._insert_global_stats(
@@ -61,13 +69,24 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             self._insert_scene_descriptions(
                 conn, run_id, video_metadata.get("scene_descriptions", [])
             )
+            self._insert_shot_boundaries(
+                conn, run_id, video_metadata.get("shot_boundaries", [])
+            )
+            self._insert_frame_detections(
+                conn, run_id, video_metadata.get("frame_detections", [])
+            )
             self._insert_field_descriptions(conn, field_descriptions)
 
         logger.info(f"Saved run {run_id} for '{video_name}'")
         return run_id
 
     def _insert_run(
-        self, conn, run_id: str, video_name: str, video_path: str, video_type: str
+        self,
+        conn,
+        run_id: str,
+        video_name: str,
+        video_path: str,
+        video_type: str | None,
     ) -> None:
         conn.execute(
             runs_table.insert().values(
@@ -184,6 +203,72 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
 
         if rows:
             conn.execute(scene_descriptions_table.insert(), rows)
+
+    def _insert_shot_boundaries(self, conn, run_id: str, shot_boundaries: list) -> None:
+        rows = [
+            {
+                "run_id": run_id,
+                "shot_index": shot.get("index"),
+                "start_sec": shot.get("start"),
+                "end_sec": shot.get("end"),
+                "duration_sec": shot.get("duration"),
+            }
+            for shot in shot_boundaries
+        ]
+
+        if rows:
+            conn.execute(shot_boundaries_table.insert(), rows)
+
+    def _insert_frame_detections(self, conn, run_id: str, detections: list) -> None:
+        rows = [
+            {
+                "run_id": run_id,
+                "shot_index": det.get("shot_index"),
+                "frame_idx": det.get("frame_idx"),
+                "timestamp_sec": _native(det.get("timestamp_sec")),
+                "source": det.get("source"),
+                "label": det.get("label"),
+                "text": det.get("text"),
+                "box_x1": _native(det.get("box_x1")),
+                "box_y1": _native(det.get("box_y1")),
+                "box_x2": _native(det.get("box_x2")),
+                "box_y2": _native(det.get("box_y2")),
+                "confidence": _native(det.get("confidence")),
+                "object_id": _native(det.get("object_id")),
+            }
+            for det in detections
+        ]
+
+        if rows:
+            conn.execute(frame_detections_table.insert(), rows)
+
+    def save_parser_results(self, run_id: str, platform: str, results: list) -> None:
+        """Persist per-criterion parser evaluations for a run.
+
+        ``results`` are platform feature-result models (e.g.
+        ``YouTubeFeatureResult``); feature fields are read via ``getattr`` so
+        platforms without them still persist the common columns.
+        """
+        rows = [
+            {
+                "run_id": run_id,
+                "platform": getattr(result, "platform", platform),
+                "feature_category": getattr(result, "feature_category", None),
+                "feature_name": getattr(result, "feature_name", None),
+                "feature_criteria": getattr(result, "feature_criteria", None),
+                "evaluation": bool(getattr(result, "evaluation", False)),
+                "llm_prompt": getattr(result, "llm_prompt", None),
+                "llm_explanation": getattr(result, "llm_explanation", None),
+                "langsmith_run_id": getattr(result, "langsmith_run_id", None),
+            }
+            for result in results
+        ]
+
+        if rows:
+            with self._engine.begin() as conn:
+                conn.execute(parser_results_table.insert(), rows)
+
+        logger.info(f"Saved {len(rows)} parser results for run {run_id}")
 
     def _insert_field_descriptions(self, conn, descriptions: dict) -> None:
         rows = []

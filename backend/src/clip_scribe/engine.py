@@ -1,13 +1,11 @@
 import logging
 
+from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
 from src.parser.parser_core import VideoInformationParser
-from src.utils.progress import (
-    NullProgressReporter,
-    Phase,
-    ProgressEvent,
-    ProgressReporter,
-)
+from src.utils.ids import new_ulid
+from src.utils.artifacts import ArtifactUploader, run_artifact_dir
+from src.utils.progress import Phase, ProgressEvent, ProgressReporter
 
 logger = logging.getLogger("clip_scribe")
 
@@ -26,9 +24,10 @@ class ClipScribeEngine:
         video_type: str | None,
         extractor: VideoInformationExtractor | None,
         parser: VideoInformationParser | None,
-        reader_db=None,
-        writer_db=None,
-        progress_reporter: ProgressReporter | None = None,
+        reader_db: ClipScribeReaderDB,
+        writer_db: ClipScribeWriterDB,
+        progress_reporter: ProgressReporter,
+        artifact_uploader: ArtifactUploader,
     ):
         self.mode = mode
 
@@ -40,7 +39,8 @@ class ClipScribeEngine:
         self.parser = parser
         self.writer_db = writer_db
         self.reader_db = reader_db
-        self.progress = progress_reporter or NullProgressReporter()
+        self.progress = progress_reporter
+        self.artifact_uploader = artifact_uploader
 
         # Populated when the extractor's run is persisted; surfaced on
         # job.completed so live subscribers can navigate to the finished run.
@@ -68,6 +68,11 @@ class ClipScribeEngine:
         return [*extract_phases, Phase.PARSE]
 
     def run(self, run_id: str = ""):
+        # For extract/full the run is new — mint the id up front (ULID) so the
+        # extractor keys its artifact dir + raw detections by it before the run
+        # row exists. For parse mode the id refers to an existing run, use it.
+        if self.mode in ("full", "extract") and not run_id:
+            run_id = new_ulid()
         self.run_id = run_id
         self.progress.emit(
             ProgressEvent.JOB_STARTED,
@@ -79,10 +84,13 @@ class ClipScribeEngine:
         )
         try:
             if self.mode == "full":
+                # run the whole pipeline
                 self.parse_extract()
             elif self.mode == "extract":
+                # only the extraction engine, i.e. it won't save run to db
                 self.extract()
             elif self.mode == "parse":
+                # onyl parse engine, i.e. we expect to have an existing run_id data in db
                 self.parse(run_id)
             else:
                 raise ValueError(
@@ -105,6 +113,13 @@ class ClipScribeEngine:
         except Exception:  # can be None, will skip later
             pass
 
+        if video_metadata is not None:
+            # Artifacts (mp4, viz PNGs, summary json) are fully written by now;
+            # push the run's bundle (no-op unless remote_artifact_write=true).
+            self.artifact_uploader.upload_run_artifacts(
+                self.run_id, run_artifact_dir(self.run_id)
+            )
+
         return video_metadata
 
     def parse(self, run_id: str):
@@ -113,22 +128,15 @@ class ClipScribeEngine:
 
         try:
             if run_id:
-                if self.reader_db is None:
-                    raise Exception("parse called without a reader_db")
                 if self.reader_db.get_run(run_id) is None:
                     raise ValueError(f"run_id '{run_id}' not found in database")
                 self._run_parser(run_id)
             else:
                 logger.warning("Empty run_id is given to parse!")
 
-        except Exception as e:
-            raise e
-
         finally:
-            if self.writer_db:
-                self.writer_db.close()
-            if self.reader_db:
-                self.reader_db.close()
+            self.writer_db.close()
+            self.reader_db.close()
 
     def parse_extract(self) -> None:
         """
@@ -144,9 +152,8 @@ class ClipScribeEngine:
 
         if video_metadata:
             metadata_descriptions = self.extractor.get_schema_descriptions()
-            run_id = self._save_metadata_to_db(video_metadata, metadata_descriptions)
-            self.run_id = run_id
-            self.parse(run_id)
+            self._save_metadata_to_db(video_metadata, metadata_descriptions)
+            self.parse(self.run_id)
 
         else:
             logger.warning("No video metadata to parse")
@@ -160,6 +167,7 @@ class ClipScribeEngine:
                 video_name=self.video_name,
                 video_path=self.video_path,
                 video_type=self.video_type,
+                run_id=self.run_id,
             )
 
             logger.info("Extraction finished successfully.")
@@ -178,18 +186,17 @@ class ClipScribeEngine:
         self,
         video_metadata: ExtractionSummary,
         field_descriptions: dict[str, dict[str, str]],
-    ) -> str:
-        if self.writer_db is None:
-            raise Exception("_save_metadata_to_db called without a writer_db")
-
-        run_id = self.writer_db.save_run(
+    ) -> None:
+        # run_id is already authoritative on self (set in run()); save_run just
+        # persists under it. Nothing to return.
+        self.writer_db.save_run(
+            run_id=self.run_id,
             video_name=self.video_name,
             video_path=self.video_path,
             video_type=self.video_type,
             video_metadata=video_metadata,
             field_descriptions=field_descriptions,
         )
-        return run_id
 
     def _run_parser(self, run_id: str) -> None:
         """
@@ -199,11 +206,13 @@ class ClipScribeEngine:
             run_id: Run identifier from database
         """
 
-        assert self.reader_db is not None
         assert self.parser is not None
 
         report_path = self.parser.parse(
-            run_id=run_id, reader_db=self.reader_db, video_name=self.video_name
+            run_id=run_id,
+            reader_db=self.reader_db,
+            video_name=self.video_name,
+            writer_db=self.writer_db,
         )
 
         logger.info(f"Parser report generated: {report_path}")

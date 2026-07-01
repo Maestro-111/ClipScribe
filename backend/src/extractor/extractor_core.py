@@ -33,6 +33,7 @@ from src.utils.progress import (
     ProgressEvent,
     ProgressReporter,
 )
+from src.utils.artifacts import run_artifact_dir
 
 logger = logging.getLogger("clip_scribe")
 
@@ -130,12 +131,29 @@ class RapidFireInterval(TypedDict):
     shot_indices: list[int]
 
 
+class FrameDetection(TypedDict):
+    shot_index: int
+    frame_idx: int
+    timestamp_sec: float
+    source: str  # dino | ocr | mtcnn | sam_mask
+    label: str | None
+    text: str | None
+    box_x1: float
+    box_y1: float
+    box_x2: float
+    box_y2: float
+    confidence: float | None
+    object_id: int | None
+
+
 class ExtractionSummary(TypedDict):
     global_stats: dict[str, object]
     visual_objects: list[VisualObjectSummary]
     text_events: list[TextEvent]
     audio_segments: list[AudioSegment]
     scene_descriptions: list[SceneDescriptionRecord]
+    shot_boundaries: list[ShotData]
+    frame_detections: list[FrameDetection]
 
 
 class ReIDModel(Protocol):
@@ -404,6 +422,7 @@ class VideoInformationExtractor:
         max_samples: int = 12,
         sampling_rate: float = 2.0,
         progress_reporter: "ProgressReporter | None" = None,
+        max_artifact_files: int | None = None,
     ) -> None:
         # helper models
 
@@ -461,8 +480,64 @@ class VideoInformationExtractor:
 
         self.progress = progress_reporter or NullProgressReporter()
 
+        # Raw per-(frame, box) detections for the UI overlay; persisted to the
+        # frame_detections table by the writer. Per-shot boundaries (seconds)
+        # for the timeline view, captured in _digest_video.
+        self.frame_detections: list[FrameDetection] = []
+        self.shot_data: list[ShotData] = []
+
+        # Cap on per-frame visualization PNGs written to the artifact dir
+        # (None = unlimited). The tracked mp4 and extraction_summary.json are
+        # always kept. Counts PNGs written so far this run.
+        self.max_artifact_files = max_artifact_files
+        self._viz_files_written = 0
+
     def __repr__(self) -> str:
         return f"InformationExtractor: device: {self.device}"
+
+    def _record_detection(
+        self,
+        *,
+        shot_index: int,
+        frame_idx: int,
+        source: str,
+        box: Sequence[float],
+        label: str | None = None,
+        text: str | None = None,
+        confidence: float | None = None,
+        object_id: int | None = None,
+    ) -> None:
+        """Append one raw detection (for the frame_detections table / overlay)."""
+        self.frame_detections.append(
+            {
+                "shot_index": shot_index,
+                "frame_idx": frame_idx,
+                "timestamp_sec": round(frame_idx / self.fps, 3),
+                "source": source,
+                "label": label,
+                "text": text,
+                "box_x1": float(box[0]),
+                "box_y1": float(box[1]),
+                "box_x2": float(box[2]),
+                "box_y2": float(box[3]),
+                "confidence": float(confidence) if confidence is not None else None,
+                "object_id": object_id,
+            }
+        )
+
+    def _take_viz_slot(self) -> bool:
+        """Reserve one per-frame viz-PNG write under the max_artifact_files cap.
+
+        Returns True (and consumes a slot) while under the cap, else False so
+        the caller skips the write. None means unlimited.
+        """
+        if (
+            self.max_artifact_files is not None
+            and self._viz_files_written >= self.max_artifact_files
+        ):
+            return False
+        self._viz_files_written += 1
+        return True
 
     def _state_init(self, artifact_path: str, video_path: str) -> None:
         """Open the video capture, initialize the video writer, and set up SAM inference state."""
@@ -660,6 +735,15 @@ class VideoInformationExtractor:
 
                 self.object_registry[obj_id]["boxes"].append(current_box)
                 self.object_registry[obj_id]["timestamps"].append(timestamp)
+
+                self._record_detection(
+                    shot_index=shot_idx,
+                    frame_idx=frame_idx,
+                    source="sam_mask",
+                    box=current_box,
+                    label=label,
+                    object_id=obj_id,
+                )
 
                 self.active_trackers[obj_id] = {"box": current_box, "label": label}
             else:
@@ -906,6 +990,8 @@ class VideoInformationExtractor:
             "text_events": final_text,
             "audio_segments": self.audio_registry,
             "scene_descriptions": self.scene_description_registry,
+            "shot_boundaries": self.shot_data,
+            "frame_detections": self.frame_detections,
         }
 
     def visualize_sam_tracking(
@@ -1005,6 +1091,9 @@ class VideoInformationExtractor:
                     "duration": round((end_f - start_f) / self.fps, 3),
                 }
             )
+
+        # Persisted to shot_boundaries (timeline view); also feeds global_stats.
+        self.shot_data = shot_data
 
         first_shot = shot_data[0]
         has_dynamic_start = first_shot["duration"] < 3.0
@@ -1138,14 +1227,20 @@ class VideoInformationExtractor:
         )
 
     def extract(
-        self, video_type: str | None, video_path: str, video_name: str
+        self,
+        video_type: str | None,
+        video_path: str,
+        video_name: str,
+        run_id: str,
     ) -> ExtractionSummary:
         """
         Main entry point. Runs the full pipeline: scene analysis, audio transcription,
         per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
         """
 
-        artifact_path = f"extractor_artifacts/{video_name}/"
+        # Keyed by run_id (not video_name) so repeated jobs over the same video
+        # never collide; this dir is what the remote uploader bundles.
+        artifact_path = run_artifact_dir(run_id)
         self._state_init(artifact_path, video_path)
 
         self.progress.phase_started(Phase.SCENE_DETECTION)
@@ -1303,13 +1398,25 @@ class VideoInformationExtractor:
                     f"dino_general_result_{shot_idx}_{self.current_frame}.png",
                 )
 
-                self.ocr_engine.save_visualization(
-                    raw_image_rgb, detected_text_data, text_viz_path
-                )
+                for text_box in detected_text_data:
+                    self._record_detection(
+                        shot_index=shot_idx,
+                        frame_idx=self.current_frame,
+                        source="ocr",
+                        box=text_box["box"],
+                        text=text_box.get("text"),
+                        confidence=text_box.get("confidence"),
+                    )
 
-                self.dingo_model.map_results(
-                    raw_image_rgb, detected_objects_data, object_viz_path
-                )
+                if self._take_viz_slot():
+                    self.ocr_engine.save_visualization(
+                        raw_image_rgb, detected_text_data, text_viz_path
+                    )
+
+                if self._take_viz_slot():
+                    self.dingo_model.map_results(
+                        raw_image_rgb, detected_objects_data, object_viz_path
+                    )
 
                 for box_info in detected_objects_data:
                     box = box_info["box"]
@@ -1328,6 +1435,15 @@ class VideoInformationExtractor:
                             f"No proper semantic found for dino label: {label}. skipping..."
                         )
                         continue
+
+                    self._record_detection(
+                        shot_index=shot_idx,
+                        frame_idx=self.current_frame,
+                        source="dino",
+                        box=box,
+                        label=best_semantic,
+                        confidence=box_info.get("score"),
+                    )
 
                     if self._is_new_object(box, best_semantic):
                         self._add_new_tracker(box, best_semantic)
@@ -1360,12 +1476,21 @@ class VideoInformationExtractor:
                             }
                         )
 
+                        self._record_detection(
+                            shot_index=shot_idx,
+                            frame_idx=self.current_frame,
+                            source="mtcnn",
+                            box=tracker_box,
+                            label=forced_label,
+                            confidence=float(prob),
+                        )
+
                         if self._is_new_object(tracker_box, forced_label):
                             self._add_new_tracker(tracker_box, forced_label)
 
                     num_faces = len(mapping)
                     logger.info(f"Detected #{num_faces} faces in the current frame")
-                    if mapping:
+                    if mapping and self._take_viz_slot():
                         self.dingo_model.map_results(
                             raw_image_rgb, mapping, face_viz_path
                         )
