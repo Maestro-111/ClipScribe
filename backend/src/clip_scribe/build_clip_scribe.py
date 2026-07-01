@@ -28,6 +28,7 @@ from src.db import (
     resolve_database_url,
 )
 from src.utils.progress import NullProgressReporter, ProgressReporter
+from src.utils.artifacts import NullArtifactUploader, SimulatedGCSArtifactUploader
 
 from .engine import ClipScribeEngine
 from .platform_configs import BasePlatformConf
@@ -96,6 +97,10 @@ class ClipScribeBuilder:
 
         self.db_params = _cfg.get("database", {})
         self.db_backend = self.db_params.get("backend", "sqlite")
+
+        # Artifact handling: cap on per-frame viz PNGs and the (simulated for
+        # now) remote-upload toggle. See docs/web-app-plan.md §8.
+        self.artifacts_params = _cfg.get("artifacts", {})
 
         self._assemble_db()
         self._assemble_heavy_extractor_utils()
@@ -244,6 +249,7 @@ class ClipScribeBuilder:
             max_samples,
             sampling_rate,
             progress_reporter=progress_reporter,
+            max_artifact_files=self.artifacts_params.get("max_artifact_files"),
         )
 
         return info_extractor
@@ -416,6 +422,14 @@ class ClipScribeBuilder:
                     progress_reporter=reporter,
                 )
 
+            # Same shape as the reporter default above: the builder resolves the
+            # concrete dependency (from config) so the engine takes it as given.
+            artifact_uploader = (
+                SimulatedGCSArtifactUploader()
+                if self.artifacts_params.get("remote_artifact_write", False)
+                else NullArtifactUploader()
+            )
+
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
                 video_name=video_name,
@@ -426,6 +440,7 @@ class ClipScribeBuilder:
                 reader_db=self.reader_db,
                 writer_db=self.writer_db,
                 progress_reporter=reporter,
+                artifact_uploader=artifact_uploader,
             )
 
             return clib_scribe

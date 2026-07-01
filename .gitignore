@@ -14,6 +14,8 @@ wheels/
 .idea/
 *.log
 extractor_artifacts/
+artifacts/
+parser_artifacts/
 # Virtual environments
 .venv
 *.DS_Store

@@ -34,6 +34,7 @@ dependencies = [
     "types-PyYAML",
     "sqlalchemy>=2.0.0",
     "alembic>=1.18.5",
+    "python-ulid>=3.1.0",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,4 @@
-"""LangGraph tool functions for querying ClipScribe database."""
+"""LangChain tool functions for querying ClipScribe database."""
 
 import json
 import logging
