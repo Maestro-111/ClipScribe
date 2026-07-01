@@ -19,7 +19,8 @@ For each **shot** (a scene-cut segment from `_digest_video`), the extractor:
 2. Generates/resolves a per-shot taxonomy.
 3. Walks the shot in **chunks**, alternating *detection* and *SAM2
    propagation* (the focus of this doc).
-4. After all shots, resolves cross-shot identities and writes the summary.
+4. After all shots, resolves cross-shot identities and writes the per-run
+   summary under `artifacts/<run_id>/`.
 
 The tracking layer answers two questions:
 
@@ -104,8 +105,9 @@ the next section turns into per-frame decisions.
 
 ## 4. `_save_metadata`: turning masks into records
 
-Called once per propagated frame. It records OCR text and, per object, a
-bounding box + optional embedding.
+Called once per propagated frame. It records OCR text, appends raw detection
+rows for the future UI overlay, and, per object, stores a bounding box +
+optional embedding.
 
 ### 4.1 Text (the easy half)
 
@@ -182,7 +184,7 @@ a scalar — `embedding_sum` is `np.zeros(384)` divided by an `int`.
 
 > **Config note:** this novelty threshold is exposed as
 > `reid_similarity_difference` under `clip_scribe.extractor` in
-> `clip_scribe.yaml` (current value `0.85`; code default `0.8`). It is read in
+> `clip_scribe.yaml` (current value `0.8`; code default `0.8`). It is read in
 > `build_clip_scribe.build_extractor` and passed to the extractor as
 > `self.reid_similarity_difference`, alongside the other re-ID knobs
 > (`word_similarity_threshold`, `label_match_merge_threshold`,
