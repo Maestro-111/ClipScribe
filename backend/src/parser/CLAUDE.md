@@ -4,7 +4,7 @@
 Evaluates extracted video metadata against platform-specific feature criteria. Uses LangGraph ReAct agents backed by an LLM to query the configured SQLAlchemy database and produce structured pass/fail evaluations per feature.
 
 ## Key Files
-* `parser_core.py`: `VideoInformationParser` — main entry point that resolves the platform evaluator, emits parse-phase progress events, and orchestrates the evaluation run.
+* `parser_core.py`: `VideoInformationParser` — main entry point that resolves the platform evaluator, emits parse-phase progress events, persists per-criterion results to `parser_results`, and writes CSV reports.
 * `evaluator_base.py`: `BaseEvaluator` — abstract base class for platform evaluators. Handles baseline vs agentic dispatch, parallel agent execution, and feature-type-to-time-scope resolution.
 * `agent.py`: `build_agent` / `run_agent` — builds a LangGraph ReAct agent and runs it with a system prompt, tools, and an optional `time_scope` restriction.
 * `tools.py`: `build_tools` — constructs LangGraph tool closures (`query_audio_segments`, `query_text_events`, `query_visual_objects`, `query_scene_descriptions`, `query_global_stats`) scoped to a run and grouped by feature type.

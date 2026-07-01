@@ -49,8 +49,9 @@ to make before that piece is built.
 - **Worker container**: big (8–15 GB), GPU/MPS-bound, one job at a time per
   GPU. Multiple machines = multiple workers, same Redis queue.
 - **Redis**: both the Celery broker and the live-progress pub/sub channel.
-- **Postgres**: existing schema (`backend/src/db/schema.py`) plus four web-app
-  tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`).
+- **Postgres**: existing schema (`backend/src/db/schema.py`) including the
+  web-app tables (`jobs`, `frame_detections`, `parser_results`,
+  `shot_boundaries`).
 
 ---
 
@@ -83,6 +84,7 @@ clipscribe/
         Dockerfile                # existing placeholder for heavy worker image
         deploy.sh
     checkpoints/                  # all model weights live here (see §8)
+    artifacts/                    # extraction outputs keyed by run id
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
@@ -106,8 +108,8 @@ Notes on the layout as it stands:
   `src` is installed as a top-level package.
 - `PROJECT_ROOT = Path(__file__).resolve().parents[2]` inside
   `build_clip_scribe.py` resolves to `backend/`, which is where `data/`,
-  `input/`, `checkpoints/` now live — so relative-path resolution works
-  without code changes.
+  `input/`, `checkpoints/`, and `artifacts/` now live — so relative-path
+  resolution works without code changes.
 - Pre-commit must be invoked from `backend/` because the config lives at
   `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
 - The root `Makefile` is still partially broken (setup/checkpoint/clean targets
@@ -272,7 +274,7 @@ def run_job(job_params: dict):
 - `runs`, `global_stats`, `visual_object_occurrences`, `text_events`,
   `audio_segments`, `scene_descriptions`, `field_descriptions`.
 
-### New tables
+### Added tables
 
 **`jobs`** — orchestration state, separate from `runs` (which is extractor
 output).
@@ -307,7 +309,7 @@ label             TEXT          # resolved taxonomy label or None
 text              TEXT          # OCR text or None
 box_x1,y1,x2,y2   FLOAT
 confidence        FLOAT
-object_id         INTEGER       # local SAM2 id, joinable to global_id
+object_id         INTEGER       # final global visual object id for SAM detections
 INDEX (run_id, frame_idx)
 INDEX (run_id, object_id)
 ```
@@ -335,7 +337,7 @@ created_at      TIMESTAMP
 
 `global_stats` currently encodes pacing/dynamic-start info but does **not**
 persist per-shot boundaries (only `qp_intro_shots`). The timeline view needs
-them. Add:
+them. Added:
 
 **`shot_boundaries`**
 ```
@@ -347,7 +349,9 @@ end_sec       FLOAT
 duration_sec  FLOAT
 ```
 
-Hook: `extractor_core.py:850` already builds `shot_data` — write it.
+Implemented: `extractor_core.py` collects `shot_data` and raw DINO/OCR/MTCNN/
+SAM detections; `writer.py` persists them to `shot_boundaries` and
+`frame_detections`.
 
 ### Migrations
 
@@ -470,6 +474,8 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 - `GET /runs/{id}/parser`              — `parser_results`.
 
 ### Artifacts (filesystem-backed)
+- Current local convention: extraction outputs live under
+  `backend/artifacts/<run_id>/`.
 - `GET /runs/{id}/video`               — original input, `Range`-aware.
 - `GET /runs/{id}/tracked-video`       — `tracked_output.mp4`, `Range`-aware.
 - `GET /runs/{id}/png/{filename}`      — DINO/OCR/face viz PNGs (fallback only).
@@ -504,7 +510,7 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
    - "New job" button.
 
 2. **New job** (`/jobs/new`)
-   - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
+   - Form mirroring `backend/main.py` params (`platform_params`, `user_hints`,
      `video_type`, `device`, `mode`, `platform`).
    - Video field: upload OR pick from server-side `input/` directory (see
      Open question §9).
@@ -583,7 +589,7 @@ backend/docker/
 |---|---|---|
 | Role | FastAPI; never executes ML | Celery worker; runs the pipeline |
 | Heavy deps | none (no `torch`, no `whisper`, no `paddleocr`) | full stack |
-| Imports `src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
+| Imports `backend/src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
 | Imports `app/tasks.py`? | **no** — sends tasks by name | yes |
 | Talks to Redis | yes (broker client + pubsub subscriber) | yes (broker consumer + pubsub publisher) |
 | Talks to Postgres | yes (read-mostly + jobs writes) | yes (writer + reader) |
@@ -744,11 +750,11 @@ These are decisions to make before the corresponding implementation step.
    - Probably (c) first, (a) when multi-user. (b) only if deploying to cloud.
 
 2. **Artifact storage.**
-   `backend/extractor_artifacts/<video_name>/` is currently keyed by video filename. If
-   two jobs share a video name they collide. Switch to
-   `artifacts/<run_id>/` once we have ULIDs. Decide: filesystem (shared volume)
-   vs object storage. Object storage is more cloud-friendly but adds
-   `boto3`/`minio-py` dependency.
+   Local keying is resolved: extraction outputs now use
+   `backend/artifacts/<run_id>/`, with ULIDs minted before extraction starts.
+   Remaining decision: filesystem/shared volume vs object storage for the web
+   deployment. `remote_artifact_write` currently exercises only a simulated
+   GCS bundle upload.
 
 3. **Authentication / multi-user.**
    None today. Likely deferred to post-MVP. If we add it, keep `created_by` on
@@ -809,14 +815,15 @@ These are decisions to make before the corresponding implementation step.
     front does the same thing.
 
 14. **Disk retention.**
-    `backend/extractor_artifacts/` grows unboundedly. Decide a retention policy
+    `backend/artifacts/` grows unboundedly. Decide a retention policy
     (delete after N days, keep last K runs, manual purge) before the disk
     fills. Add a `POST /runs/{id}` DELETE endpoint that cleans both DB rows
     and artifact directory.
 
 15. **Per-job artifact directory keying.**
-    Use `artifacts/<run_id>/` not `artifacts/<video_name>/` once `run_id` is a
-    ULID. Migrate existing data by renaming or just leave old runs alone.
+    Resolved for new runs: `artifacts/<run_id>/` is the single source of truth.
+    If old `extractor_artifacts/` data matters, decide whether to migrate it by
+    renaming or just leave old runs alone.
 
 16. **What does the SSE channel do when there are zero subscribers?**
     Redis pub/sub drops messages with no subscribers. If a user opens the live
@@ -849,14 +856,15 @@ Strictly ordered; each step is shippable on its own.
    `engine.py`, `extractor_core.py`, and `parser_core.py`. **DONE.** CLI/tests
    pass Null by default; event ordering has focused unit coverage.
 
-4. **Persist raw detections.** Hook `frame_detections` writes inside
+4. **Persist raw detections.** **DONE.** Hook `frame_detections` writes inside
    `_save_metadata` and OCR/MTCNN branches. Persist `shot_boundaries` from
    `_digest_video`. Persist parser results from the parser. CLI is the proving
    ground.
 
-5. **FastAPI app, sync path only.** `POST /jobs` runs the job inline (no
-   Celery yet) so we can shake out request shape, error handling, OpenAPI
-   schema, and CORS. Implement read-only `/runs/*` and artifact endpoints.
+5. **FastAPI app, queued path only.** Keep the API slim: `POST /jobs` validates
+   input and creates a queued job record without loading models. Implement
+   read-only `/runs/*` and artifact endpoints against data produced by
+   `backend/main.py` until Celery lands.
 
 6. **Frontend bootstrap.** Vite + React + TS + Tailwind + TanStack Router /
    Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
@@ -889,10 +897,9 @@ Strictly ordered; each step is shippable on its own.
 
 ## 11. Risks / things that could derail this
 
-- **Builder refactor is bigger than it looks.** Hints get passed deep into
-  the extractor and into the GPT taxonomy generator. Untangling these so the
-  registry is truly per-process will touch `taxonomy_core.py`,
-  `extractor_core.py`, and the builder.
+- **API/worker import boundaries are easy to break.** The slim API must not
+  import `ClipScribeBuilder` or anything that transitively loads torch; enqueue
+  Celery tasks by name and keep heavy imports in worker-only modules.
 
 - **MPS in Docker on Mac.** Already flagged. Lots of dev pain if we forget.
 
@@ -903,7 +910,7 @@ Strictly ordered; each step is shippable on its own.
   burn through credits. Cost cap or per-user budget should exist before
   this is anything but internal.
 
-- **Disk usage.** Unbounded `backend/extractor_artifacts/`. Retention story needs to
+- **Disk usage.** Unbounded `backend/artifacts/`. Retention story needs to
   exist before turning the app on for more than one person.
 
 - **Cancellation correctness.** Hard-killing a worker mid-job leaves OpenCV

@@ -5,7 +5,7 @@ argument-hint: "[optional changed-file scope]"
 
 # Quality
 
-Run quality checks for the editable project code. Do not inspect or modify `src/dino/groundingdino/**` or `src/sam2/**`.
+Run quality checks for the editable project code. Do not inspect or modify `backend/src/dino/groundingdino/**` or `backend/src/sam2/**`.
 
 Run all commands below from the `backend/` directory (the Python project lives in `backend/` in this monorepo). pre-commit in particular must be invoked from `backend/`, since it discovers `backend/.pre-commit-config.yaml` from the current directory but executes hooks from the git root.
 

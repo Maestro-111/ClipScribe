@@ -32,7 +32,7 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - LangGraph/LangChain parser agents for feature evaluation
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
-- Extraction and parser artifact generation
+- Per-run extraction artifacts and parser report generation
 
 ## Setup
 
@@ -86,7 +86,7 @@ The current `main.py` is a temporary hardcoded entry point, not a stable CLI. It
 
 Current modes:
 
-- `extract` - run extraction and persist metadata.
+- `extract` - run extraction and write local artifacts only; it does not persist run metadata to the database.
 - `parse` - evaluate an existing persisted run id.
 - `full` - run extraction and then parse the saved run.
 
@@ -141,7 +141,7 @@ backend/src/dino/dino_wrapper.py Safe wrapper around GroundingDINO
 backend/alembic/                Alembic migration environment and versions
 backend/checkpoints/            Model checkpoint download helpers
 backend/input/                  Local input videos
-backend/extractor_artifacts/    Generated extraction outputs
+backend/artifacts/              Per-run extraction outputs keyed by run id
 backend/parser_artifacts/       Generated parser reports
 backend/data/                   Local database files
 backend/logs/                   Runtime logs
@@ -151,12 +151,12 @@ backend/logs/                   Runtime logs
 
 Generated artifacts are intentionally kept out of the core source tree:
 
-- `backend/extractor_artifacts/` - detection visualizations, OCR outputs, tracked videos, extraction summaries.
+- `backend/artifacts/<run_id>/` - tracked videos, extraction summaries, and capped per-frame visualization PNGs.
 - `backend/parser_artifacts/` - generated parser reports and scores.
 - `backend/data/` - local database files.
 - `backend/logs/` - runtime logs.
 
-Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values.
+Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values. The `artifacts.max_artifact_files` setting caps per-frame PNGs only; `tracked_output.mp4` and `extraction_summary.json` are always kept. `artifacts.remote_artifact_write` defaults to `false` and currently only logs a simulated GCS bundle upload.
 
 ## Current Caveats
 
