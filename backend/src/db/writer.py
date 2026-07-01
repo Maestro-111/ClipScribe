@@ -44,7 +44,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         video_path: str,
         video_type: str | None,
         video_metadata: Mapping[str, Any],
-        field_descriptions: Mapping[str, Any],
+        field_descriptions: Mapping[str, Mapping[str, str]],
     ) -> str:
         """Persist a full extraction run under the caller-supplied ``run_id``.
 
@@ -264,13 +264,21 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             for result in results
         ]
 
-        if rows:
-            with self._engine.begin() as conn:
+        with self._engine.begin() as conn:
+            conn.execute(
+                parser_results_table.delete()
+                .where(parser_results_table.c.run_id == run_id)
+                .where(parser_results_table.c.platform == platform)
+            )
+
+            if rows:
                 conn.execute(parser_results_table.insert(), rows)
 
         logger.info(f"Saved {len(rows)} parser results for run {run_id}")
 
-    def _insert_field_descriptions(self, conn, descriptions: dict) -> None:
+    def _insert_field_descriptions(
+        self, conn, descriptions: Mapping[str, Mapping[str, str]]
+    ) -> None:
         rows = []
         for table_name, columns in descriptions.items():
             for column_name, description in columns.items():

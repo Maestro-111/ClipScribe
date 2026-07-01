@@ -937,6 +937,23 @@ class VideoInformationExtractor:
 
         return id_map
 
+    def _frame_detections_with_global_object_ids(
+        self, global_id_map: Mapping[int, int]
+    ) -> list[FrameDetection]:
+        final_detections: list[FrameDetection] = []
+
+        for detection in self.frame_detections:
+            final_detection = detection.copy()
+            local_object_id = detection["object_id"]
+            final_detection["object_id"] = (
+                global_id_map.get(local_object_id)
+                if local_object_id is not None
+                else None
+            )
+            final_detections.append(final_detection)
+
+        return final_detections
+
     def _finalize_data(self) -> ExtractionSummary:
         """Resolve cross-shot identities, compute per-object metrics, and assemble the final output dict."""
         global_id_map = self._resolve_identities()
@@ -991,7 +1008,9 @@ class VideoInformationExtractor:
             "audio_segments": self.audio_registry,
             "scene_descriptions": self.scene_description_registry,
             "shot_boundaries": self.shot_data,
-            "frame_detections": self.frame_detections,
+            "frame_detections": self._frame_detections_with_global_object_ids(
+                global_id_map
+            ),
         }
 
     def visualize_sam_tracking(

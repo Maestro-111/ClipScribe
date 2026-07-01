@@ -146,6 +146,45 @@ def test_save_parser_results_maps_feature_fields(writer):
     assert rows[1]["platform"] == "youtube"
 
 
+def test_save_parser_results_replaces_same_run_platform(writer):
+    db, engine = writer
+    run_id = new_ulid()
+
+    old = types.SimpleNamespace(
+        platform="youtube",
+        feature_category="Brand",
+        feature_name="Old",
+        feature_criteria="old criteria",
+        evaluation=True,
+    )
+    other_platform = types.SimpleNamespace(
+        platform="instagram",
+        feature_category="Brand",
+        feature_name="Instagram",
+        feature_criteria="instagram criteria",
+        evaluation=True,
+    )
+    new = types.SimpleNamespace(
+        platform="youtube",
+        feature_category="Brand",
+        feature_name="New",
+        feature_criteria="new criteria",
+        evaluation=False,
+    )
+
+    db.save_parser_results(run_id, "youtube", [old])
+    db.save_parser_results(run_id, "instagram", [other_platform])
+    db.save_parser_results(run_id, "youtube", [new])
+
+    rows = sorted(
+        _rows(engine, parser_results_table), key=lambda r: (r["platform"], r["id"])
+    )
+    assert [(r["platform"], r["feature_name"]) for r in rows] == [
+        ("instagram", "Instagram"),
+        ("youtube", "New"),
+    ]
+
+
 def test_new_ulid_is_sortable_and_26_chars():
     a = new_ulid()
     b = new_ulid()
