@@ -1,11 +1,16 @@
-import logging
+from __future__ import annotations
 
-from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
-from src.parser.parser_core import VideoInformationParser
+import logging
+from typing import TYPE_CHECKING
+
 from src.utils.ids import new_ulid
 from src.utils.artifacts import ArtifactUploader, run_artifact_dir
 from src.utils.progress import Phase, ProgressEvent, ProgressReporter
+
+if TYPE_CHECKING:
+    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
+    from src.parser.parser_core import VideoInformationParser
 
 logger = logging.getLogger("clip_scribe")
 
@@ -102,23 +107,17 @@ class ClipScribeEngine:
         else:
             self.progress.emit(ProgressEvent.JOB_COMPLETED, {"run_id": self.run_id})
 
-    def extract(self) -> ExtractionSummary | None:
+    def extract(self) -> ExtractionSummary:
         if self.extractor is None:
             raise ValueError("No extractor defined; extract method cannot be called")
 
-        video_metadata: ExtractionSummary | None = None
+        video_metadata = self._run_extractor()
 
-        try:
-            video_metadata = self._run_extractor()
-        except Exception:  # can be None, will skip later
-            pass
-
-        if video_metadata is not None:
-            # Artifacts (mp4, viz PNGs, summary json) are fully written by now;
-            # push the run's bundle (no-op unless remote_artifact_write=true).
-            self.artifact_uploader.upload_run_artifacts(
-                self.run_id, run_artifact_dir(self.run_id)
-            )
+        # Artifacts (mp4, viz PNGs, summary json) are fully written by now;
+        # push the run's bundle (no-op unless remote_artifact_write=true).
+        self.artifact_uploader.upload_run_artifacts(
+            self.run_id, run_artifact_dir(self.run_id)
+        )
 
         return video_metadata
 
@@ -132,7 +131,7 @@ class ClipScribeEngine:
                     raise ValueError(f"run_id '{run_id}' not found in database")
                 self._run_parser(run_id)
             else:
-                logger.warning("Empty run_id is given to parse!")
+                raise ValueError("run_id is required for parse mode")
 
         finally:
             self.writer_db.close()
@@ -150,17 +149,13 @@ class ClipScribeEngine:
 
         video_metadata = self.extract()
 
-        if video_metadata:
-            metadata_descriptions = self.extractor.get_schema_descriptions()
-            self._save_metadata_to_db(video_metadata, metadata_descriptions)
-            self.parse(self.run_id)
-
-        else:
-            logger.warning("No video metadata to parse")
+        metadata_descriptions = self.extractor.get_schema_descriptions()
+        self._save_metadata_to_db(video_metadata, metadata_descriptions)
+        self.parse(self.run_id)
 
         return
 
-    def _run_extractor(self) -> ExtractionSummary | None:
+    def _run_extractor(self) -> ExtractionSummary:
         assert self.extractor is not None
         try:
             metadata = self.extractor.extract(
@@ -169,15 +164,17 @@ class ClipScribeEngine:
                 video_type=self.video_type,
                 run_id=self.run_id,
             )
+            if metadata is None:
+                raise RuntimeError("Extractor returned no metadata")
 
             logger.info("Extraction finished successfully.")
             return metadata
         except KeyboardInterrupt:
             logger.error("\n!!! Interrupted by User. Saving video... !!!")
-            return None
+            raise
         except Exception as e:
             logger.error(f"_extract_information error occurred: {e}", exc_info=True)
-            return None
+            raise
         finally:
             self.extractor.cleanup()
             logger.info("Done!")

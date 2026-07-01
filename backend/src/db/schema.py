@@ -160,7 +160,7 @@ frame_detections_table = Table(
     Column("box_x2", Float),
     Column("box_y2", Float),
     Column("confidence", Float),
-    # Local SAM2 id, joinable to global_id.
+    # Final global visual object id for tracked SAM detections.
     Column("object_id", Integer),
     Index("ix_frame_detections_run_frame", "run_id", "frame_idx"),
     Index("ix_frame_detections_run_object", "run_id", "object_id"),
