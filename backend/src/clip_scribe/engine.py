@@ -9,7 +9,10 @@ from src.utils.progress import Phase, ProgressEvent, ProgressReporter
 
 if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-    from src.extractor.extractor_core import ExtractionSummary, VideoInformationExtractor
+    from src.extractor.extractor_core import (
+        ExtractionSummary,
+        VideoInformationExtractor,
+    )
     from src.parser.parser_core import VideoInformationParser
 
 logger = logging.getLogger("clip_scribe")
