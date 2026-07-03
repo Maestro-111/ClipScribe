@@ -50,8 +50,8 @@ class ProfilesPile:
         self.__create_profiles()
 
     def __create_profiles(self) -> None:
-        car_ad_profile = TaxonomyProfile(
-            video_type="car ad",
+        car_commercial_profile = TaxonomyProfile(
+            video_type="car commercial",
             focus_categories=[
                 "Main Subject (e.g. car, suv, vehicle, jeep, automobile)",
                 "Subject Details (e.g. wheels, lights, grille, bumper)",
@@ -60,7 +60,7 @@ class ProfilesPile:
                 "Human Context (e.g. driver, pedestrian, passenger)",
             ],
             guidance_ratio="Generate 30% main subject, 20% parts, 15% brand identity, 10% environment, and 25% human context.",
-            example_items=["SUV", "alloy wheel", "pine tree", "driver", "car emblem"],
+            example_items=["SUV", "alloy wheel", "truck", "driver", "car emblem"],
         )
 
         general_profile = TaxonomyProfile(
@@ -85,7 +85,7 @@ class ProfilesPile:
             ],
         )
 
-        self.__type_to_profile["car ad"] = car_ad_profile
+        self.__type_to_profile["car commercial"] = car_commercial_profile
         self.__type_to_profile["general profile"] = general_profile
 
     def get_video_profile(self, video_type: str | None) -> TaxonomyProfile:

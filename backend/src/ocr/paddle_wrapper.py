@@ -380,4 +380,4 @@ class OCRSystem:
 
         vis_img = self.visualize_results(image, results, **kwargs)
         cv2.imwrite(output_path, vis_img)
-        logger.info(f"Visualization saved to: {output_path}")
+        logger.info(f"OCR Visualization saved to: {output_path}")

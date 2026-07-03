@@ -4,6 +4,19 @@ A planning doc, not a spec. It maps the current CLI-driven pipeline onto a
 two-tier web app: a TypeScript single-page dashboard and a Python backend split
 into a thin FastAPI process and one or more Celery workers.
 
+ClipScribe is intended to run in **two operating modes** that share the same
+core (`ClipScribeBuilder` + `ClipScribeEngine`):
+
+1. **Web app** (this doc's main subject) — interactive dashboard with live
+   progress. Run locally via `docker-compose` for development; a GCP shape is
+   sketched in §12 but not a near-term build target.
+2. **CLI / batch** — no UI, no realtime. Runs the core over one or many videos
+   and persists results. Locally: process a list sequentially. Remotely: fan
+   out over a Kubernetes **Indexed Job**, one video per GPU pod. See §12.
+
+Both modes reuse the same "core" worker image with different entrypoints, so
+nothing built for one blocks the other.
+
 This file is a living checklist. Sections marked **Open question** are decisions
 to make before that piece is built.
 
@@ -49,9 +62,8 @@ to make before that piece is built.
 - **Worker container**: big (8–15 GB), GPU/MPS-bound, one job at a time per
   GPU. Multiple machines = multiple workers, same Redis queue.
 - **Redis**: both the Celery broker and the live-progress pub/sub channel.
-- **Postgres**: existing schema (`backend/src/db/schema.py`) including the
-  web-app tables (`jobs`, `frame_detections`, `parser_results`,
-  `shot_boundaries`).
+- **Postgres**: existing schema (`backend/src/db/schema.py`) plus four web-app
+  tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`).
 
 ---
 
@@ -84,7 +96,6 @@ clipscribe/
         Dockerfile                # existing placeholder for heavy worker image
         deploy.sh
     checkpoints/                  # all model weights live here (see §8)
-    artifacts/                    # extraction outputs keyed by run id
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
@@ -108,8 +119,8 @@ Notes on the layout as it stands:
   `src` is installed as a top-level package.
 - `PROJECT_ROOT = Path(__file__).resolve().parents[2]` inside
   `build_clip_scribe.py` resolves to `backend/`, which is where `data/`,
-  `input/`, `checkpoints/`, and `artifacts/` now live — so relative-path
-  resolution works without code changes.
+  `input/`, `checkpoints/` now live — so relative-path resolution works
+  without code changes.
 - Pre-commit must be invoked from `backend/` because the config lives at
   `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
 - The root `Makefile` is still partially broken (setup/checkpoint/clean targets
@@ -274,7 +285,7 @@ def run_job(job_params: dict):
 - `runs`, `global_stats`, `visual_object_occurrences`, `text_events`,
   `audio_segments`, `scene_descriptions`, `field_descriptions`.
 
-### Added tables
+### New tables
 
 **`jobs`** — orchestration state, separate from `runs` (which is extractor
 output).
@@ -309,7 +320,7 @@ label             TEXT          # resolved taxonomy label or None
 text              TEXT          # OCR text or None
 box_x1,y1,x2,y2   FLOAT
 confidence        FLOAT
-object_id         INTEGER       # final global visual object id for SAM detections
+object_id         INTEGER       # local SAM2 id, joinable to global_id
 INDEX (run_id, frame_idx)
 INDEX (run_id, object_id)
 ```
@@ -337,7 +348,7 @@ created_at      TIMESTAMP
 
 `global_stats` currently encodes pacing/dynamic-start info but does **not**
 persist per-shot boundaries (only `qp_intro_shots`). The timeline view needs
-them. Added:
+them. Add:
 
 **`shot_boundaries`**
 ```
@@ -349,20 +360,35 @@ end_sec       FLOAT
 duration_sec  FLOAT
 ```
 
-Implemented: `extractor_core.py` collects `shot_data` and raw DINO/OCR/MTCNN/
-SAM detections; `writer.py` persists them to `shot_boundaries` and
-`frame_detections`.
+Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 
 ### Migrations
 
 - Alembic is adopted under `backend/alembic/`. SQLite + Postgres both use the
-  same SQLAlchemy metadata from `backend/src/db/schema.py`.
+  same SQLAlchemy metadata from `backend/src/db/schema.py`. `env.py` resolves
+  the DB URL via `resolve_database_url()` (config + env), never the static
+  `alembic.ini` placeholder — so migrations always target the app's DB.
 - Current revisions are a baseline migration for the existing schema followed
   by a migration adding `jobs`, `frame_detections`, `parser_results`, and
   `shot_boundaries`.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
-  repository root).
+  repository root). Authoring a new migration: `make revision m="..."` then
+  review the generated script (delete it if the diff was empty).
+- In deployment, `upgrade head` runs **once per release** as a discrete step
+  (a compose one-shot service / K8s Job / deploy command), **not** per worker
+  or API replica — all replicas share one DB. It can run from the slim API
+  image (it has `src/db` + the scripts, no torch needed).
+
+### run_id is now minted up front
+
+`run_id` is a **ULID** minted by `ClipScribeEngine.run()` at the start of an
+extract/full run (or the provided id for parse), stored on `self.run_id`, and
+threaded into `extractor.extract(run_id=...)` and `writer.save_run(run_id=...)`.
+This lets the extractor key its artifact directory and raw `frame_detections`
+by the same id **before** the `runs` row exists. ULIDs sort lexicographically
+by creation time, which the jobs-list / run-history ordering relies on.
+Generation lives in `backend/src/utils/ids.py` (`new_ulid`).
 
 ### Default backend
 
@@ -474,8 +500,6 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 - `GET /runs/{id}/parser`              — `parser_results`.
 
 ### Artifacts (filesystem-backed)
-- Current local convention: extraction outputs live under
-  `backend/artifacts/<run_id>/`.
 - `GET /runs/{id}/video`               — original input, `Range`-aware.
 - `GET /runs/{id}/tracked-video`       — `tracked_output.mp4`, `Range`-aware.
 - `GET /runs/{id}/png/{filename}`      — DINO/OCR/face viz PNGs (fallback only).
@@ -510,7 +534,7 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
    - "New job" button.
 
 2. **New job** (`/jobs/new`)
-   - Form mirroring `backend/main.py` params (`platform_params`, `user_hints`,
+   - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
      `video_type`, `device`, `mode`, `platform`).
    - Video field: upload OR pick from server-side `input/` directory (see
      Open question §9).
@@ -589,7 +613,7 @@ backend/docker/
 |---|---|---|
 | Role | FastAPI; never executes ML | Celery worker; runs the pipeline |
 | Heavy deps | none (no `torch`, no `whisper`, no `paddleocr`) | full stack |
-| Imports `backend/src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
+| Imports `src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
 | Imports `app/tasks.py`? | **no** — sends tasks by name | yes |
 | Talks to Redis | yes (broker client + pubsub subscriber) | yes (broker consumer + pubsub publisher) |
 | Talks to Postgres | yes (read-mostly + jobs writes) | yes (writer + reader) |
@@ -749,12 +773,16 @@ These are decisions to make before the corresponding implementation step.
      today; simplest for internal use).
    - Probably (c) first, (a) when multi-user. (b) only if deploying to cloud.
 
-2. **Artifact storage.**
-   Local keying is resolved: extraction outputs now use
-   `backend/artifacts/<run_id>/`, with ULIDs minted before extraction starts.
-   Remaining decision: filesystem/shared volume vs object storage for the web
-   deployment. `remote_artifact_write` currently exercises only a simulated
-   GCS bundle upload.
+2. **Artifact storage.** **Mostly resolved.**
+   The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the
+   video name — no more collisions). A `remote_artifact_write` config flag
+   (default `false`) selects an `ArtifactUploader` (`backend/src/utils/artifacts.py`):
+   `NullArtifactUploader` (local only) or `SimulatedGCSArtifactUploader`, which
+   currently just **logs** the single bundle it would push
+   (`gs://…/<run_id>/artifacts.tar.gz`) at the end of the run. Swapping in a
+   real GCS uploader later is a drop-in replacement — flip the flag, implement
+   the body, no call-site changes. Still open: whether the real backend is GCS
+   vs a shared filesystem volume for the local/compose case.
 
 3. **Authentication / multi-user.**
    None today. Likely deferred to post-MVP. If we add it, keep `created_by` on
@@ -814,16 +842,19 @@ These are decisions to make before the corresponding implementation step.
     frontend can call `/api/*` without CORS gymnastics. In prod, nginx in
     front does the same thing.
 
-14. **Disk retention.**
-    `backend/artifacts/` grows unboundedly. Decide a retention policy
-    (delete after N days, keep last K runs, manual purge) before the disk
-    fills. Add a `POST /runs/{id}` DELETE endpoint that cleans both DB rows
-    and artifact directory.
+14. **Disk retention.** **Partially mitigated.**
+    A `max_artifact_files` config cap (default 200) now bounds the per-frame
+    visualization PNGs written per run (the unbounded growth source); the
+    tracked mp4 and `extraction_summary.json` are always kept. Still open: a
+    run-level retention policy (delete after N days / keep last K) and a
+    `DELETE /runs/{id}` endpoint that cleans both DB rows and the artifact dir.
 
-15. **Per-job artifact directory keying.**
-    Resolved for new runs: `artifacts/<run_id>/` is the single source of truth.
-    If old `extractor_artifacts/` data matters, decide whether to migrate it by
-    renaming or just leave old runs alone.
+15. **Per-job artifact directory keying.** **Resolved.**
+    Artifacts are written to `artifacts/<run_id>/` (ULID). The path convention
+    lives in one place: `run_artifact_dir(run_id)` in
+    `backend/src/utils/artifacts.py`, used by both the extractor and the engine
+    (for the upload call). Old `extractor_artifacts/<video_name>/` runs are left
+    as-is.
 
 16. **What does the SSE channel do when there are zero subscribers?**
     Redis pub/sub drops messages with no subscribers. If a user opens the live
@@ -856,15 +887,20 @@ Strictly ordered; each step is shippable on its own.
    `engine.py`, `extractor_core.py`, and `parser_core.py`. **DONE.** CLI/tests
    pass Null by default; event ordering has focused unit coverage.
 
-4. **Persist raw detections.** **DONE.** Hook `frame_detections` writes inside
-   `_save_metadata` and OCR/MTCNN branches. Persist `shot_boundaries` from
-   `_digest_video`. Persist parser results from the parser. CLI is the proving
-   ground.
+4. **Persist raw detections.** **DONE.** The extractor collects
+   `frame_detections` (sources `dino`/`ocr`/`mtcnn`/`sam_mask`) and
+   `shot_boundaries` into its returned `ExtractionSummary` (staying DB-free);
+   the writer persists them in `save_run`, keyed by the up-front `run_id`. The
+   parser persists per-criterion `parser_results` via `writer.save_parser_results`
+   (feature fields read by `getattr`, so non-YouTube platforms still persist the
+   common columns). Also landed here: run_id-up-front ULID (§4), artifact dir
+   keyed by run_id (§9.15), the `max_artifact_files` PNG cap (§9.14), and the
+   `remote_artifact_write` `ArtifactUploader` seam (§9.2). Unit-tested with an
+   in-memory DB; full end-to-end proof is the first real `main.py` run.
 
-5. **FastAPI app, queued path only.** Keep the API slim: `POST /jobs` validates
-   input and creates a queued job record without loading models. Implement
-   read-only `/runs/*` and artifact endpoints against data produced by
-   `backend/main.py` until Celery lands.
+5. **FastAPI app, sync path only.** `POST /jobs` runs the job inline (no
+   Celery yet) so we can shake out request shape, error handling, OpenAPI
+   schema, and CORS. Implement read-only `/runs/*` and artifact endpoints.
 
 6. **Frontend bootstrap.** Vite + React + TS + Tailwind + TanStack Router /
    Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
@@ -897,9 +933,10 @@ Strictly ordered; each step is shippable on its own.
 
 ## 11. Risks / things that could derail this
 
-- **API/worker import boundaries are easy to break.** The slim API must not
-  import `ClipScribeBuilder` or anything that transitively loads torch; enqueue
-  Celery tasks by name and keep heavy imports in worker-only modules.
+- **Builder refactor is bigger than it looks.** Hints get passed deep into
+  the extractor and into the GPT taxonomy generator. Untangling these so the
+  registry is truly per-process will touch `taxonomy_core.py`,
+  `extractor_core.py`, and the builder.
 
 - **MPS in Docker on Mac.** Already flagged. Lots of dev pain if we forget.
 
@@ -910,7 +947,7 @@ Strictly ordered; each step is shippable on its own.
   burn through credits. Cost cap or per-user budget should exist before
   this is anything but internal.
 
-- **Disk usage.** Unbounded `backend/artifacts/`. Retention story needs to
+- **Disk usage.** Unbounded `backend/extractor_artifacts/`. Retention story needs to
   exist before turning the app on for more than one person.
 
 - **Cancellation correctness.** Hard-killing a worker mid-job leaves OpenCV
@@ -920,3 +957,78 @@ Strictly ordered; each step is shippable on its own.
 
 - **Type drift Python ↔ TS.** Without OpenAPI codegen wired into CI, the
   shapes will drift the moment a Pydantic field is added.
+
+---
+
+## 12. Operating modes & deployment
+
+Both modes share the same **core image** (torch + CV stack + `ClipScribeBuilder`)
+with **two entrypoints**: `celery worker` (web app) and a "process one video"
+batch entrypoint (CLI / K8s Job). Same builder, same engine, different launcher.
+
+### Celery worker model (web app)
+
+- A worker is a Python process. With the default **prefork pool** it forks
+  `--concurrency=N` child processes **once at startup**; each child loads the
+  models a single time (`worker_process_init`). Tasks are dispatched to a free
+  child; when all children are busy, extra tasks **wait in the Redis queue**,
+  not inside the worker.
+- Run **`--concurrency=1`** (or `--pool=solo`, no fork at all): models load
+  once, one job at a time. `N>1` would multiply the 8–15 GB model load per
+  child and contend for one GPU.
+- **One GPU → one effective worker slot.** A machine hosts more workers only if
+  it has more GPUs (one worker per GPU, pinned via `CUDA_VISIBLE_DEVICES`).
+  Throughput scales by adding machines/GPUs to the same Redis queue; backlog
+  just queues.
+
+### Docker networking (compose)
+
+Container-to-container addressing uses the **service name + internal port**,
+not the host port mapping. Consequences for `POSTGRESQL_URL` / `REDIS_URL`:
+
+| Caller | Postgres | Redis |
+|---|---|---|
+| Process on the host (e.g. the **native Mac worker**) | `…@localhost:<mapped>` (e.g. `5433`) | `redis://localhost:6379/0` |
+| A **container** on the compose network | `…@postgres:5432` | `redis://redis:6379/0` |
+
+Because the Mac dev worker runs **natively** (for MPS) while Postgres/Redis are
+dockerized, the native worker uses `localhost:<mapped-port>` while the API
+container uses `postgres:5432`. So services get **different env values** by
+where they run.
+
+### Mode A — web app deployment
+
+- **Local dev (the near-term target):** `docker-compose` brings up api + redis +
+  postgres (+ frontend); the worker runs natively on the Mac so `device=mps`
+  works. No cloud, no K8s. This mode is primarily a learning/dev surface.
+- **GCP shape (sketch, not a build target):**
+
+  | Component | GCP service | Note |
+  |---|---|---|
+  | API (slim, no torch) | **Cloud Run** | Enqueues to Redis, serves SSE. Mind Cloud Run request timeouts for long SSE streams. |
+  | Redis (broker + pubsub) | **Memorystore for Redis** | Managed. |
+  | Postgres | **Cloud SQL for PostgreSQL** | Managed. |
+  | Celery GPU worker | **GKE GPU node pool** | Deployment with `nvidia.com/gpu: 1`, concurrency 1; autoscale pods on **queue depth** via KEDA (Redis scaler), scale to zero when idle. |
+
+  The GPU worker is the awkward piece: Cloud Run's scale-to-zero, request-driven
+  model fights a long-lived broker consumer holding models in GPU memory, so GKE
+  (or a plain GPU VM) is the better host.
+
+### Mode B — CLI / batch over K8s
+
+No UI, no realtime, and **no Redis/Celery** — the job runner *is* the
+orchestrator.
+
+- **Local mode** (local paths): loop the video list, run the engine
+  sequentially on one machine (generalized `main.py`, reusing the load-once
+  builder).
+- **Remote mode** (GCS URIs): fan out with a Kubernetes **Indexed Job**
+  (`completionMode: Indexed`, `completions: N`, `parallelism: P`). K8s creates
+  N indexed pods, each mapping its index → one video; each pod requests
+  `nvidia.com/gpu: 1` (one whole GPU per pod), runs the batch entrypoint, reads
+  the video from GCS, writes results to Cloud SQL + artifacts to GCS, and exits.
+  `parallelism` is bounded by available GPUs; the cluster autoscaler adds GPU
+  nodes up to a quota and scales back to zero when the batch finishes, so GPUs
+  are paid for only during the run. `backoffLimit` gives per-video retries.
+- The CLI (on the operator's machine) renders and `kubectl apply`s the Job (or
+  uses the Python k8s client) against a GKE cluster with a GPU node pool.
