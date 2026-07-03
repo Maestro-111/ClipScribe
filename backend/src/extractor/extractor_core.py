@@ -407,7 +407,6 @@ class VideoInformationExtractor:
         embedding_transform: "transforms.Compose",
         face_detection: "MTCNN",
         device: str,
-        dino_reid_device: str,
         word_similarity_threshold: float,
         dino_text_conf: float,
         dino_box_conf: float,
@@ -463,7 +462,6 @@ class VideoInformationExtractor:
         self.label_no_match_merge_threshold = label_no_match_merge_threshold
 
         self.device = device
-        self.dino_reid_device = dino_reid_device
 
         self.audio_registry: list[AudioSegment] = []
         self.scene_description_registry: list[SceneDescriptionRecord] = []
@@ -631,9 +629,7 @@ class VideoInformationExtractor:
         crop = frame_bgr[y1:y2, x1:x2]
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
 
-        img_tensor = (
-            self.embedding_transform(crop_rgb).unsqueeze(0).to(self.dino_reid_device)
-        )
+        img_tensor = self.embedding_transform(crop_rgb).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
             features = self.reid_model.forward_features(img_tensor)

@@ -18,6 +18,7 @@ from .schema import (
     frame_detections_table,
     shot_boundaries_table,
     parser_results_table,
+    jobs_table,
 )
 
 logger = logging.getLogger("clip_scribe")
@@ -241,6 +242,85 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
 
         if rows:
             conn.execute(frame_detections_table.insert(), rows)
+
+    def create_job(
+        self,
+        *,
+        job_id: str,
+        mode: str,
+        status: str = "queued",
+        run_id: str | None = None,
+        video_name: str | None = None,
+        video_path: str | None = None,
+        video_type: str | None = None,
+        device: str | None = None,
+        platform: str | None = None,
+        params_json: dict | None = None,
+        created_by: str | None = None,
+    ) -> None:
+        """Insert a new orchestration job row (``created_at`` is DB-defaulted).
+
+        Orchestration state, kept separate from ``runs`` (extractor output).
+        ``run_id`` may be minted up front so the row links to a run before the
+        extractor writes it (web-app-plan §4).
+        """
+        with self._engine.begin() as conn:
+            conn.execute(
+                jobs_table.insert(),
+                {
+                    "job_id": job_id,
+                    "run_id": run_id,
+                    "status": status,
+                    "mode": mode,
+                    "video_name": video_name,
+                    "video_path": video_path,
+                    "video_type": video_type,
+                    "device": device,
+                    "platform": platform,
+                    "params_json": params_json,
+                    "created_by": created_by,
+                },
+            )
+        logger.info(f"Created job {job_id} (mode={mode}, status={status})")
+
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        run_id: str | None = None,
+        celery_task_id: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        """Update mutable orchestration fields on a job.
+
+        Only fields passed as non-``None`` are written, so callers can advance
+        one part of the lifecycle (e.g. just ``status`` + ``started_at``)
+        without clobbering the rest.
+        """
+        values = {
+            key: value
+            for key, value in {
+                "status": status,
+                "run_id": run_id,
+                "celery_task_id": celery_task_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "error_text": error_text,
+            }.items()
+            if value is not None
+        }
+        if not values:
+            return
+
+        with self._engine.begin() as conn:
+            conn.execute(
+                jobs_table.update()
+                .where(jobs_table.c.job_id == job_id)
+                .values(**values)
+            )
 
     def save_parser_results(self, run_id: str, platform: str, results: list) -> None:
         """Persist per-criterion parser evaluations for a run.

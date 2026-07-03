@@ -13,6 +13,13 @@ clip_scribe:
   # --------------------------------------------------------------------------
   # Extractor Settings
   # --------------------------------------------------------------------------
+
+  # Execution device for all heavy models: "mps" | "cuda" | "cpu".
+  # One device for the whole pipeline (single-GPU/worker model). App uses this;
+  # CLI can override with --device. MTCNN is always CPU internally. Falls back
+  # to cpu with a warning if the requested device is unavailable.
+  device: "mps"
+
   extractor:
     # SBERT cosine similarity threshold for mapping raw DINO labels to canonical taxonomy targets
     # Lower = more lenient matching (e.g., "sedan" matches "car")
@@ -37,7 +44,7 @@ clip_scribe:
     # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
     # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
     # Range: 10-50 frames. Default: 20
-    reid_model_frame_check_freq: 10
+    reid_model_frame_check_freq: 7
 
     # DINOv2 viewpoint-novelty gate for accumulating re-ID embeddings within a shot
     # A new embedding is folded into an object's running mean only when its cosine
@@ -78,10 +85,10 @@ dino:
   # Bounding box confidence threshold for object proposals
   # Lower = more detections. Higher = only high-confidence boxes
   # Range: 0.0-1.0. Default: 0.4
-  dino_box_conf: 0.4
+  dino_box_conf: 0.3
 
   # GroundingDINO model size: 'tiny', 'base'
-  # Larger models are more accurate but slower and require more VRAM
+  # Larger model is more accurate but slower and requires more VRAM
   dino_size: base
 
 # ============================================================================
@@ -161,7 +168,7 @@ artifacts:
   # Cap on per-frame visualization PNGs written per run (DINO/OCR/face viz).
   # null = unlimited. The tracked mp4 and extraction_summary.json are always
   # kept. Keeps the per-run artifact directory bounded for long videos.
-  max_artifact_files: 200
+  max_artifact_files: 350
 
   # When true, the finished run's artifact directory is bundled and uploaded to
   # remote storage (GCS) at the end of the pipeline. Currently SIMULATED (logs
