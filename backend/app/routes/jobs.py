@@ -1,0 +1,74 @@
+"""Job endpoints: create + enqueue, list, and fetch (web-app-plan §6).
+
+``POST /jobs`` returns 202 with a job id immediately; the run happens on the
+executor. Clients poll ``GET /jobs/{id}``.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, Depends, Query, Request, status
+
+from app.deps import get_executor, get_reader
+from app.errors import ProblemException
+from app.job_runner import JobService
+from app.models import (
+    JobCreatedResponse,
+    JobCreateRequest,
+    JobListResponse,
+    JobResponse,
+)
+
+if TYPE_CHECKING:
+    from src.db import ClipScribeReaderDB
+
+router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+def get_job_service(request: Request) -> JobService:
+    """Assemble the job service from process-wide state (overridable in tests)."""
+    from app.deps import get_builder
+
+    builder = get_builder(request)
+    executor = get_executor(request)
+    return JobService(builder, executor, request.app.state.settings)
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobCreatedResponse,
+    summary="Create and enqueue a job",
+)
+def create_job(
+    req: JobCreateRequest,
+    service: JobService = Depends(get_job_service),
+) -> JobCreatedResponse:
+    return service.create_job(req)
+
+
+@router.get("", response_model=JobListResponse, summary="List jobs")
+def list_jobs(
+    job_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> JobListResponse:
+    jobs = reader.list_jobs(status=job_status, limit=limit, offset=offset)
+    return JobListResponse(
+        jobs=[JobResponse(**job) for job in jobs], limit=limit, offset=offset
+    )
+
+
+@router.get("/{job_id}", response_model=JobResponse, summary="Get a job")
+def get_job(
+    job_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> JobResponse:
+    job = reader.get_job(job_id)
+    if job is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    return JobResponse(**job)

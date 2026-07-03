@@ -125,7 +125,6 @@ def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
             video_path="input/v.mp4",
             video_type="car ad",
             clib_scribe_mode=mode,
-            clib_scribe_device="cpu",
             clib_scribe_platform_name="youtube",
             clib_scribe_platform_conf=mock.MagicMock(),
         )

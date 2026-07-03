@@ -71,7 +71,7 @@ class ClipScribeBuilder:
     def DEFAULT_PARSER_MODEL(self):
         return "gpt-5.4-mini"
 
-    def __init__(self):
+    def __init__(self, device: str | None = None):
         configure_logging()
 
         with open(LOCAL_DIR / "configs" / "clip_scribe.yaml") as f:
@@ -101,6 +101,26 @@ class ClipScribeBuilder:
         # Artifact handling: cap on per-frame viz PNGs and the (simulated for
         # now) remote-upload toggle. See docs/web-app-plan.md §8.
         self.artifacts_params = _cfg.get("artifacts", {})
+
+        if device is None:
+            logger.info("Using device specified in config")
+            device = self.clip_scribe_params.get("device", None)
+            if device is None:
+                logger.warning("No device specified in config, using CPU")
+                device = "cpu"
+
+        # Verify the requested accelerator is actually present on this host;
+        # otherwise roll back to CPU so a config/CLI value of "mps"/"cuda" can
+        # never hard-crash at model load on a machine that lacks it.
+        if device == "mps" and not torch.backends.mps.is_available():
+            logger.warning("MPS requested but unavailable; falling back to CPU")
+            device = "cpu"
+        elif device == "cuda" and not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable; falling back to CPU")
+            device = "cpu"
+
+        logger.info(f"Clip scribe device: {device}")
+        self.device = device
 
         self._assemble_db()
         self._assemble_heavy_extractor_utils()
@@ -143,7 +163,6 @@ class ClipScribeBuilder:
         video_name: str,
         user_hints: list[str] | None,
         generate_hint_from_name: bool,
-        clib_scribe_device: str,
         clib_scribe_extractor_params: dict,
         dino_params: dict,
         scene_analysis_params: dict,
@@ -215,12 +234,6 @@ class ClipScribeBuilder:
             image_detail=image_detail,
         )
 
-        dino_reid_device = (
-            torch.device("mps")
-            if torch.backends.mps.is_available()
-            else torch.device("cpu")
-        )
-
         info_extractor = VideoInformationExtractor(
             self.sam2,
             self.dino,
@@ -233,8 +246,7 @@ class ClipScribeBuilder:
             self.audio_model,
             self.embedding_transform,
             self.face_detection,
-            clib_scribe_device,
-            dino_reid_device.type,
+            self.device,
             word_similarity_threshold,
             dino_text_conf,
             dino_box_conf,
@@ -279,24 +291,7 @@ class ClipScribeBuilder:
             dino = DinoDetector(
                 dino_type=self.dino_params.get("dino_size", "tiny"),
                 weights_dir=self.models_weights_dir,
-            )
-
-            sam2_device = (
-                torch.device("mps")
-                if torch.backends.mps.is_available()
-                else torch.device("cpu")
-            )
-
-            dino_reid_device = (
-                torch.device("mps")
-                if torch.backends.mps.is_available()
-                else torch.device("cpu")
-            )
-
-            whisper_device = (
-                torch.device("mps")
-                if torch.backends.mps.is_available()
-                else torch.device("cpu")
+                device=self.device,
             )
 
             ocr = OCRSystem()
@@ -306,22 +301,22 @@ class ClipScribeBuilder:
                 "src.sam2.configs",
                 self.models_weights_dir,
                 logger,
-                sam2_device.type,
+                self.device,
             )
 
             logger.info(
-                f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {dino_reid_device.type}..."
+                f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {self.device}..."
             )
 
             reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
-                dino_reid_device.type
+                self.device
             )
 
             reid_model.eval()
 
-            logger.info(f"loading whisper to {whisper_device.type}")
+            logger.info(f"loading whisper to {self.device}")
 
-            audio_model = whisper.load_model("base", device=whisper_device.type)
+            audio_model = whisper.load_model("base", device=self.device)
 
             embedding_transform = transforms.Compose(
                 [
@@ -375,7 +370,6 @@ class ClipScribeBuilder:
         video_path: str,
         video_type: str | None,
         clib_scribe_mode: str,
-        clib_scribe_device: str,
         clib_scribe_platform_name: str,
         clib_scribe_platform_conf: BasePlatformConf,
         user_hints: list[str] | None = None,
@@ -403,7 +397,6 @@ class ClipScribeBuilder:
                     video_name,
                     user_hints,
                     generate_hint_from_name,
-                    clib_scribe_device,
                     self.clib_scribe_extractor_params,
                     self.dino_params,
                     self.scene_analysis_params,

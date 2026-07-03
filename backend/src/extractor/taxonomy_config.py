@@ -1,6 +1,8 @@
 from typing import List
-
 from pydantic import BaseModel, Field
+import logging
+
+logger = logging.getLogger("clip_scribe")
 
 
 class TaxonomyProfile(BaseModel):
@@ -89,6 +91,9 @@ class ProfilesPile:
         self.__type_to_profile["general profile"] = general_profile
 
     def get_video_profile(self, video_type: str | None) -> TaxonomyProfile:
+        logger.info(
+            f"Getting video profile for {video_type if video_type else 'general'}"
+        )
         if video_type not in self.__type_to_profile or video_type is None:
             return self.__type_to_profile["general profile"]
         return self.__type_to_profile[video_type]

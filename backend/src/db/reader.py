@@ -151,3 +151,108 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         with self._engine.connect() as conn:
             result = conn.execute(text(query), params)
             return [dict(row) for row in result.mappings().fetchall()]
+
+    def list_runs(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """List runs, most recent first (jobs / run-history view)."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM runs ORDER BY created_at DESC "
+                    "LIMIT :limit OFFSET :offset"
+                ),
+                {"limit": limit, "offset": offset},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
+    def get_shot_boundaries(self, run_id: str) -> list[dict]:
+        """Fetch per-shot temporal boundaries for a run (timeline view)."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM shot_boundaries WHERE run_id = :run_id "
+                    "ORDER BY shot_index"
+                ),
+                {"run_id": run_id},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
+    def get_frame_detections(
+        self,
+        run_id: str,
+        from_sec: float | None = None,
+        to_sec: float | None = None,
+    ) -> list[dict]:
+        """Fetch raw frame detections for a run, optionally within a time window.
+
+        Backs the inspector overlay: the frontend pulls detections for a run
+        (optionally a ``[from_sec, to_sec]`` playback window) and draws boxes.
+        """
+        query = "SELECT * FROM frame_detections WHERE run_id = :run_id"
+        params: dict = {"run_id": run_id}
+
+        if from_sec is not None:
+            query += " AND timestamp_sec >= :from_sec"
+            params["from_sec"] = from_sec
+        if to_sec is not None:
+            query += " AND timestamp_sec <= :to_sec"
+            params["to_sec"] = to_sec
+
+        query += " ORDER BY frame_idx, id"
+
+        with self._engine.connect() as conn:
+            result = conn.execute(text(query), params)
+            return [dict(row) for row in result.mappings().fetchall()]
+
+    def get_parser_results(self, run_id: str) -> list[dict]:
+        """Fetch persisted per-criterion parser evaluations for a run."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM parser_results WHERE run_id = :run_id "
+                    "ORDER BY feature_category, feature_name"
+                ),
+                {"run_id": run_id},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
+    def get_job(self, job_id: str) -> dict | None:
+        """Fetch a single orchestration job by id."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM jobs WHERE job_id = :job_id"),
+                {"job_id": job_id},
+            )
+            row = result.mappings().fetchone()
+            return self._decode_job(dict(row)) if row else None
+
+    def list_jobs(
+        self, status: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict]:
+        """List jobs, most recent first, optionally filtered by status."""
+        query = "SELECT * FROM jobs"
+        params: dict = {"limit": limit, "offset": offset}
+
+        if status is not None:
+            query += " WHERE status = :status"
+            params["status"] = status
+
+        query += " ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
+
+        with self._engine.connect() as conn:
+            result = conn.execute(text(query), params)
+            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
+
+    @staticmethod
+    def _decode_job(row: dict) -> dict:
+        """Decode ``params_json`` to a dict when the driver returns raw text.
+
+        Raw ``SELECT *`` bypasses the JSON column type, so SQLite (and some
+        drivers) hand back the stored JSON as a string.
+        """
+        raw = row.get("params_json")
+        if isinstance(raw, str):
+            try:
+                row["params_json"] = json.loads(raw)
+            except (ValueError, TypeError):
+                pass
+        return row

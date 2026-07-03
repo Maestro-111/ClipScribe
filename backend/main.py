@@ -12,7 +12,7 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "CHRYSLER_ReebTOYIlCY - Chrysler Pacifica ｜ 4x4 Winter Event.mp4"
+video_name = "JEEP_MvJPDU_oLIU - August 2024 Jeep Grand Cherokee.mp4"
 video_path = f"input/{video_name}"
 video_type = "car commercial"
 
@@ -24,13 +24,13 @@ clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "Chrysler",
-    "youtube_branded_products": ["Chrysler Pacifica"],
+    "youtube_brand_name": "Jeep",
+    "youtube_branded_products": ["Jeep Grand Cherokee"],
     "youtube_branded_products_categories": [
-        "Chrysler PacificaPick Up Truck",
-        "Chrysler Pacifica Truck",
-        "Chrysler Pacifica Car",
-        "Chrysler Pacifica SUV",
+        "Jeep Grand Cherokee Pick Up Truck",
+        "Jeep Grand Cherokee Truck",
+        "Jeep Grand Cherokee Car",
+        "Jeep Grand Cherokee SUV",
     ],
     "youtube_call_to_actions": [
         "learn more",
@@ -62,14 +62,13 @@ try:
     clib_scribe_platform_conf = build_platform(clib_scribe_platform, **platform_params)
 
     if clib_scribe_platform_conf is not None:
-        builder = ClipScribeBuilder()
+        builder = ClipScribeBuilder(device=clib_scribe_device)
 
         clib_scribe = builder.build_clip_scribe(
             video_name=video_name,
             video_path=video_path,
             video_type=video_type,
             clib_scribe_mode=clib_scribe_mode,
-            clib_scribe_device=clib_scribe_device,
             clib_scribe_platform_name=clib_scribe_platform,
             user_hints=user_hints,
             generate_hint_from_name=generate_hint_from_name,
