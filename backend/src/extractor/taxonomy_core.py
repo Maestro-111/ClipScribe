@@ -102,7 +102,7 @@ class TaxonomyResolver:
         best_candidate = self.active_target_names[best_idx]
 
         logger.info(
-            f"Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})"
+            f"Taxonomy Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})"
         )
 
         if best_score < threshold:
@@ -112,12 +112,14 @@ class TaxonomyResolver:
                     or f" {clean_label} " in f" {cand} "
                 ):
                     logger.info(
-                        f"MATCH (String Fallback): '{clean_label}' mapped to '{cand}'"
+                        f"Taxonomy Resolver MATCH (String Fallback): '{clean_label}' mapped to '{cand}'"
                     )
                     return cand
 
         if best_score >= threshold:
-            logger.info(f"MATCH: '{clean_label}' mapped to '{best_candidate}'")
+            logger.info(
+                f"Taxonomy Resolver MATCH: '{clean_label}' mapped to '{best_candidate}'"
+            )
             return best_candidate
 
         return None
@@ -147,51 +149,34 @@ class TaxonomyGenerator:
             output_type=StructuredLeafList,
         )
 
-    def generate_targets(
+    def generate_taxonomy_prompt(
         self,
         video_type: str | None,
         scene_context: str = "",
         dino_prompt: str = "",
         user_hints: list[str] | None = None,
-    ) -> List[LeafItem]:
-        profile = self.profiles.get_video_profile(video_type)
-
-        if not profile:
-            return []
-
-        user_input = self.build_taxonomy_generation_input(
-            video_type=video_type,
-            profile_prompt=profile.get_prompt_instruction(),
-            scene_context=scene_context,
-            dino_prompt=dino_prompt,
-            user_hints=user_hints,
-        )
-
-        result = Runner.run_sync(self.leaf_agent, user_input)
-        taxonomy = result.final_output.items if result and result.final_output else []
-
-        return taxonomy
-
-    @staticmethod
-    def build_taxonomy_generation_input(
-        video_type: str | None,
-        profile_prompt: str,
-        scene_context: str = "",
-        dino_prompt: str = "",
-        user_hints: list[str] | None = None,
     ) -> str:
-        lines = [
+        profile = self.profiles.get_video_profile(video_type)
+        profile_hint = profile.get_prompt_instruction()
+
+        prompt = [
             f"Video Type: {video_type or 'general'}",
-            profile_prompt,
+            profile_hint,
         ]
 
         if scene_context:
-            lines.append(f"Scene Description: {scene_context}")
+            prompt.append(f"Scene Description: {scene_context}")
 
         if dino_prompt:
-            lines.append(f"GroundingDINO Prompt: {dino_prompt}")
+            prompt.append(f"GroundingDINO Prompt: {dino_prompt}")
 
         if user_hints:
-            lines.append(f"User Hints: {', '.join(user_hints)}")
+            prompt.append(f"User Hints: {', '.join(user_hints)}")
 
-        return "\n".join(lines) + "\n"
+        return "\n".join(prompt) + "\n"
+
+    def generate_taxonomy_targets(self, taxonomy_prompt: str) -> List[LeafItem]:
+        result = Runner.run_sync(self.leaf_agent, taxonomy_prompt)
+        taxonomy = result.final_output.items if result and result.final_output else []
+
+        return taxonomy

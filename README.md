@@ -160,9 +160,8 @@ Do not hardcode absolute paths to these directories. Use project-relative paths 
 
 ## Current Caveats
 
-- `main.py` is hardcoded and should become a real CLI.
+- `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
-- `make help` currently prints only a header.
 - Test coverage is minimal.
 - Full extraction is resource-intensive and can trigger model downloads and API calls.
 
@@ -184,10 +183,7 @@ This project includes third-party components:
 
 Their respective licenses are included in the source tree.
 
-## TODO
-
-- Replace the hardcoded `main.py` flow with a proper CLI.
-- Improve Docker and long-running job execution.
-- Add API-layer support for calling the CLI or container image.
-- Add GCP support utilities for BigQuery and video download workflows.
-- Expand tests around taxonomy, parser tools, database persistence, and platform evaluation.
+### Deep-Dive Docs (`docs/`)
+Diagram-rich explanations of the core mechanics:
+- [SAM2 tracking mechanism](docs/sam2-tracking-and-identity.md) - Explains how SAM2 tracks the objects and how ClipScribe merges similar objects across the scenes
+- [Extractor core algorithm](docs/extractor-core-algorithm.md) - ClipScribe extractor core algorithm

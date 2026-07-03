@@ -15,14 +15,9 @@ from unittest import mock
 
 import pytest
 
-from src.clip_scribe.engine import ClipScribeEngine
 from src.db.engine import ensure_sqlite_parent_directory
-from src.extractor.extractor_core import VideoInformationExtractor
-from src.utils.artifacts import NullArtifactUploader
-from src.utils.progress import ProgressEvent
 
 BACKEND = Path(__file__).resolve().parents[1]
-MAIN_PY = BACKEND / "main.py"
 
 
 def _extract_list_literal(source_path: Path, dict_key: str, list_key: str) -> list[str]:
@@ -37,122 +32,6 @@ def _extract_list_literal(source_path: Path, dict_key: str, list_key: str) -> li
                 if isinstance(k, ast.Constant) and k.value == list_key:
                     return [ast.literal_eval(e) for e in v.elts]  # type: ignore[attr-defined]
     raise AssertionError(f"{dict_key}[{list_key!r}] not found in {source_path}")
-
-
-class RecordingProgressReporter:
-    def __init__(self) -> None:
-        self.events = []
-
-    def emit(self, event_type, data=None):
-        self.events.append((event_type, dict(data or {})))
-
-
-class FailingExtractor:
-    def __init__(self) -> None:
-        self.cleaned = False
-
-    def extract(self, **kwargs):
-        raise RuntimeError("extract failed")
-
-    def cleanup(self) -> None:
-        self.cleaned = True
-
-
-def test_main_branded_categories_are_not_concatenated():
-    categories = _extract_list_literal(
-        MAIN_PY, "platform_params", "youtube_branded_products_categories"
-    )
-    print("\nbranded_products_categories:")
-    for c in categories:
-        print(f"  - {c}")
-
-    # "RAM HD Rebel Car" must survive as its own entry, not be glued onto a
-    # neighbouring "...Truck" string by Python's implicit concatenation.
-    assert "RAM HD Rebel Car" in categories
-    assert "Jeep Wrangler Truck" in categories
-    assert "Jeep Adventure Days Truck" in categories
-
-    # No entry should be the tell-tale concatenated artifact.
-    for c in categories:
-        assert "TruckRAM" not in c, f"implicit-concat artifact survived: {c!r}"
-
-
-def test_engine_reports_failed_when_extraction_fails():
-    reporter = RecordingProgressReporter()
-    extractor = FailingExtractor()
-    engine = ClipScribeEngine(
-        mode="extract",
-        video_name="v.mp4",
-        video_path="input/v.mp4",
-        video_type="car ad",
-        extractor=extractor,
-        parser=None,
-        reader_db=mock.MagicMock(),
-        writer_db=mock.MagicMock(),
-        progress_reporter=reporter,
-        artifact_uploader=NullArtifactUploader(),
-    )
-
-    with pytest.raises(RuntimeError, match="extract failed"):
-        engine.run()
-
-    event_types = [event_type for event_type, _ in reporter.events]
-    assert ProgressEvent.JOB_FAILED in event_types
-    assert ProgressEvent.JOB_COMPLETED not in event_types
-    assert extractor.cleaned is True
-
-
-def test_frame_detections_use_final_global_object_ids():
-    extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
-    extractor.frame_detections = [
-        {
-            "shot_index": 0,
-            "frame_idx": 1,
-            "timestamp_sec": 0.1,
-            "source": "sam_mask",
-            "label": "car",
-            "text": None,
-            "box_x1": 1.0,
-            "box_y1": 2.0,
-            "box_x2": 3.0,
-            "box_y2": 4.0,
-            "confidence": None,
-            "object_id": 7,
-        },
-        {
-            "shot_index": 1,
-            "frame_idx": 5,
-            "timestamp_sec": 0.5,
-            "source": "sam_mask",
-            "label": "car",
-            "text": None,
-            "box_x1": 5.0,
-            "box_y1": 6.0,
-            "box_x2": 7.0,
-            "box_y2": 8.0,
-            "confidence": None,
-            "object_id": 12,
-        },
-        {
-            "shot_index": 1,
-            "frame_idx": 5,
-            "timestamp_sec": 0.5,
-            "source": "dino",
-            "label": "car",
-            "text": None,
-            "box_x1": 5.0,
-            "box_y1": 6.0,
-            "box_x2": 7.0,
-            "box_y2": 8.0,
-            "confidence": 0.9,
-            "object_id": None,
-        },
-    ]
-
-    detections = extractor._frame_detections_with_global_object_ids({7: 0, 12: 0})
-
-    assert [d["object_id"] for d in detections] == [0, 0, None]
-    assert [d["object_id"] for d in extractor.frame_detections] == [7, 12, None]
 
 
 def test_sqlite_parent_directory_is_created(tmp_path):

@@ -135,4 +135,4 @@ class DinoDetector:
             )
 
         cv2.imwrite(output_path, vis_img)
-        logger.info(f"Saved visualization to {output_path}")
+        logger.info(f"Saved Dino Object Visualization to {output_path}")

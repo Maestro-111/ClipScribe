@@ -185,7 +185,7 @@ class VideoInformationExtractor:
     @staticmethod
     def get_schema_descriptions() -> dict[str, dict[str, str]]:
         """
-        Returns a flat dictionary mapping DB table names to their column descriptions.
+        Returns a flat dictionary mapping DB table names which are going to be used by LangChain later to their column descriptions.
         Structure: {table_name: {column_name: description_string}}
         This is persisted to the field_descriptions table for self-documenting DB schemas.
         """
@@ -1362,12 +1362,26 @@ class VideoInformationExtractor:
                 },
             )
 
-            dynamic_taxonomy = self.taxonomy_generator.generate_targets(
+            taxonomy_prompt = self.taxonomy_generator.generate_taxonomy_prompt(
                 video_type,
                 scene_context=combined_raw_context,
                 dino_prompt=combined_final_context,
                 user_hints=self.taxonomy_user_hints,
             )
+
+            taxonomy_prompt_path = os.path.join(
+                artifact_path,
+                f"taxonomy_prompt_{shot_idx}.txt",
+            )
+
+            with open(taxonomy_prompt_path, "w", encoding="utf-8") as file:
+                file.write(taxonomy_prompt)
+                logger.info(f"Taxonomy Prompt saved to: {taxonomy_prompt_path}")
+
+            dynamic_taxonomy = self.taxonomy_generator.generate_taxonomy_targets(
+                taxonomy_prompt
+            )
+
             self.taxonomy_resolver.set_active_targets(dynamic_taxonomy)
 
             self.progress.emit(

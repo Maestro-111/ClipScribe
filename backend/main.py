@@ -12,9 +12,9 @@ import traceback
 
 load_dotenv(find_dotenv())
 
-video_name = "RAM_jeVt2-Qp_IA - RAM HD Rebel - 15 FR - April.mp4"
+video_name = "CHRYSLER_ReebTOYIlCY - Chrysler Pacifica ｜ 4x4 Winter Event.mp4"
 video_path = f"input/{video_name}"
-video_type = "car ad"
+video_type = "car commercial"
 
 run_id = ""
 
@@ -24,13 +24,13 @@ clib_scribe_mode = "full"
 
 
 platform_params = {
-    "youtube_brand_name": "RAM",
-    "youtube_branded_products": ["RAM HD Rebe"],
+    "youtube_brand_name": "Chrysler",
+    "youtube_branded_products": ["Chrysler Pacifica"],
     "youtube_branded_products_categories": [
-        "RAM HD Rebel Pick Up Truck",
-        "RAM HD Rebel Truck",
-        "RAM HD Rebel Car",
-        "RAM HD Rebel SUV",
+        "Chrysler PacificaPick Up Truck",
+        "Chrysler Pacifica Truck",
+        "Chrysler Pacifica Car",
+        "Chrysler Pacifica SUV",
     ],
     "youtube_call_to_actions": [
         "learn more",

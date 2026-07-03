@@ -98,7 +98,7 @@ class ClipScribeEngine:
                 # only the extraction engine, i.e. it won't save run to db
                 self.extract()
             elif self.mode == "parse":
-                # onyl parse engine, i.e. we expect to have an existing run_id data in db
+                # only parse engine, i.e. we expect to have an existing run_id data in db
                 self.parse(run_id)
             else:
                 raise ValueError(
