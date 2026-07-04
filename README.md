@@ -33,6 +33,7 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
 - Per-run extraction artifacts and parser report generation
+- FastAPI sync-path API for uploads, jobs, run inspection, and artifact serving
 
 ## Setup
 
@@ -65,6 +66,9 @@ Common environment variables:
 - `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
 - `POSTGRESQL_URL` - required when `database.backend` is set to `postgresql`.
 - `SQLITE_URL` - optional when `database.backend` is set to `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
+- `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
+- `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for read-only/test API startup without loading ML models.
+- `CLIPSCRIBE_CORS_ORIGINS` - comma-separated browser origins for the API; defaults to `http://localhost:5173`.
 
 The main configuration file is:
 
@@ -82,6 +86,8 @@ uv run alembic upgrade head
 
 ## Running
 
+### Local Scratch Entry Point
+
 The current `main.py` is a temporary hardcoded entry point, not a stable CLI. It is useful for local experiments, but video names, mode, run id, platform parameters, and device settings are currently edited in the file.
 
 Current modes:
@@ -97,6 +103,26 @@ uv run python main.py
 ```
 
 A proper CLI is still a TODO. Until then, prefer changing existing builder/engine code rather than adding one-off scripts for each run.
+
+### Web API
+
+The checked-in FastAPI app is the first web/API layer. It uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor, so `POST /jobs` returns immediately while the job runs in the background. Celery, Redis, SSE, and cancellation are not implemented yet.
+
+Start the API from `backend/`:
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+Useful API routes:
+
+- `POST /uploads` - upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
+- `GET /inputs` - list server-side input videos accepted by the job form.
+- `POST /jobs` - create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` still writes artifacts only without creating a run row for `/runs`.
+- `GET /jobs` and `GET /jobs/{job_id}` - poll job state.
+- `GET /runs/{run_id}/...` - inspect persisted run data, frame detections, parser results, and artifacts.
+
+The API request does not accept a device field. The app uses `clip_scribe.device` from `clip_scribe.yaml`; `main.py` can still pass an override when running locally.
 
 ## Development Commands
 
@@ -120,6 +146,12 @@ uv run pre-commit run --all-files
 
 > **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
+Install only the slim API dependency group for API-container work:
+
+```bash
+uv sync --only-group api
+```
+
 Apply database migrations from the repository root via the Makefile:
 
 ```bash
@@ -132,6 +164,7 @@ The root Makefile currently has stale setup/checkpoint/clean targets after the b
 
 ```text
 backend/src/clip_scribe/        Engine, builders, platform config, main app config
+backend/app/                    FastAPI sync API, routes, settings, job runner
 backend/src/extractor/          Scene extraction, taxonomy, tracking, scene description
 backend/src/parser/             Parser agents, tools, evaluators, reports
 backend/src/ocr/                PaddleOCR wrapper and OCR post-processing
@@ -161,6 +194,7 @@ Do not hardcode absolute paths to these directories. Use project-relative paths 
 ## Current Caveats
 
 - `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.
+- The FastAPI app is a sync-path implementation with a single in-process job slot; no Celery, Redis, SSE, or cancellation endpoint yet.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
 - Test coverage is minimal.
 - Full extraction is resource-intensive and can trigger model downloads and API calls.
