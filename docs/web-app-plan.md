@@ -20,6 +20,14 @@ nothing built for one blocks the other.
 This file is a living checklist. Sections marked **Open question** are decisions
 to make before that piece is built.
 
+Current checked-in state: the backend relocation, Alembic migrations,
+load-once builder, progress seam, raw detection persistence, and **sync-path
+FastAPI app** have landed. The API runs jobs in-process on a single-slot
+executor and exposes uploads, input listing, job polling, read-only run views,
+artifact serving, health, and metadata endpoints. Celery, Redis, SSE,
+cooperative cancellation, the frontend, and the final Docker split are still
+planned.
+
 ---
 
 ## 1. Target architecture
@@ -69,9 +77,9 @@ to make before that piece is built.
 
 ## 2. Repo restructure (monorepo)
 
-**Status: PARTIAL.** The Python project has moved under `backend/`; the web
-API, frontend, and Docker files below are the target shape unless marked as
-existing placeholders.
+**Status: PARTIAL.** The Python project and sync FastAPI app now live under
+`backend/`; the frontend, Celery/Redis/SSE pieces, and final Docker image
+contents remain planned.
 
 ```
 clipscribe/
@@ -81,12 +89,15 @@ clipscribe/
     main.py                       # CLI entry — instantiates ClipScribeBuilder and runs one job
     src/                          # existing core, paths unchanged
       clip_scribe/  extractor/  ocr/  parser/  db/  dino/  sam2/  utils/
-    app/                          # web layer placeholder (currently just __init__.py)
+    app/                          # sync-path FastAPI layer
       celery_app.py               # PLANNED — Celery app + worker_process_init signal
       tasks.py                    # PLANNED/WORKER-ONLY — imports ClipScribeBuilder
-      main.py                     # PLANNED/API-ONLY — FastAPI app + lifespan
-      routes/                     # PLANNED — jobs.py, runs.py, artifacts.py, health.py
-      models.py                   # PLANNED — Pydantic request/response schemas
+      main.py                     # FastAPI app + lifespan; loads builder for sync path
+      job_runner.py               # sync single-slot executor job service
+      settings.py                 # CLIPSCRIBE_* API env settings
+      errors.py                   # RFC7807 problem+json handlers
+      routes/                     # jobs, runs, artifacts, health, meta, uploads
+      models.py                   # Pydantic request/response schemas
       events.py                   # PLANNED — Redis pub/sub progress helpers
     docker/
       api/
@@ -206,9 +217,12 @@ Key consequences:
 
 #### Per job (`build_clip_scribe(...)`)
 
-- `video_name`, `video_path`, `video_type`, `mode`, `device`,
+- `video_name`, `video_path`, `video_type`, `mode`,
   `platform_name`, `platform_conf`, `user_hints`, `generate_hint_from_name`
   arrive as call args.
+- Device is no longer a per-job argument. `ClipScribeBuilder(device=...)`
+  resolves one process-wide pipeline device at boot: the API uses
+  `clip_scribe.device` from yaml, while `main.py` may still pass an override.
 - `combined_hints` derivation (only OpenAI-roundtrip if
   `generate_hint_from_name=True`).
 - Fresh `GPTSceneDescriber` (cheap — OpenAI client wrapper, not a model).
@@ -256,7 +270,6 @@ def run_job(job_params: dict):
         video_path=job_params["video_path"],
         video_type=job_params["video_type"],
         clib_scribe_mode=job_params["mode"],
-        clib_scribe_device=job_params["device"],
         clib_scribe_platform_name=job_params["platform_name"],
         clib_scribe_platform_conf=platform_conf,
         user_hints=job_params.get("user_hints"),
@@ -298,7 +311,7 @@ mode            TEXT            # full | extract | parse
 video_name      TEXT
 video_path      TEXT
 video_type      TEXT
-device          TEXT
+device          TEXT            # resolved process device, not a request field
 platform        TEXT            # youtube | ...
 params_json     JSONB           # full request payload for reproducibility
 error_text      TEXT
@@ -404,11 +417,12 @@ core emits event type + payload through `backend/src/utils/progress.py`. Redis
 pub/sub, timestamp/job-id envelopes, SSE multiplexing, log mirroring, and
 per-criterion parser events are still worker/API work.
 
-Worker publishes to two Redis pub/sub channels per job:
+Future workers will publish to two Redis pub/sub channels per job:
 - `job:{id}:events` — structured JSON events (the vocabulary below)
 - `job:{id}:logs` — raw `logging.Handler` passthrough (level, msg, ts)
 
-FastAPI's SSE endpoint subscribes to both and multiplexes into one stream.
+The planned FastAPI SSE endpoint will subscribe to both and multiplex them into
+one stream. The sync-path API checked in today does not expose SSE.
 
 ### Event types
 
@@ -481,11 +495,15 @@ contextvar so no function signatures change.
 
 OpenAPI-generated; TS client codegen via `openapi-typescript`. All routes
 return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
+Implemented routes are the sync-path API; planned Celery/SSE routes are called
+out separately.
 
 ### Jobs
-- `POST   /jobs`                       — create + enqueue. Request body mirrors `main.py` params (see §7).
+- `POST   /jobs`                       — create a queued job and submit it to the single-slot in-process executor. Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
 - `GET    /jobs`                       — paginated, filterable by status.
 - `GET    /jobs/{id}`                  — full state.
+
+Planned:
 - `GET    /jobs/{id}/events`           — SSE; multiplexes `events` + `logs`.
 - `POST   /jobs/{id}/cancel`           — cooperative cancel (see §10).
 
@@ -506,11 +524,15 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 
 ### Health
 - `GET /healthz`                       — liveness.
-- `GET /readyz`                        — DB + Redis reachability.
+- `GET /readyz`                        — heavy builder loaded + DB reachable. Redis check lands with the pub/sub bridge.
 
 ### Metadata
 - `GET /platforms`                     — list, with required params.
 - `GET /defaults`                      — current yaml config exposed (read-only).
+- `GET /inputs`                        — list videos under `CLIPSCRIBE_INPUT_DIR`.
+
+### Uploads
+- `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `JobCreateRequest.video_path` values.
 
 ---
 
@@ -535,12 +557,14 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 
 2. **New job** (`/jobs/new`)
    - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
-     `video_type`, `device`, `mode`, `platform`).
-   - Video field: upload OR pick from server-side `input/` directory (see
-     Open question §9).
+     `video_type`, `mode`, `platform`). Device is shown from `/defaults` as
+     read-only app configuration, not submitted in the job request.
+   - Video field: upload via `POST /uploads` OR pick from server-side
+     `input/` directory via `GET /inputs`.
    - Defaults pre-populated from `GET /defaults` so the form shows the yaml
      values and the user only overrides what they care about.
-   - Submit → `POST /jobs` → redirect to `/jobs/{id}`.
+   - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and poll until
+     the response contains a completed `run_id`.
 
 3. **Live job** (`/jobs/{id}`)
    - Layout from prior chat sketch:
@@ -549,8 +573,9 @@ return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
      - Right: current-shot panel (description, dino prompt, taxonomy
        targets, frames processed).
      - Bottom: live log tail (ring buffer ~500 lines, level filter).
-   - State driven by SSE; reducer keyed off `event.type`.
-   - On `job.completed`, auto-redirect (or show CTA) to `/runs/{id}`.
+   - Step-6 frontend state can poll `GET /jobs/{job_id}`; the later live
+     version is driven by SSE with a reducer keyed off `event.type`.
+   - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
    - Top: video player with SVG overlay (see §8).
@@ -595,7 +620,9 @@ sketch.
 
 Two images, two roles, one shared volume for weights. Placeholder Dockerfiles
 already live under `backend/docker/`; the actual image contents still need to
-be filled in:
+be filled in. The checked-in sync-path API is intentionally monolithic and
+loads `ClipScribeBuilder` in the API process; the slim/heavy split below starts
+when Celery moves execution out of the API process.
 
 ```
 backend/docker/
@@ -749,14 +776,13 @@ COPY backend/pyproject.toml backend/uv.lock /app/backend/
 COPY backend/app /app/backend/app
 COPY backend/src/db /app/backend/src/db
 COPY backend/src/clip_scribe/platform_configs /app/backend/src/clip_scribe/platform_configs
-RUN cd /app/backend && uv sync --no-dev   # consider an `api` extra to skip torch entirely
+RUN cd /app/backend && uv sync --only-group api
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0"]
 ```
 
-To keep the API image truly slim, the eventual `pyproject.toml`
-should split `[project.optional-dependencies]` into `api` and `worker`
-extras so `uv sync --no-dev --extra api` skips torch / whisper /
-paddleocr entirely.
+`backend/pyproject.toml` already has a slim `[dependency-groups].api` group for
+this image. Use `uv sync --only-group api`; unlike an optional extra, it
+excludes the heavy main dependencies (torch / whisper / paddleocr).
 
 ---
 
@@ -764,14 +790,12 @@ paddleocr entirely.
 
 These are decisions to make before the corresponding implementation step.
 
-1. **Video ingest.**
-   How does a video get from the user to the worker?
-   - (a) Multipart upload to API → API writes to a shared volume → enqueues
-     job with the path.
-   - (b) Pre-signed S3-style upload → worker pulls from object storage.
-   - (c) Server-side picker over an existing `input/` directory (closest to
-     today; simplest for internal use).
-   - Probably (c) first, (a) when multi-user. (b) only if deploying to cloud.
+1. **Video ingest.** **Resolved for the sync path.**
+   The API now supports both near-term local flows: `POST /uploads` streams
+   browser uploads into `CLIPSCRIBE_INPUT_DIR`, and `GET /inputs` lists videos
+   already present in that directory. `POST /jobs` accepts the returned
+   server-side relative path and rejects traversal or missing files before
+   enqueuing. Still open for cloud/multi-user: pre-signed object-storage upload.
 
 2. **Artifact storage.** **Mostly resolved.**
    The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the
@@ -821,7 +845,7 @@ These are decisions to make before the corresponding implementation step.
    queues it. Show queue position on the live page.
 
 10. **Logging refactor.**
-    `src/utils/clip_scribe_logging.py` is a singleton. With a worker pool +
+    `backend/src/utils/clip_scribe_logging.py` is a singleton. With a worker pool +
     per-job event streams we need a contextvar with `job_id` propagated into
     every log record so the SSE handler can route correctly. No call-site
     changes if done via a `logging.Filter` that reads the contextvar.
@@ -829,8 +853,8 @@ These are decisions to make before the corresponding implementation step.
 11. **Tests.**
     Test suite is "minimal" per CLAUDE.md. New code should land with tests:
     Pydantic model round-trips, `ProgressReporter` event ordering, `frame_detections`
-    population, SSE multiplexer. Don't try to test the engine end-to-end —
-    that needs models.
+    population, sync API job validation/routes, and the later SSE multiplexer.
+    Don't try to test the engine end-to-end — that needs models.
 
 12. **OpenAPI → TS codegen as CI step.**
     Generate `frontend/src/api/types.ts` from the FastAPI schema on every API
@@ -898,13 +922,17 @@ Strictly ordered; each step is shippable on its own.
    `remote_artifact_write` `ArtifactUploader` seam (§9.2). Unit-tested with an
    in-memory DB; full end-to-end proof is the first real `main.py` run.
 
-5. **FastAPI app, sync path only.** `POST /jobs` runs the job inline (no
-   Celery yet) so we can shake out request shape, error handling, OpenAPI
-   schema, and CORS. Implement read-only `/runs/*` and artifact endpoints.
+5. **FastAPI app, sync path only.** **DONE.** `POST /jobs` writes a queued
+   job and submits it to a single-slot in-process executor (no Celery yet), so
+   the HTTP contract is already asynchronous from the client's perspective.
+   Implemented routes include uploads, input listing, job list/get, read-only
+   `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
+   Request shape intentionally omits device, using yaml config instead.
 
-6. **Frontend bootstrap.** Vite + React + TS + Tailwind + TanStack Router /
+6. **Frontend bootstrap.** **NEXT.** Vite + React + TS + Tailwind + TanStack Router /
    Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
-   No live progress yet — just submit + poll completed status.
+   No live progress yet — submit, poll `GET /jobs/{job_id}`, then navigate by
+   the completed `run_id`.
 
 7. **Inspector overlay.** Use `frame_detections` to draw SVG boxes on
    `<video>`. Layer toggles, confidence filter, timeline tracks. This is
@@ -922,9 +950,10 @@ Strictly ordered; each step is shippable on its own.
 10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
     parser. `POST /jobs/{id}/cancel`. Partial result handling.
 
-11. **Docker split.** Fill in `backend/docker/api/Dockerfile` (slim) and
-    `backend/docker/core/Dockerfile` (heavy). Expand `docker-compose.yml` for
-    the full stack and document Mac-MPS caveat.
+11. **Docker split.** Fill in the currently empty
+    `backend/docker/api/Dockerfile` (slim) and `backend/docker/core/Dockerfile`
+    (heavy). Expand `docker-compose.yml` for the full stack and document
+    Mac-MPS caveat.
 
 12. **Polish:** retention policy, auth (if/when needed), cost tracking,
     OpenAPI codegen in CI, expand tests.
@@ -947,7 +976,8 @@ Strictly ordered; each step is shippable on its own.
   burn through credits. Cost cap or per-user budget should exist before
   this is anything but internal.
 
-- **Disk usage.** Unbounded `backend/extractor_artifacts/`. Retention story needs to
+- **Disk usage.** `backend/artifacts/` is now run-id keyed and per-frame PNGs
+  are capped, but run-level retention still needs to
   exist before turning the app on for more than one person.
 
 - **Cancellation correctness.** Hard-killing a worker mid-job leaves OpenCV
@@ -998,9 +1028,11 @@ where they run.
 
 ### Mode A — web app deployment
 
-- **Local dev (the near-term target):** `docker-compose` brings up api + redis +
-  postgres (+ frontend); the worker runs natively on the Mac so `device=mps`
-  works. No cloud, no K8s. This mode is primarily a learning/dev surface.
+- **Local dev (near term):** today the sync-path API can run natively from
+  `backend/` so `device=mps` works while `docker-compose` supplies Postgres.
+  Once Celery lands, `docker-compose` brings up API + Redis + Postgres
+  (+ frontend) and the worker runs natively on the Mac for MPS. No cloud, no
+  K8s. This mode is primarily a learning/dev surface.
 - **GCP shape (sketch, not a build target):**
 
   | Component | GCP service | Note |
