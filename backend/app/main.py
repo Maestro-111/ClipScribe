@@ -68,7 +68,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         builder: ClipScribeBuilder | None = app.state.builder
         if builder is not None:
             try:
+                # right now share the same connection pool, still close both explicitly
                 builder.writer_db.close()
+                builder.reader_db.close()
             except Exception:  # noqa: BLE001 - shutdown best-effort
                 logger.warning("Error closing DB on shutdown", exc_info=True)
 

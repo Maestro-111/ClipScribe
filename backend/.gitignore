@@ -1,0 +1,137 @@
+# Python + backend-pipeline ignores. Scoped to backend/ so its broad directory
+# patterns (lib/, build/, target/, .cache) can't leak into sibling projects like
+# frontend/ (that bug is why this file exists). Repo-wide ignores (.env, .idea/,
+# .DS_Store) live in the root .gitignore.
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+*.egg-info
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django / Flask / Scrapy
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+
+# Sphinx / mkdocs / PyBuilder
+docs/_build/
+.pybuilder/
+target/
+/site
+
+# Jupyter / IPython
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# pdm
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder / Rope
+.spyderproject
+.spyproject
+.ropeproject
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# --- ClipScribe pipeline outputs & weights ---
+*.pt
+*.pth
+*.faiss
+*.pkl
+*.log
+
+# Generated media (extractor/parser visualizations)
+*.jpeg
+*.jpg
+*.png
+*.mp4
+
+# Run artifacts and local databases
+extractor_artifacts/
+artifacts/
+parser_artifacts/
+*.db
+*.db-shm
+*.db-wal
+/data
