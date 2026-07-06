@@ -322,6 +322,14 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 .values(**values)
             )
 
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a job row. Returns True if a row was deleted, False if not found."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                jobs_table.delete().where(jobs_table.c.job_id == job_id)
+            )
+            return result.rowcount > 0
+
     def save_parser_results(self, run_id: str, platform: str, results: list) -> None:
         """Persist per-criterion parser evaluations for a run.
 

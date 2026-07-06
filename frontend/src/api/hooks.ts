@@ -10,7 +10,7 @@
 // OpenAPI schema, `data` below is fully typed with zero manual annotations.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, unwrap } from "./client";
+import { api, ApiError, unwrap } from "./client";
 import type { components } from "./types";
 
 // The request body for POST /jobs, taken straight from the generated schema
@@ -121,5 +121,113 @@ export function useInputs() {
   return useQuery({
     queryKey: keys.inputs(),
     queryFn: async () => unwrap(await api.GET("/inputs", {})),
+  });
+}
+
+// Delete a terminal job record (DELETE /jobs/{id} → 204).
+export function useDeleteJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const resp = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+      if (!resp.ok) {
+        const p = (await resp.json().catch(() => ({}))) as {
+          title?: string;
+          detail?: string;
+        };
+        throw new ApiError(
+          resp.status,
+          p.title ?? "Delete failed",
+          p.detail ?? "Server returned an error",
+        );
+      }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+}
+
+// Cancel a queued or running job (POST /jobs/{id}/cancel → 204).
+export function useCancelJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const resp = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      if (!resp.ok) {
+        const p = (await resp.json().catch(() => ({}))) as {
+          title?: string;
+          detail?: string;
+        };
+        throw new ApiError(
+          resp.status,
+          p.title ?? "Cancel failed",
+          p.detail ?? "Server returned an error",
+        );
+      }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+}
+
+// Retry a failed or canceled job. The endpoint (POST /jobs/{id}/retry) is not
+// in the generated types.ts (it was added after the last codegen run), so we
+// use plain fetch and cast the known response shape.
+export function useRetryJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const resp = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      if (!resp.ok) {
+        const p = (await resp.json().catch(() => ({}))) as {
+          title?: string;
+          detail?: string;
+        };
+        throw new ApiError(
+          resp.status,
+          p.title ?? "Retry failed",
+          p.detail ?? "Server returned an error",
+        );
+      }
+      return (await resp.json()) as components["schemas"]["JobCreatedResponse"];
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+}
+
+// Upload a single video file to the server's input/ directory.
+// openapi-fetch can't represent File in the generated schema (it emits
+// string[]), so we fall back to plain fetch + FormData for this one call.
+export function useUploadVideo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("files", file);
+      const resp = await fetch("/api/uploads", { method: "POST", body: form });
+      if (!resp.ok) {
+        const p = (await resp.json().catch(() => ({}))) as {
+          title?: string;
+          detail?: string;
+        };
+        throw new ApiError(
+          resp.status,
+          p.title ?? "Upload failed",
+          p.detail ?? "Server returned an error",
+        );
+      }
+      const body = (await resp.json()) as {
+        uploaded: { name: string; path: string; size_bytes: number }[];
+      };
+      return body.uploaded[0];
+    },
+    // Refresh the input picker after a successful upload.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.inputs() });
+    },
   });
 }

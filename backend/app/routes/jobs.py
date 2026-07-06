@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.deps import get_executor, get_reader
+from app.deps import get_executor, get_futures, get_reader, get_writer
 from app.errors import ProblemException
 from app.job_runner import JobService
 from app.models import (
@@ -21,7 +21,7 @@ from app.models import (
 )
 
 if TYPE_CHECKING:
-    from src.db import ClipScribeReaderDB
+    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -32,7 +32,8 @@ def get_job_service(request: Request) -> JobService:
 
     builder = get_builder(request)
     executor = get_executor(request)
-    return JobService(builder, executor, request.app.state.settings)
+    futures = get_futures(request)
+    return JobService(builder, executor, request.app.state.settings, futures)
 
 
 @router.post(
@@ -72,3 +73,53 @@ def get_job(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
     return JobResponse(**job)
+
+
+@router.delete(
+    "/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a completed, failed, or canceled job",
+)
+def delete_job(
+    job_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    writer: "ClipScribeWriterDB" = Depends(get_writer),
+) -> None:
+    job = reader.get_job(job_id)
+    if job is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    terminal = {"completed", "failed", "canceled"}
+    if job["status"] not in terminal:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"job '{job_id}' is '{job['status']}' — stop the job before deleting it",
+        )
+    writer.delete_job(job_id)
+
+
+@router.post(
+    "/{job_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel a queued or running job",
+)
+def cancel_job(
+    job_id: str,
+    service: JobService = Depends(get_job_service),
+) -> None:
+    service.cancel_job(job_id)
+
+
+@router.post(
+    "/{job_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobCreatedResponse,
+    summary="Retry a failed or canceled job",
+)
+def retry_job(
+    job_id: str,
+    service: JobService = Depends(get_job_service),
+) -> JobCreatedResponse:
+    return service.retry_job(job_id)

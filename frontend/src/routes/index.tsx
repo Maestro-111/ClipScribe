@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useJobs } from "../api/hooks";
+import { useCancelJob, useDeleteJob, useJobs, useRetryJob } from "../api/hooks";
 import { formatDateTime, formatDuration, statusColor } from "../lib/format";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
@@ -11,11 +11,11 @@ export const Route = createFileRoute("/")({
 const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
 
 function JobsList() {
-  // Local UI state (the status filter) lives in React state; the server data
-  // lives in TanStack Query. Changing the filter changes the queryKey, so Query
-  // fetches (and caches) each filter independently.
   const [status, setStatus] = useState("");
   const { data, isLoading, error } = useJobs(status || undefined);
+  const retry = useRetryJob();
+  const cancel = useCancelJob();
+  const del = useDeleteJob();
 
   return (
     <div>
@@ -87,15 +87,50 @@ function JobsList() {
                     {formatDuration(job.started_at, job.finished_at)}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {job.run_id && job.status === "completed" && (
-                      <Link
-                        to="/runs/$runId"
-                        params={{ runId: job.run_id }}
-                        className="text-blue-600 hover:underline"
-                      >
-                        inspect →
-                      </Link>
-                    )}
+                    <div className="flex items-center justify-end gap-3">
+                      {job.run_id && job.status === "completed" && (
+                        <Link
+                          to="/runs/$runId"
+                          params={{ runId: job.run_id }}
+                          className="text-blue-600 hover:underline"
+                        >
+                          inspect →
+                        </Link>
+                      )}
+                      {(job.status === "queued" || job.status === "running") && (
+                        <button
+                          onClick={() => cancel.mutate(job.job_id)}
+                          disabled={cancel.isPending}
+                          className="rounded border border-red-200 bg-white px-2 py-0.5 text-xs font-medium text-red-600 hover:border-red-400 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          ■ Stop
+                        </button>
+                      )}
+                      {(job.status === "failed" || job.status === "canceled") && (
+                        <button
+                          onClick={() => retry.mutate(job.job_id)}
+                          disabled={retry.isPending}
+                          className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-50"
+                        >
+                          ↺ Retry
+                        </button>
+                      )}
+                      {(job.status === "completed" ||
+                        job.status === "failed" ||
+                        job.status === "canceled") && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete job for "${job.video_name ?? job.job_id}"?`)) {
+                              del.mutate(job.job_id);
+                            }
+                          }}
+                          disabled={del.isPending}
+                          className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-xs font-medium text-neutral-400 hover:border-red-300 hover:text-red-500 disabled:opacity-50"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

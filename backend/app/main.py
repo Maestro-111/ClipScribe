@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.builder = None
     app.state.executor = None
+    app.state.futures = {}  # job_id -> Future[None]
 
     settings.input_dir.mkdir(parents=True, exist_ok=True)
 

@@ -36,10 +36,14 @@ from .platform_configs import BasePlatformConf
 from pathlib import Path
 import yaml  # type: ignore
 
+from dotenv import load_dotenv, find_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_DIR = Path(__file__).resolve().parent
 
 logger = logging.getLogger("clip_scribe")
+
+load_dotenv(find_dotenv(filename=".env"))  # local .env
 
 
 class ClipScribeBuilder:
