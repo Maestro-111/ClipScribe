@@ -15,7 +15,7 @@ from app.errors import ProblemException
 from app.settings import Settings, get_settings
 
 if TYPE_CHECKING:
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import Future, ThreadPoolExecutor
 
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
@@ -53,3 +53,7 @@ def get_executor(request: Request) -> "ThreadPoolExecutor":
             detail="Job executor is not available; this endpoint is unavailable.",
         )
     return executor
+
+
+def get_futures(request: Request) -> "dict[str, Future[None]]":
+    return getattr(request.app.state, "futures", {})

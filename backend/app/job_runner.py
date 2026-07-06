@@ -15,6 +15,7 @@ and the response stay put.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import Future
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,10 +44,12 @@ class JobService:
         builder: "ClipScribeBuilder",
         executor: "ThreadPoolExecutor",
         settings: "Settings",
+        futures: "dict[str, Future[None]]",
     ) -> None:
         self.builder = builder
         self.executor = executor
         self.settings = settings
+        self.futures = futures
         self.reader = builder.reader_db
         self.writer = builder.writer_db
 
@@ -91,9 +94,10 @@ class JobService:
             params_json=req.model_dump(mode="json"),
         )
 
-        self.executor.submit(
+        future: Future[None] = self.executor.submit(
             self._run, job_id, run_id, req, video_name, video_path_abs, video_type
         )
+        self.futures[job_id] = future
 
         return JobCreatedResponse(job_id=job_id, run_id=run_id, status=JobStatus.QUEUED)
 
@@ -132,16 +136,82 @@ class JobService:
             engine.run(run_id=run_id)
         except Exception as exc:  # noqa: BLE001 - recorded on the job row
             logger.exception("Job %s failed", job_id)
-            self.writer.update_job(
-                job_id,
-                status=JobStatus.FAILED.value,
-                error_text=str(exc),
-                finished_at=_now_iso(),
-            )
+            if not self._is_canceled(job_id):
+                self.writer.update_job(
+                    job_id,
+                    status=JobStatus.FAILED.value,
+                    error_text=str(exc),
+                    finished_at=_now_iso(),
+                )
         else:
-            self.writer.update_job(
-                job_id, status=JobStatus.COMPLETED.value, finished_at=_now_iso()
+            if not self._is_canceled(job_id):
+                self.writer.update_job(
+                    job_id, status=JobStatus.COMPLETED.value, finished_at=_now_iso()
+                )
+        finally:
+            self.futures.pop(job_id, None)
+
+    def _is_canceled(self, job_id: str) -> bool:
+        """Return True if the job was externally canceled while running."""
+        job = self.reader.get_job(job_id)
+        return job is not None and job.get("status") == JobStatus.CANCELED.value
+
+    def cancel_job(self, job_id: str) -> None:
+        """Cancel a queued or running job.
+
+        Queued jobs are prevented from starting via Future.cancel(). Running
+        jobs cannot be interrupted mid-engine (plan step 10 adds cooperative
+        cancel); the DB is marked canceled immediately and _run respects it
+        when the engine returns so the status is never overwritten to completed.
+        """
+        job = self.reader.get_job(job_id)
+        if job is None:
+            raise ProblemException(
+                status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
+        cancellable = {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
+        if job["status"] not in cancellable:
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"job '{job_id}' is '{job['status']}' — "
+                    "only queued or running jobs can be canceled"
+                ),
+            )
+        future = self.futures.get(job_id)
+        if future is not None:
+            future.cancel()  # no-op if already running, succeeds if still queued
+        self.writer.update_job(
+            job_id, status=JobStatus.CANCELED.value, finished_at=_now_iso()
+        )
+
+    def retry_job(self, job_id: str) -> JobCreatedResponse:
+        """Create a fresh job from the stored params of a failed/canceled job."""
+        job = self.reader.get_job(job_id)
+        if job is None:
+            raise ProblemException(
+                status=404, title="Not Found", detail=f"job '{job_id}' not found"
+            )
+        retryable = {JobStatus.FAILED.value, JobStatus.CANCELED.value}
+        if job["status"] not in retryable:
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"job '{job_id}' is '{job['status']}' — "
+                    "only failed or canceled jobs can be retried"
+                ),
+            )
+        params = job.get("params_json")
+        if not params:
+            raise ProblemException(
+                status=422,
+                title="Unprocessable Entity",
+                detail=f"job '{job_id}' has no stored params and cannot be retried",
+            )
+        req = JobCreateRequest.model_validate(params)
+        return self.create_job(req)
 
     def _resolve_input(self, rel_path: str | None) -> Path:
         """Resolve a request path under INPUT_DIR, guarding against traversal."""
