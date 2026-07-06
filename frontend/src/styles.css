@@ -1,0 +1,5 @@
+/* Tailwind v4: a single import pulls in the whole framework. There is no
+   tailwind.config.js in v4 — you configure theme tokens here with @theme if
+   needed. The @tailwindcss/vite plugin scans our .tsx files for class names
+   (e.g. "flex", "p-4") and generates only the CSS actually used. */
+@import "tailwindcss";

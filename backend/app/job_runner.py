@@ -87,7 +87,7 @@ class JobService:
             video_path=video_path,
             video_type=video_type,
             device=getattr(self.builder, "device", None),
-            platform=req.platform,
+            platform=req.platform.value,
             params_json=req.model_dump(mode="json"),
         )
 
@@ -111,9 +111,11 @@ class JobService:
             job_id, status=JobStatus.RUNNING.value, started_at=_now_iso()
         )
         try:
-            platform_conf = build_platform(req.platform, **self._platform_kwargs(req))
+            platform_conf = build_platform(
+                req.platform.value, **req.resolved_params.to_build_kwargs()
+            )
             if platform_conf is None:
-                raise ValueError(f"unsupported platform: {req.platform}")
+                raise ValueError(f"unsupported platform: {req.platform.value}")
 
             engine = self.builder.build_clip_scribe(
                 video_name=video_name or "",
@@ -122,7 +124,7 @@ class JobService:
                 else (req.video_path or ""),
                 video_type=video_type,
                 clib_scribe_mode=req.mode.value,
-                clib_scribe_platform_name=req.platform,
+                clib_scribe_platform_name=req.platform.value,
                 clib_scribe_platform_conf=platform_conf,
                 user_hints=req.user_hints,
                 generate_hint_from_name=req.generate_hint_from_name,
@@ -162,15 +164,3 @@ class JobService:
                 status=404, title="Not Found", detail=f"video not found: {rel_path}"
             )
         return candidate
-
-    @staticmethod
-    def _platform_kwargs(req: JobCreateRequest) -> dict:
-        if req.platform == "youtube":
-            p = req.platform_params
-            return {
-                "youtube_brand_name": p.brand_name,
-                "youtube_branded_products": p.branded_products,
-                "youtube_branded_products_categories": p.branded_products_categories,
-                "youtube_call_to_actions": p.call_to_actions,
-            }
-        return {}

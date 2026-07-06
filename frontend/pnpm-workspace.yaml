@@ -1,0 +1,5 @@
+# esbuild has a postinstall that validates its native binary. pnpm 11 blocks
+# dependency build scripts by default and asks us to approve them here. Vite uses
+# esbuild, so allow it.
+allowBuilds:
+  esbuild: true

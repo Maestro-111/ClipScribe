@@ -7,9 +7,9 @@ client, so the shapes here are the Python↔TS contract.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class JobMode(str, Enum):
@@ -26,13 +26,50 @@ class JobStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class YouTubePlatformParams(BaseModel):
-    """YouTube evaluation inputs (mirrors ``build_platform`` kwargs)."""
+class PlatformName(str, Enum):
+    """Supported evaluation platforms.
+
+    Adding a platform = a new member here, a ``BasePlatformParams`` subclass,
+    and an entry in ``PLATFORM_PARAMS_MODELS``. Requests for any value not in
+    this enum are rejected at validation (422) — non-YouTube is blocked today.
+    """
+
+    YOUTUBE = "youtube"
+
+
+class BasePlatformParams(BaseModel):
+    """Base for per-platform evaluation params.
+
+    Each platform's params own the mapping to ``build_platform`` kwargs so the
+    job service stays platform-agnostic (it just calls ``to_build_kwargs()``).
+    """
+
+    def to_build_kwargs(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class YouTubePlatformParams(BasePlatformParams):
+    """YouTube evaluation inputs."""
 
     brand_name: str = ""
     branded_products: list[str] = Field(default_factory=list)
     branded_products_categories: list[str] = Field(default_factory=list)
     call_to_actions: list[str] = Field(default_factory=list)
+
+    def to_build_kwargs(self) -> dict[str, Any]:
+        return {
+            "youtube_brand_name": self.brand_name,
+            "youtube_branded_products": self.branded_products,
+            "youtube_branded_products_categories": self.branded_products_categories,
+            "youtube_call_to_actions": self.call_to_actions,
+        }
+
+
+# platform -> its params model. The single registry the request validator, the
+# job service, and (future) the /platforms spec all key off of.
+PLATFORM_PARAMS_MODELS: dict[PlatformName, type[BasePlatformParams]] = {
+    PlatformName.YOUTUBE: YouTubePlatformParams,
+}
 
 
 class JobCreateRequest(BaseModel):
@@ -41,24 +78,31 @@ class JobCreateRequest(BaseModel):
     Device is not user-settable: the app uses the config value (the CLI uses
     ``--device``). Video is referenced by a server-side path under ``INPUT_DIR``
     (populated via ``POST /uploads`` or already present in ``input/``).
+
+    ``platform`` selects the evaluation platform; ``platform_params`` is a raw
+    object validated against the selected platform's schema (see
+    ``PLATFORM_PARAMS_MODELS``). The validated model is exposed via
+    ``resolved_params``.
     """
 
     mode: JobMode
-    platform: Literal["youtube"] = "youtube"
+    platform: PlatformName = PlatformName.YOUTUBE
     # Relative to INPUT_DIR. Required for full/extract; ignored for parse.
     video_path: str | None = None
     video_name: str | None = None
     video_type: str | None = None
-    platform_params: YouTubePlatformParams = Field(
-        default_factory=YouTubePlatformParams
-    )
+    # Shape depends on `platform`; parsed into the matching BasePlatformParams
+    # subclass in the validator below.
+    platform_params: dict[str, Any] = Field(default_factory=dict)
     user_hints: list[str] | None = None
     generate_hint_from_name: bool = False
     # Required for parse; must reference an existing run (checked in the service).
     run_id: str | None = None
 
+    _resolved_params: BasePlatformParams = PrivateAttr()
+
     @model_validator(mode="after")
-    def _check_mode_requirements(self) -> "JobCreateRequest":
+    def _validate(self) -> "JobCreateRequest":
         if self.mode == JobMode.PARSE:
             if not self.run_id:
                 raise ValueError("run_id is required for mode 'parse'")
@@ -68,7 +112,18 @@ class JobCreateRequest(BaseModel):
                     "video_path and video_name are required for mode "
                     f"'{self.mode.value}'"
                 )
+
+        model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
+        if model_cls is None:
+            raise ValueError(f"unsupported platform: {self.platform.value}")
+        # Validate the raw params against the selected platform's schema.
+        self._resolved_params = model_cls.model_validate(self.platform_params)
         return self
+
+    @property
+    def resolved_params(self) -> BasePlatformParams:
+        """The platform_params parsed into the selected platform's model."""
+        return self._resolved_params
 
 
 class JobCreatedResponse(BaseModel):

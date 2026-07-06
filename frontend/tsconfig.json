@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    // --- Output / module system ---
+    // We never emit JS from tsc; Vite does the actual compilation. tsc is used
+    // ONLY as a type-checker (`pnpm typecheck` / the `build` script).
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    // "bundler" resolution matches how Vite resolves imports (it understands
+    // package.json "exports", extensionless imports, etc.). Use this with Vite.
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    // --- Strictness (the plan asks for strict mode) ---
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    // verbatimModuleSyntax forces you to write `import type { X }` for things
+    // used only as types. It keeps runtime imports and type-only imports clearly
+    // separated (and lets bundlers drop type imports cleanly). You'll see
+    // `import type` sprinkled through this codebase because of this flag.
+    "verbatimModuleSyntax": true,
+
+    // Vite lets us import `.ts`/`.tsx` with the extension in some generated code;
+    // this allows it. Requires noEmit (set above).
+    "allowImportingTsExtensions": true,
+
+    // Node globals (used by vite.config.ts).
+    "types": ["node"],
+    // Skip type-checking of dependency .d.ts files — faster, and their errors
+    // aren't ours to fix.
+    "skipLibCheck": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

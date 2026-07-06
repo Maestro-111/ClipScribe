@@ -220,6 +220,26 @@ def test_parse_existing_run_uses_run_metadata(ctx):
     assert row["video_name"] == "old.mp4"
 
 
+def test_unsupported_platform_is_422(ctx):
+    client, state = ctx
+    # Only youtube is registered; anything else is rejected at validation.
+    resp = client.post("/jobs", json=_full_body(platform="tiktok"))
+    assert resp.status_code == 422
+    assert resp.headers["content-type"] == "application/problem+json"
+
+
+def test_youtube_params_map_to_build_kwargs(ctx):
+    from app.models import JobCreateRequest
+
+    req = JobCreateRequest.model_validate(_full_body(platform_params={"brand_name": "RAM", "call_to_actions": ["buy now"]}))
+    assert req.resolved_params.to_build_kwargs() == {
+        "youtube_brand_name": "RAM",
+        "youtube_branded_products": [],
+        "youtube_branded_products_categories": [],
+        "youtube_call_to_actions": ["buy now"],
+    }
+
+
 def test_get_job_404(ctx):
     client, state = ctx
     assert client.get("/jobs/nope").status_code == 404
