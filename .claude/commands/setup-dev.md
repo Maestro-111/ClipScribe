@@ -29,15 +29,23 @@ uv sync
 uv sync --extra dev
 ```
 
-7. Apply database migrations when preparing a fresh database:
+7. Install frontend dependencies when the setup scope includes the dashboard:
+
+```bash
+(cd ../frontend && pnpm install && pnpm gen:api)
+```
+
+`pnpm gen:api` requires the FastAPI app to be running on `localhost:8000`.
+
+8. Apply database migrations when preparing a fresh database:
 
 ```bash
 uv run alembic upgrade head
 ```
 
-8. Do not run heavyweight setup without explicit user approval. The root `Makefile` setup/checkpoint/clean targets are stale after the backend move, so verify or fix them before relying on them.
+9. Do not run heavyweight setup without explicit user approval. The root `Makefile` setup/checkpoint/clean targets are stale after the backend move, so verify or fix them before relying on them.
 
-9. Check environment variables only at the level needed for the task:
+10. Check environment variables only at the level needed for the task:
    - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work.
    - `POSTGRESQL_URL` when `database.backend` is `postgresql`.
    - `SQLITE_URL` only when using SQLite.

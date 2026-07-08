@@ -2,8 +2,8 @@
 
 A Vite + React + TypeScript single-page app for the ClipScribe web dashboard.
 This is the step-6 bootstrap from `docs/web-app-plan.md` §10: Jobs list, New job,
-and Run inspector, talking to the FastAPI sync-path API. No live progress yet
-(that's the SSE work in step 9).
+and first-pass Run inspector, talking to the FastAPI sync-path API. No live job
+page or SSE progress yet (that's the SSE work in step 9).
 
 ## Stack (and why each piece exists)
 
@@ -26,9 +26,9 @@ and Run inspector, talking to the FastAPI sync-path API. No live progress yet
 
 ```bash
 # 1. Start the backend API (from backend/, another terminal).
-#    Read-only mode is fine for browsing; drop the flag to actually run jobs.
+#    Normal dashboard browsing needs the builder/DB dependencies loaded.
 cd ../backend
-CLIPSCRIBE_API_LOAD_MODELS=0 uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 
 # 2. Install deps and generate the typed API client (needs the API running).
 cd ../frontend
@@ -55,9 +55,11 @@ Browser (:5173)
   The `$` marks a dynamic segment; `.` is a path separator. The Vite plugin
   regenerates `routeTree.gen.ts` whenever you add/rename a route file.
 - **Type-safety across the stack:** `pnpm gen:api` turns the Python Pydantic
-  models into a TS `paths` type. `openapi-fetch` is generic over it, so a wrong
-  endpoint or a malformed request body is a *compile* error. Re-run `gen:api`
-  after any backend API change (this is the anti-drift step, plan §9.12).
+  models into a TS `paths` type. `openapi-fetch` is generic over it, so typed
+  API calls reject wrong endpoints or malformed request bodies at compile time.
+  Re-run `gen:api` after any backend API change (this is the anti-drift step,
+  plan §9.12). A few multipart/lifecycle calls currently use plain `fetch`
+  because the generated file has not been refreshed for the newest job controls.
 - **Data fetching:** components never call `fetch` directly. They use the hooks
   in `src/api/hooks.ts` (`useJobs`, `useJob`, `useCreateJob`, …). Reads are
   `useQuery` (cached); writes are `useMutation` (invalidate the cache on success).
@@ -80,6 +82,13 @@ src/
     jobs.new.tsx        "/jobs/new"    New-job form.
     runs.$runId.tsx     "/runs/:runId" Run inspector.
 ```
+
+## Current UI scope
+
+- Jobs list: status filter, polling, inspect links for completed runs, queued-job stop, failed/canceled retry, and terminal-job delete.
+- New job: create `full` or `extract` jobs from an existing input video or upload; parser-only jobs are disabled in the form for now.
+- Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, shot/audio timeline, parser criteria table, and tracked video download.
+- Not yet built: dedicated `/jobs/{job_id}` live page, SSE progress/log stream, running-job cooperative cancellation, and the fuller inspector layer controls from the plan.
 
 ## Scripts
 

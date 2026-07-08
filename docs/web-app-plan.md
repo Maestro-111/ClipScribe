@@ -21,12 +21,14 @@ This file is a living checklist. Sections marked **Open question** are decisions
 to make before that piece is built.
 
 Current checked-in state: the backend relocation, Alembic migrations,
-load-once builder, progress seam, raw detection persistence, and **sync-path
-FastAPI app** have landed. The API runs jobs in-process on a single-slot
-executor and exposes uploads, input listing, job polling, read-only run views,
-artifact serving, health, and metadata endpoints. Celery, Redis, SSE,
-cooperative cancellation, the frontend, and the final Docker split are still
-planned.
+load-once builder, progress seam, raw detection persistence, **sync-path
+FastAPI app**, and initial **Vite/React frontend** have landed. The API runs
+jobs in-process on a single-slot executor and exposes uploads, input listing,
+job polling, queued-job cancellation, job retry/delete, read-only run views,
+artifact serving, health, and metadata endpoints. The frontend has a jobs list,
+new-job form, and first-pass run inspector. Celery, Redis, SSE, a dedicated
+live job page, cooperative cancellation for already-running jobs, fuller
+inspector controls, and the final Docker split are still planned.
 
 ---
 
@@ -78,8 +80,9 @@ planned.
 ## 2. Repo restructure (monorepo)
 
 **Status: PARTIAL.** The Python project and sync FastAPI app now live under
-`backend/`; the frontend, Celery/Redis/SSE pieces, and final Docker image
-contents remain planned.
+`backend/`; the initial frontend now lives under `frontend/`. Celery/Redis/SSE
+pieces, the live job page, cooperative running-job cancellation, and final
+Docker image contents remain planned.
 
 ```
 clipscribe/
@@ -110,13 +113,17 @@ clipscribe/
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
-  frontend/                       # PLANNED TS SPA
+  frontend/                       # initial TS SPA
+    README.md
     src/
-      api/                        # generated TS client from OpenAPI
-      lib/                        # state, hooks, utils
-      pages/                      # JobsList / NewJob / JobLive / RunInspector
-      components/                 # VideoOverlay, Timeline, PhaseTree, LogTail
+      api/                        # generated TS types + client/hooks
+      lib/                        # display helpers + run types
+      routes/                     # /, /jobs/new, /runs/$runId
+      styles.css                  # Tailwind v4 entry
     package.json
+    pnpm-lock.yaml
+    pnpm-workspace.yaml
+    tsconfig.json
     vite.config.ts
   docker-compose.yml              # currently Postgres-only scaffolding
   Makefile
@@ -138,6 +145,8 @@ Notes on the layout as it stands:
   reference paths that moved and `setup` still depends on removed `blip`).
   `make migrate` is the reliable target because it delegates to
   `cd backend && uv run alembic upgrade head`.
+- Frontend commands run from `frontend/` with pnpm. The Vite dev server uses a
+  `/api` proxy to FastAPI on `localhost:8000`.
 
 ---
 
@@ -502,10 +511,13 @@ out separately.
 - `POST   /jobs`                       — create a queued job and submit it to the single-slot in-process executor. Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
 - `GET    /jobs`                       — paginated, filterable by status.
 - `GET    /jobs/{id}`                  — full state.
+- `POST   /jobs/{id}/cancel`           — cancel a queued job. Running jobs return `409` until cooperative cancellation lands.
+- `POST   /jobs/{id}/retry`            — create a fresh job from a failed/canceled job's stored request payload.
+- `DELETE /jobs/{id}`                  — delete a completed, failed, or canceled job row.
 
 Planned:
 - `GET    /jobs/{id}/events`           — SSE; multiplexes `events` + `logs`.
-- `POST   /jobs/{id}/cancel`           — cooperative cancel (see §10).
+- Cooperative cancellation for already-running jobs (see §10).
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
@@ -539,54 +551,70 @@ Planned:
 ## 7. Frontend (SPA)
 
 ### Stack
-- Vite + React + TypeScript (strict mode).
-- TanStack Router (file-based; cleaner than React Router for app-shell apps).
-- TanStack Query for REST data + `EventSource` for SSE.
-- Zustand (or just `useReducer`) for the per-job live state.
-- Tailwind + shadcn/ui for components.
-- visx or d3-scale for the timeline (don't bring full d3 unless needed).
-- Type-safe API client from OpenAPI (`openapi-typescript` + `openapi-fetch`).
+- **Installed now:** Vite + React + TypeScript (strict mode), pnpm,
+  TanStack Router (file-based), TanStack Query for REST data, Zustand
+  (reserved for live-job state), Tailwind v4 via `@tailwindcss/vite`,
+  `openapi-typescript`, and `openapi-fetch`.
+- **Deferred:** `EventSource`/SSE state, shadcn/ui component vendoring, and a
+  richer timeline library such as visx or d3-scale. The current inspector uses
+  plain React/CSS for the first shot/audio timeline.
+- `vite.config.ts` proxies browser calls from `/api/*` to FastAPI on
+  `localhost:8000`; `pnpm gen:api` hits `http://localhost:8000/openapi.json`
+  directly and writes `frontend/src/api/types.ts`.
 
 ### Pages
 
 1. **Jobs list** (`/`)
-   - Table of jobs (status, video_name, created_at, duration, ABCD pass rate
-     when available).
-   - Filters: status, platform, date range, brand.
-   - "New job" button.
+   - Implemented in `frontend/src/routes/index.tsx`.
+   - Table of jobs (video, status, platform, mode, created time, duration).
+   - Status filters.
+   - "New job" link.
+   - Actions: inspect completed runs, cancel queued jobs, retry failed/canceled
+     jobs, and delete completed/failed/canceled job rows.
+   - Not yet implemented: platform/date/brand filters and ABCD pass-rate
+     summary.
 
 2. **New job** (`/jobs/new`)
-   - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
-     `video_type`, `mode`, `platform`). Device is shown from `/defaults` as
-     read-only app configuration, not submitted in the job request.
+   - Implemented in `frontend/src/routes/jobs.new.tsx`.
+   - Form mirrors the key `main.py` params (`platform_params`, `user_hints`,
+     `video_type`, `mode`, `platform`) but only enables `full` and `extract`
+     today. Parser-only jobs are supported by the API but disabled in the form
+     until the UX for choosing an existing run is added.
    - Video field: upload via `POST /uploads` OR pick from server-side
      `input/` directory via `GET /inputs`.
-   - Defaults pre-populated from `GET /defaults` so the form shows the yaml
-     values and the user only overrides what they care about.
-   - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and poll until
-     the response contains a completed `run_id`.
+   - Platform options come from `GET /platforms`; YouTube params are rendered
+     directly.
+   - Submit → `POST /jobs` → navigate back to `/` where the jobs list polls.
+   - Not yet implemented: showing `/defaults` as read-only config, redirecting
+     to a dedicated job detail page, and parser-only job creation.
 
 3. **Live job** (`/jobs/{id}`)
+   - Planned; no route exists yet.
    - Layout from prior chat sketch:
      - Top: progress bar + estimated time + "Cancel" button.
      - Left: phase tree (scene detection ✓, audio ✓, shots N/M, finalize, parse).
      - Right: current-shot panel (description, dino prompt, taxonomy
        targets, frames processed).
      - Bottom: live log tail (ring buffer ~500 lines, level filter).
-   - Step-6 frontend state can poll `GET /jobs/{job_id}`; the later live
-     version is driven by SSE with a reducer keyed off `event.type`.
+   - A pre-SSE version can poll `GET /jobs/{job_id}`; the later live version
+     is driven by SSE with a reducer keyed off `event.type`.
    - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
-   - Top: video player with SVG overlay (see §8).
-   - Right rail: layer toggles (DINO / OCR / faces / SAM bbox), confidence
-     slider, "active detections at t=..." list.
-   - Center-bottom: stacked timeline tracks (shots, audio, per-object lifespans,
-     OCR seconds).
-   - Bottom: ABCD criteria table from `parser_results`, each row expandable to
-     show `llm_prompt` + `llm_explanation` + LangSmith trace link.
-   - Download menu: tracked_output.mp4, abcd_report.csv,
-     extraction_summary.json.
+   - First pass implemented in `frontend/src/routes/runs.$runId.tsx`.
+   - Raw input video is served from `GET /runs/{id}/video` with an SVG overlay
+     driven by `frame_detections`.
+   - Current overlay layers are tracked object boxes (`sam_mask`) and OCR text
+     boxes (`ocr`). DINO boxes and MTCNN face boxes are intentionally hidden in
+     this first UI pass to avoid duplicate/noisy boxes.
+   - Timeline currently shows shot boundaries and audio segments and supports
+     click-to-seek.
+   - ABCD criteria table reads `parser_results`; rows expand to show criteria,
+     LLM explanation, prompt, and LangSmith run id when present.
+   - Current download link: `tracked_output.mp4`.
+   - Not yet implemented: confidence slider, active-detection list, per-object
+     lifespans, OCR-second timeline, DINO/face layer toggles, CSV/JSON download
+     menu, and deeper inspector filtering.
 
 ### Live progress state shape
 
@@ -609,10 +637,11 @@ finalizePct` — weights based on observed wall-clock distribution; tune later.
 
 ### Inspector overlay (SVG on `<video>`)
 
-`useFramesForRun(runId)` pulls all `frame_detections` once on mount (small) and
-caches. On `timeupdate`, find the most recent frame ≤ current playback time and
-render its boxes as SVG over the video. See chat for the reference component
-sketch.
+`useRunFrames(runId)` pulls all `frame_detections` once and caches them through
+TanStack Query. On `timeupdate`, the inspector finds the most recent sample per
+enabled source that is still within that source's hold window and renders its
+boxes as SVG over the video. This is implemented for `sam_mask` and `ocr` in
+the first pass; fuller source toggles and confidence filtering remain planned.
 
 ---
 
@@ -813,10 +842,12 @@ These are decisions to make before the corresponding implementation step.
    `jobs` and gate everything on a session.
 
 4. **Job cancellation semantics.**
-   Celery `revoke(terminate=True)` is hard-kill (SIGTERM). The engine holds
-   open files and a CUDA/MPS context — abrupt termination leaks both. Need
-   cooperative cancellation: a "should_cancel" flag the shot loop checks each
-   iteration. Decide if we want partial results saved on cancel.
+   Queued-job cancellation is implemented in the sync API. Running-job
+   cancellation is still open: Celery `revoke(terminate=True)` is hard-kill
+   (SIGTERM), and the engine holds open files plus a CUDA/MPS context — abrupt
+   termination leaks both. Need cooperative cancellation: a "should_cancel" flag
+   the shot loop checks each iteration. Decide if we want partial results saved
+   on cancel.
 
 5. **Resumability after worker crash.**
    Probably out of scope. Worth deciding because today the extractor writes the
@@ -867,7 +898,7 @@ These are decisions to make before the corresponding implementation step.
     front does the same thing.
 
 14. **Disk retention.** **Partially mitigated.**
-    A `max_artifact_files` config cap (default 200) now bounds the per-frame
+    A `max_artifact_files` config cap (current default 350) now bounds the per-frame
     visualization PNGs written per run (the unbounded growth source); the
     tracked mp4 and `extraction_summary.json` are always kept. Still open: a
     run-level retention policy (delete after N days / keep last K) and a
@@ -925,18 +956,21 @@ Strictly ordered; each step is shippable on its own.
 5. **FastAPI app, sync path only.** **DONE.** `POST /jobs` writes a queued
    job and submits it to a single-slot in-process executor (no Celery yet), so
    the HTTP contract is already asynchronous from the client's perspective.
-   Implemented routes include uploads, input listing, job list/get, read-only
-   `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
-   Request shape intentionally omits device, using yaml config instead.
+   Implemented routes include uploads, input listing, job list/get/cancel/retry/
+   delete, read-only `/runs/*`, filesystem artifacts, health, and metadata;
+   errors use RFC7807. Request shape intentionally omits device, using yaml
+   config instead.
 
-6. **Frontend bootstrap.** **NEXT.** Vite + React + TS + Tailwind + TanStack Router /
-   Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
-   No live progress yet — submit, poll `GET /jobs/{job_id}`, then navigate by
-   the completed `run_id`.
+6. **Frontend bootstrap.** **DONE.** Vite + React + TS + Tailwind + TanStack Router /
+   Query are under `frontend/`. Implemented pages are the jobs list, new-job
+   form, and first-pass run inspector. No live progress page yet; the jobs list
+   polls `GET /jobs` and links completed jobs to `/runs/{run_id}`.
 
-7. **Inspector overlay.** Use `frame_detections` to draw SVG boxes on
-   `<video>`. Layer toggles, confidence filter, timeline tracks. This is
-   where the project starts to feel real.
+7. **Inspector overlay.** **PARTIAL.** `frame_detections` are drawn as SVG boxes
+   on `<video>` for tracked objects and OCR text, with shot/audio timeline
+   tracks and parser results. Remaining inspector work: DINO/face toggles,
+   confidence filter, active-detection list, object lifespan tracks, OCR-second
+   timeline, and CSV/JSON downloads.
 
 8. **Celery + Redis.** Move `POST /jobs` to enqueue. `worker_process_init`
    builds one long-lived `ClipScribeBuilder`. One worker, concurrency 1. `jobs` table tracks
@@ -947,8 +981,10 @@ Strictly ordered; each step is shippable on its own.
    `job:{id}:events` + `job:{id}:logs` into the SSE response. Frontend live
    page renders from the reducer.
 
-10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
-    parser. `POST /jobs/{id}/cancel`. Partial result handling.
+10. **Cooperative cancel.** Queued-job cancel exists; add a "should_cancel" flag
+    honored by the shot loop + parser for running jobs. Keep
+    `POST /jobs/{id}/cancel` as the API surface and decide partial result
+    handling.
 
 11. **Docker split.** Fill in the currently empty
     `backend/docker/api/Dockerfile` (slim) and `backend/docker/core/Dockerfile`
