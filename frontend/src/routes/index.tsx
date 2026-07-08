@@ -101,7 +101,7 @@ function JobsList() {
                           inspect →
                         </Link>
                       )}
-                      {(job.status === "queued" || job.status === "running") && (
+                      {job.status === "queued" && (
                         <button
                           onClick={() => cancel.mutate(job.job_id)}
                           disabled={cancel.isPending}

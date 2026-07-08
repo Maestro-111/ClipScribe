@@ -5,6 +5,7 @@ stub engine) and an inline executor stand in, wired via dependency_overrides.
 """
 
 import os
+from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
@@ -31,9 +32,16 @@ class InlineExecutor:
 
     def submit(self, fn, *args, **kwargs):
         self.calls.append((fn, args, kwargs))
+        future: Future[None] = Future()
         if self.run:
-            fn(*args, **kwargs)
-        return None
+            if future.set_running_or_notify_cancel():
+                try:
+                    fn(*args, **kwargs)
+                except Exception as exc:
+                    future.set_exception(exc)
+                else:
+                    future.set_result(None)
+        return future
 
 
 class FakeEngine:
@@ -88,12 +96,14 @@ def ctx(tmp_path):
         fake_engine = fake_engine or FakeEngine()
         executor = InlineExecutor(run=run)
         builder = FakeBuilder(reader, writer, fake_engine, device=device)
-        svc = JobService(builder, executor, settings)
+        futures: dict[str, Future[None]] = {}
+        svc = JobService(builder, executor, settings, futures)
         app.dependency_overrides[get_job_service] = lambda: svc
         state.svc = svc
         state.executor = executor
         state.builder = builder
         state.engine = fake_engine
+        state.futures = futures
         return svc
 
     state.install_service = install_service
@@ -260,3 +270,37 @@ def test_list_jobs_filter_and_shape(ctx):
     queued = client.get("/jobs", params={"status": "queued"})
     assert len(queued.json()["jobs"]) == 2
     assert client.get("/jobs", params={"status": "completed"}).json()["jobs"] == []
+
+
+def test_cancel_queued_job_marks_canceled(ctx):
+    client, state = ctx
+    state.install_service(run=False)
+    job_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+
+    resp = client.post(f"/jobs/{job_id}/cancel")
+
+    assert resp.status_code == 204
+    row = state.reader.get_job(job_id)
+    assert row["status"] == "canceled"
+    assert row["finished_at"]
+    assert job_id not in state.futures
+
+
+def test_cancel_running_job_is_rejected(ctx):
+    client, state = ctx
+    state.writer.create_job(
+        job_id="job-running",
+        run_id="run-running",
+        mode="full",
+        status="running",
+        video_name="ad.mp4",
+        video_path="ad.mp4",
+        platform="youtube",
+        params_json=_full_body(),
+    )
+
+    resp = client.post("/jobs/job-running/cancel")
+
+    assert resp.status_code == 409
+    row = state.reader.get_job("job-running")
+    assert row["status"] == "running"

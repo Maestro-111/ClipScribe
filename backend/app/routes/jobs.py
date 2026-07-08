@@ -103,7 +103,7 @@ def delete_job(
 @router.post(
     "/{job_id}/cancel",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Cancel a queued or running job",
+    summary="Cancel a queued job",
 )
 def cancel_job(
     job_id: str,

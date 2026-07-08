@@ -158,34 +158,41 @@ class JobService:
         return job is not None and job.get("status") == JobStatus.CANCELED.value
 
     def cancel_job(self, job_id: str) -> None:
-        """Cancel a queued or running job.
-
-        Queued jobs are prevented from starting via Future.cancel(). Running
-        jobs cannot be interrupted mid-engine (plan step 10 adds cooperative
-        cancel); the DB is marked canceled immediately and _run respects it
-        when the engine returns so the status is never overwritten to completed.
-        """
+        """Cancel a queued job before it starts."""
         job = self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
-        cancellable = {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
-        if job["status"] not in cancellable:
+        if job["status"] == JobStatus.RUNNING.value:
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"job '{job_id}' is running and cannot be canceled until "
+                    "cooperative cancellation is implemented"
+                ),
+            )
+        if job["status"] != JobStatus.QUEUED.value:
             raise ProblemException(
                 status=409,
                 title="Conflict",
                 detail=(
                     f"job '{job_id}' is '{job['status']}' — "
-                    "only queued or running jobs can be canceled"
+                    "only queued jobs can be canceled"
                 ),
             )
         future = self.futures.get(job_id)
-        if future is not None:
-            future.cancel()  # no-op if already running, succeeds if still queued
+        if future is not None and not future.cancel():
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=f"job '{job_id}' has already started and cannot be canceled",
+            )
         self.writer.update_job(
             job_id, status=JobStatus.CANCELED.value, finished_at=_now_iso()
         )
+        self.futures.pop(job_id, None)
 
     def retry_job(self, job_id: str) -> JobCreatedResponse:
         """Create a fresh job from the stored params of a failed/canceled job."""

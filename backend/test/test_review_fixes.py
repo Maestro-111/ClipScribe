@@ -130,3 +130,97 @@ def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
         )
         print(f"\nmode={mode!r} -> per-job heavy load calls={heavy.call_count}")
         assert heavy.call_count == 0, "build_clip_scribe must not reload heavy models"
+
+
+def test_parser_report_path_stays_under_output_dir(tmp_path):
+    from src.parser.parser_core import VideoInformationParser
+    from src.utils.progress import NullProgressReporter
+
+    class DummyEvaluator:
+        def evaluate_all(self, run_id, video_name):
+            return []
+
+    class DummyReportWriter:
+        def __init__(self, report_output_path, scores_output_path):
+            self.report_output_path = report_output_path
+            self.scores_output_path = scores_output_path
+
+        def write_results(self, results):
+            self.report_output_path.parent.mkdir(parents=True, exist_ok=True)
+            self.report_output_path.write_text("")
+            self.scores_output_path.write_text("")
+
+    class DummyParser(VideoInformationParser):
+        def __init__(self, output_dir):
+            self.platform_name = "youtube"
+            self.platform_config = mock.MagicMock()
+            self.output_dir = str(output_dir)
+            self.max_parallel_agents = 1
+            self.recursion_limit = 1
+            self.model = mock.MagicMock()
+            self.progress = NullProgressReporter()
+
+        def create_report_name(self):
+            return "abcd"
+
+        def create_evaluator(self, reader_db):
+            return DummyEvaluator()
+
+        def create_report_writer(self, output_path, scores_output_path):
+            return DummyReportWriter(output_path, scores_output_path)
+
+    output_dir = tmp_path / "parser_artifacts"
+    parser = DummyParser(output_dir)
+    writer_db = mock.MagicMock()
+
+    report_path = Path(
+        parser.parse(
+            run_id="../outside-run",
+            video_name="../outside-video",
+            reader_db=mock.MagicMock(),
+            writer_db=writer_db,
+        )
+    )
+
+    report_path.resolve().relative_to(output_dir.resolve())
+    assert report_path.parent.name == "outside-run"
+    assert not (tmp_path / "outside-video").exists()
+    writer_db.save_parser_results.assert_called_once()
+
+
+def test_alembic_baseline_accepts_existing_runs_table(tmp_path, monkeypatch):
+    import sqlite3
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    db_path = tmp_path / "adopted.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE runs (
+                run_id TEXT NOT NULL,
+                video_name TEXT,
+                video_path TEXT,
+                video_type TEXT,
+                created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+                PRIMARY KEY (run_id)
+            )
+            """
+        )
+
+    monkeypatch.setenv("SQLITE_URL", f"sqlite:////{db_path}")
+    monkeypatch.chdir(BACKEND)
+    config = Config(str(BACKEND / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND / "alembic"))
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        tables = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+    assert {"runs", "jobs", "frame_detections", "alembic_version"} <= tables

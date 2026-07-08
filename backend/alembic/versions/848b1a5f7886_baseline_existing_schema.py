@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("text", sa.Text(), nullable=True),
         sa.Column("confidence", sa.Float(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_table(
         "field_descriptions",
@@ -39,6 +40,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("table_name", "column_name"),
+        if_not_exists=True,
     )
     op.create_table(
         "global_stats",
@@ -58,6 +60,7 @@ def upgrade() -> None:
         sa.Column("qp_general_rapid_fire_segments", sa.Text(), nullable=True),
         sa.Column("qp_general_criteria", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_table(
         "runs",
@@ -72,6 +75,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.PrimaryKeyConstraint("run_id"),
+        if_not_exists=True,
     )
     op.create_table(
         "scene_descriptions",
@@ -82,6 +86,7 @@ def upgrade() -> None:
         sa.Column("end_time", sa.Float(), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_table(
         "text_events",
@@ -91,6 +96,7 @@ def upgrade() -> None:
         sa.Column("line_index", sa.Integer(), nullable=True),
         sa.Column("text", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_table(
         "visual_object_occurrences",
@@ -109,6 +115,7 @@ def upgrade() -> None:
         sa.Column("screen_time_ratio", sa.Float(), nullable=True),
         sa.Column("quadrant", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     # ### end Alembic commands ###
 
