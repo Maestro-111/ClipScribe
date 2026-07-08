@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,9 +25,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.errors import register_error_handlers
 from app.routes import artifacts, health, jobs, meta, runs, uploads
 from app.settings import get_settings
-
-if TYPE_CHECKING:
-    from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
 
 logger = logging.getLogger("clip_scribe")
 
@@ -39,25 +36,53 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.builder = None
     app.state.executor = None
     app.state.futures = {}  # job_id -> Future[None]
+    app.state.reader_db = None
+    app.state.writer_db = None
+    app.state.db_engine = None  # only set when we own a standalone engine
 
     settings.input_dir.mkdir(parents=True, exist_ok=True)
 
-    if settings.load_models:
+    if settings.job_backend == "celery":
+        # The API enqueues to a worker (web-app-plan §10.8); it needs DB access
+        # but NEVER the ML models. Build a standalone reader/writer only — this
+        # is also the shape the step-11 slim API image ships with.
+        from src.db import (
+            ClipScribeReaderDB,
+            ClipScribeWriterDB,
+            create_db_engine,
+            resolve_database_url,
+        )
+        from src.db.engine import ensure_sqlite_parent_directory
+
+        db_url = resolve_database_url()
+        ensure_sqlite_parent_directory(db_url)
+        db_engine = create_db_engine(db_url)
+        app.state.db_engine = db_engine
+        app.state.reader_db = ClipScribeReaderDB(engine=db_engine)
+        app.state.writer_db = ClipScribeWriterDB(engine=db_engine)
+        logger.info(
+            "Celery mode: DB ready, models NOT loaded; enqueuing to %s",
+            settings.redis_url,
+        )
+    elif settings.load_models:
         # Heavy: loads SAM2/DINO/Whisper/DINOv2/MTCNN/PaddleOCR once. The
         # single-slot executor is the local stand-in for Celery concurrency=1
         # (shared GPU-resident models must not run two jobs at once).
         from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
 
         logger.info("Loading ClipScribeBuilder (this can take 30-60s)...")
-        app.state.builder = ClipScribeBuilder()
+        builder = ClipScribeBuilder(device=settings.clip_scribe_device)
+        app.state.builder = builder
+        app.state.reader_db = builder.reader_db
+        app.state.writer_db = builder.writer_db
         app.state.executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="clipscribe-job"
         )
-        logger.info("ClipScribeBuilder ready; API accepting jobs.")
+        logger.info("ClipScribeBuilder ready; API accepting jobs (inline).")
     else:
         logger.warning(
-            "CLIPSCRIBE_API_LOAD_MODELS is off; builder not loaded. "
-            "Job execution is disabled (read-only / test mode)."
+            "CLIPSCRIBE_API_LOAD_MODELS is off and job_backend is inline; "
+            "builder not loaded. Job execution is disabled (read-only / test mode)."
         )
 
     try:
@@ -66,7 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         executor: ThreadPoolExecutor | None = app.state.executor
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
-        builder: ClipScribeBuilder | None = app.state.builder
+        builder = app.state.builder
         if builder is not None:
             try:
                 # right now share the same connection pool, still close both explicitly
@@ -74,6 +99,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 builder.reader_db.close()
             except Exception:  # noqa: BLE001 - shutdown best-effort
                 logger.warning("Error closing DB on shutdown", exc_info=True)
+        db_engine = app.state.db_engine
+        if db_engine is not None:
+            try:
+                db_engine.dispose()
+            except Exception:  # noqa: BLE001 - shutdown best-effort
+                logger.warning("Error disposing DB engine on shutdown", exc_info=True)
 
 
 def create_app() -> FastAPI:

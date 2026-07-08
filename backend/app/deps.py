@@ -37,11 +37,28 @@ def get_builder(request: Request) -> "ClipScribeBuilder":
 
 
 def get_reader(request: Request) -> "ClipScribeReaderDB":
-    return get_builder(request).reader_db
+    # Read from app.state, not the builder: in celery mode the API has a DB
+    # connection but no builder (no models). lifespan populates reader_db from
+    # the builder (inline) or a standalone engine (celery).
+    reader = getattr(request.app.state, "reader_db", None)
+    if reader is None:
+        raise ProblemException(
+            status=503,
+            title="Service Unavailable",
+            detail="Database is not available; this endpoint is unavailable.",
+        )
+    return reader
 
 
 def get_writer(request: Request) -> "ClipScribeWriterDB":
-    return get_builder(request).writer_db
+    writer = getattr(request.app.state, "writer_db", None)
+    if writer is None:
+        raise ProblemException(
+            status=503,
+            title="Service Unavailable",
+            detail="Database is not available; this endpoint is unavailable.",
+        )
+    return writer
 
 
 def get_executor(request: Request) -> "ThreadPoolExecutor":

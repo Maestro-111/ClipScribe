@@ -10,5 +10,16 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Celery broker + result backend, and (step 9) the live-progress pub/sub
+  # channel. In local dev the worker runs natively on the Mac for MPS, so it
+  # reaches Redis at localhost:6379 via this host port mapping (web-app-plan §12).
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
 volumes:
   pgdata:
+  redisdata:
