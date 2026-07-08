@@ -21,14 +21,13 @@ This file is a living checklist. Sections marked **Open question** are decisions
 to make before that piece is built.
 
 Current checked-in state: the backend relocation, Alembic migrations,
-load-once builder, progress seam, raw detection persistence, **sync-path
-FastAPI app**, and initial **Vite/React frontend** have landed. The API runs
-jobs in-process on a single-slot executor and exposes uploads, input listing,
-job polling, queued-job cancellation, job retry/delete, read-only run views,
-artifact serving, health, and metadata endpoints. The frontend has a jobs list,
-new-job form, and first-pass run inspector. Celery, Redis, SSE, a dedicated
-live job page, cooperative cancellation for already-running jobs, fuller
-inspector controls, and the final Docker split are still planned.
+load-once builder, progress seam, raw detection persistence, the FastAPI app,
+and **Celery/Redis job dispatch** have landed. `POST /jobs` runs either
+in-process (single-slot executor) or via a Redis-backed Celery worker, selected
+by `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, job
+polling, read-only run views, artifact serving, health, and metadata endpoints.
+SSE live progress, cooperative cancellation, the frontend, and the final Docker
+split are still planned.
 
 ---
 
@@ -80,9 +79,8 @@ inspector controls, and the final Docker split are still planned.
 ## 2. Repo restructure (monorepo)
 
 **Status: PARTIAL.** The Python project and sync FastAPI app now live under
-`backend/`; the initial frontend now lives under `frontend/`. Celery/Redis/SSE
-pieces, the live job page, cooperative running-job cancellation, and final
-Docker image contents remain planned.
+`backend/`; the frontend, Celery/Redis/SSE pieces, and final Docker image
+contents remain planned.
 
 ```
 clipscribe/
@@ -92,16 +90,17 @@ clipscribe/
     main.py                       # CLI entry — instantiates ClipScribeBuilder and runs one job
     src/                          # existing core, paths unchanged
       clip_scribe/  extractor/  ocr/  parser/  db/  dino/  sam2/  utils/
-    app/                          # sync-path FastAPI layer
-      celery_app.py               # PLANNED — Celery app + worker_process_init signal
-      tasks.py                    # PLANNED/WORKER-ONLY — imports ClipScribeBuilder
-      main.py                     # FastAPI app + lifespan; loads builder for sync path
-      job_runner.py               # sync single-slot executor job service
-      settings.py                 # CLIPSCRIBE_* API env settings
+    app/                          # FastAPI layer (inline + celery dispatch)
+      celery_app.py               # thin shared Celery handle (broker=REDIS_URL, no torch)
+      tasks.py                    # WORKER-ONLY — imports ClipScribeBuilder; run_job task
+      job_execution.py            # run_job_core — lifecycle shared by inline + celery
+      main.py                     # FastAPI app + lifespan; builder inline / DB-only for celery
+      job_runner.py               # JobService: validate, persist, dispatch (inline|celery)
+      settings.py                 # CLIPSCRIBE_* API env settings (job_backend, redis_url)
       errors.py                   # RFC7807 problem+json handlers
       routes/                     # jobs, runs, artifacts, health, meta, uploads
       models.py                   # Pydantic request/response schemas
-      events.py                   # PLANNED — Redis pub/sub progress helpers
+      events.py                   # PLANNED — Redis pub/sub progress helpers (step 9)
     docker/
       api/
         Dockerfile                # existing placeholder for slim API image
@@ -113,19 +112,15 @@ clipscribe/
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
-  frontend/                       # initial TS SPA
-    README.md
+  frontend/                       # PLANNED TS SPA
     src/
-      api/                        # generated TS types + client/hooks
-      lib/                        # display helpers + run types
-      routes/                     # /, /jobs/new, /runs/$runId
-      styles.css                  # Tailwind v4 entry
+      api/                        # generated TS client from OpenAPI
+      lib/                        # state, hooks, utils
+      pages/                      # JobsList / NewJob / JobLive / RunInspector
+      components/                 # VideoOverlay, Timeline, PhaseTree, LogTail
     package.json
-    pnpm-lock.yaml
-    pnpm-workspace.yaml
-    tsconfig.json
     vite.config.ts
-  docker-compose.yml              # currently Postgres-only scaffolding
+  docker-compose.yml              # Postgres + Redis scaffolding (worker/api still native)
   Makefile
   docs/web-app-plan.md            # this file
 ```
@@ -145,8 +140,6 @@ Notes on the layout as it stands:
   reference paths that moved and `setup` still depends on removed `blip`).
   `make migrate` is the reliable target because it delegates to
   `cd backend && uv run alembic upgrade head`.
-- Frontend commands run from `frontend/` with pnpm. The Vite dev server uses a
-  `/api` proxy to FastAPI on `localhost:8000`.
 
 ---
 
@@ -366,6 +359,20 @@ langsmith_run_id TEXT          # link to trace
 created_at      TIMESTAMP
 ```
 
+**`chat_messages`** — user-facing transcript for the advisory chat (§13). The
+agent's working memory lives in the LangGraph checkpointer; this table is what
+the UI lists and replays.
+```
+id               INTEGER PK
+run_id           TEXT
+session_id       TEXT          # = LangGraph thread_id
+role             TEXT          # user | assistant
+content          TEXT
+tool_calls_json  JSONB         # optional: tools the agent invoked, for UI transparency
+created_at       TIMESTAMP
+INDEX (run_id, session_id)
+```
+
 ### Widened: shot boundaries
 
 `global_stats` currently encodes pacing/dynamic-start info but does **not**
@@ -511,13 +518,10 @@ out separately.
 - `POST   /jobs`                       — create a queued job and submit it to the single-slot in-process executor. Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
 - `GET    /jobs`                       — paginated, filterable by status.
 - `GET    /jobs/{id}`                  — full state.
-- `POST   /jobs/{id}/cancel`           — cancel a queued job. Running jobs return `409` until cooperative cancellation lands.
-- `POST   /jobs/{id}/retry`            — create a fresh job from a failed/canceled job's stored request payload.
-- `DELETE /jobs/{id}`                  — delete a completed, failed, or canceled job row.
 
 Planned:
 - `GET    /jobs/{id}/events`           — SSE; multiplexes `events` + `logs`.
-- Cooperative cancellation for already-running jobs (see §10).
+- `POST   /jobs/{id}/cancel`           — cooperative cancel (see §10).
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
@@ -546,75 +550,65 @@ Planned:
 ### Uploads
 - `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `JobCreateRequest.video_path` values.
 
+### Chat (advisory agent — post-run Q&A, see §13)
+- `POST   /runs/{id}/chat`             — ask a question; streamed (SSE) answer. Body: `{session_id?, message}`.
+- `GET    /runs/{id}/chat/sessions`    — list chat sessions for the run.
+- `GET    /runs/{id}/chat/{session_id}`— message history for one session.
+- `DELETE /runs/{id}/chat/{session_id}`— delete a session.
+
 ---
 
 ## 7. Frontend (SPA)
 
 ### Stack
-- **Installed now:** Vite + React + TypeScript (strict mode), pnpm,
-  TanStack Router (file-based), TanStack Query for REST data, Zustand
-  (reserved for live-job state), Tailwind v4 via `@tailwindcss/vite`,
-  `openapi-typescript`, and `openapi-fetch`.
-- **Deferred:** `EventSource`/SSE state, shadcn/ui component vendoring, and a
-  richer timeline library such as visx or d3-scale. The current inspector uses
-  plain React/CSS for the first shot/audio timeline.
-- `vite.config.ts` proxies browser calls from `/api/*` to FastAPI on
-  `localhost:8000`; `pnpm gen:api` hits `http://localhost:8000/openapi.json`
-  directly and writes `frontend/src/api/types.ts`.
+- Vite + React + TypeScript (strict mode).
+- TanStack Router (file-based; cleaner than React Router for app-shell apps).
+- TanStack Query for REST data + `EventSource` for SSE.
+- Zustand (or just `useReducer`) for the per-job live state.
+- Tailwind + shadcn/ui for components.
+- visx or d3-scale for the timeline (don't bring full d3 unless needed).
+- Type-safe API client from OpenAPI (`openapi-typescript` + `openapi-fetch`).
 
 ### Pages
 
 1. **Jobs list** (`/`)
-   - Implemented in `frontend/src/routes/index.tsx`.
-   - Table of jobs (video, status, platform, mode, created time, duration).
-   - Status filters.
-   - "New job" link.
-   - Actions: inspect completed runs, cancel queued jobs, retry failed/canceled
-     jobs, and delete completed/failed/canceled job rows.
-   - Not yet implemented: platform/date/brand filters and ABCD pass-rate
-     summary.
+   - Table of jobs (status, video_name, created_at, duration, ABCD pass rate
+     when available).
+   - Filters: status, platform, date range, brand.
+   - "New job" button.
 
 2. **New job** (`/jobs/new`)
-   - Implemented in `frontend/src/routes/jobs.new.tsx`.
-   - Form mirrors the key `main.py` params (`platform_params`, `user_hints`,
-     `video_type`, `mode`, `platform`) but only enables `full` and `extract`
-     today. Parser-only jobs are supported by the API but disabled in the form
-     until the UX for choosing an existing run is added.
+   - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
+     `video_type`, `mode`, `platform`). Device is shown from `/defaults` as
+     read-only app configuration, not submitted in the job request.
    - Video field: upload via `POST /uploads` OR pick from server-side
      `input/` directory via `GET /inputs`.
-   - Platform options come from `GET /platforms`; YouTube params are rendered
-     directly.
-   - Submit → `POST /jobs` → navigate back to `/` where the jobs list polls.
-   - Not yet implemented: showing `/defaults` as read-only config, redirecting
-     to a dedicated job detail page, and parser-only job creation.
+   - Defaults pre-populated from `GET /defaults` so the form shows the yaml
+     values and the user only overrides what they care about.
+   - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and poll until
+     the response contains a completed `run_id`.
 
 3. **Live job** (`/jobs/{id}`)
-   - Planned; no route exists yet.
    - Layout from prior chat sketch:
      - Top: progress bar + estimated time + "Cancel" button.
      - Left: phase tree (scene detection ✓, audio ✓, shots N/M, finalize, parse).
      - Right: current-shot panel (description, dino prompt, taxonomy
        targets, frames processed).
      - Bottom: live log tail (ring buffer ~500 lines, level filter).
-   - A pre-SSE version can poll `GET /jobs/{job_id}`; the later live version
-     is driven by SSE with a reducer keyed off `event.type`.
+   - Step-6 frontend state can poll `GET /jobs/{job_id}`; the later live
+     version is driven by SSE with a reducer keyed off `event.type`.
    - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
-   - First pass implemented in `frontend/src/routes/runs.$runId.tsx`.
-   - Raw input video is served from `GET /runs/{id}/video` with an SVG overlay
-     driven by `frame_detections`.
-   - Current overlay layers are tracked object boxes (`sam_mask`) and OCR text
-     boxes (`ocr`). DINO boxes and MTCNN face boxes are intentionally hidden in
-     this first UI pass to avoid duplicate/noisy boxes.
-   - Timeline currently shows shot boundaries and audio segments and supports
-     click-to-seek.
-   - ABCD criteria table reads `parser_results`; rows expand to show criteria,
-     LLM explanation, prompt, and LangSmith run id when present.
-   - Current download link: `tracked_output.mp4`.
-   - Not yet implemented: confidence slider, active-detection list, per-object
-     lifespans, OCR-second timeline, DINO/face layer toggles, CSV/JSON download
-     menu, and deeper inspector filtering.
+   - Top: video player with SVG overlay (see §8).
+   - Right rail: layer toggles (DINO / OCR / faces / SAM bbox), confidence
+     slider, "active detections at t=..." list.
+   - Center-bottom: stacked timeline tracks (shots, audio, per-object lifespans,
+     OCR seconds).
+   - Bottom: ABCD criteria table from `parser_results`, each row expandable to
+     show `llm_prompt` + `llm_explanation` + LangSmith trace link.
+   - Download menu: tracked_output.mp4, abcd_report.csv,
+     extraction_summary.json.
 
 ### Live progress state shape
 
@@ -637,11 +631,10 @@ finalizePct` — weights based on observed wall-clock distribution; tune later.
 
 ### Inspector overlay (SVG on `<video>`)
 
-`useRunFrames(runId)` pulls all `frame_detections` once and caches them through
-TanStack Query. On `timeupdate`, the inspector finds the most recent sample per
-enabled source that is still within that source's hold window and renders its
-boxes as SVG over the video. This is implemented for `sam_mask` and `ocr` in
-the first pass; fuller source toggles and confidence filtering remain planned.
+`useFramesForRun(runId)` pulls all `frame_detections` once on mount (small) and
+caches. On `timeupdate`, find the most recent frame ≤ current playback time and
+render its boxes as SVG over the video. See chat for the reference component
+sketch.
 
 ---
 
@@ -690,6 +683,53 @@ celery_app.send_task("app.tasks.run_job", args=[params.model_dump()])
 `backend/app/tasks.py` contains the heavy imports (`ClipScribeBuilder`,
 torch transitively) and is **only ever imported by the worker**, never by
 the API. The contract between them is the string task name.
+
+### Environment variables (.env → compose → prod)
+
+Runtime config lives in a single **repo-root `.env`** (gitignored; holds secrets
+too). It is the source of vars for local runs. Two consumers read it:
+
+- **The app processes** load it at import via `find_dotenv` — both
+  `app/settings.py` (so the celery-mode API and the worker's `celery_app` see
+  `REDIS_URL` / `CLIPSCRIBE_JOB_BACKEND` before reading `os.environ`) and
+  `build_clip_scribe.py` (for the core). `load_dotenv(..., override=False)`, so a
+  var already set in the real environment wins over the file.
+- **Compose** passes it into containers with `env_file: ../.env` (path is
+  relative to the compose file at the repo root).
+
+Backend vars (current):
+
+| Var | Purpose | Local (native) | Container |
+|---|---|---|---|
+| `CLIPSCRIBE_JOB_BACKEND` | `inline` \| `celery` dispatch | `celery` | `celery` |
+| `REDIS_URL` | broker + pub/sub | `redis://localhost:6379/0` | `redis://redis:6379/0` |
+| `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
+| `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
+| `CLIPSCRIBE_DEVICE` | builder device (web app) | `cpu` default; set `mps` for native GPU | `cpu` (Mac) / `cuda` (GPU box) |
+| `OPENAI_API_KEY`, `LANGCHAIN_*` | LLM + tracing | secret | secret |
+
+**Device precedence.** `settings.clip_scribe_device` reads `CLIPSCRIBE_DEVICE`
+(default `cpu`) and is passed into `ClipScribeBuilder(device=...)` by **both** the
+inline API (`main.lifespan`) and the worker (`tasks.get_builder`). The builder's
+own signature is `device: str | None = None`, and the arg overrides the yaml
+value — so the web app is env-driven while the **CLI** (`main.py`, which calls
+`ClipScribeBuilder()` with no arg) still falls back to the yaml `device`. The
+builder then guards the choice: `mps`/`cuda` requested but unavailable → CPU. So
+to run the native Mac worker on MPS, set `CLIPSCRIBE_DEVICE=mps` in the host env;
+the default `cpu` keeps a Linux container safe with no config.
+
+**The one gotcha — host vs. service names (§12).** `.env` holds the *native-host*
+values (localhost + compose-mapped ports), which is what the native worker and a
+host-run API need. A *containerized* service must instead reach `postgres:5432` /
+`redis:6379`. So compose **overrides** the network-sensitive vars
+(`POSTGRESQL_URL`, `REDIS_URL`) per service in its `environment:` block while
+still pulling the rest from `env_file`. `CLIPSCRIBE_DEVICE` is set per service
+too (`cpu` on a Mac worker container, `cuda` on a GPU box) — this is what lets
+full-container compose run on Mac at all.
+
+**Prod.** Replace `.env` with GCP **Secret Manager** for secrets
+(`OPENAI_API_KEY`, DB creds) injected as env at deploy, and bake the non-secret
+knobs (`CLIPSCRIBE_DEVICE=cuda`, weight-dir vars) into the image `ENV` block.
 
 ### Checkpoint / weight strategy
 
@@ -842,12 +882,10 @@ These are decisions to make before the corresponding implementation step.
    `jobs` and gate everything on a session.
 
 4. **Job cancellation semantics.**
-   Queued-job cancellation is implemented in the sync API. Running-job
-   cancellation is still open: Celery `revoke(terminate=True)` is hard-kill
-   (SIGTERM), and the engine holds open files plus a CUDA/MPS context — abrupt
-   termination leaks both. Need cooperative cancellation: a "should_cancel" flag
-   the shot loop checks each iteration. Decide if we want partial results saved
-   on cancel.
+   Celery `revoke(terminate=True)` is hard-kill (SIGTERM). The engine holds
+   open files and a CUDA/MPS context — abrupt termination leaks both. Need
+   cooperative cancellation: a "should_cancel" flag the shot loop checks each
+   iteration. Decide if we want partial results saved on cancel.
 
 5. **Resumability after worker crash.**
    Probably out of scope. Worth deciding because today the extractor writes the
@@ -898,7 +936,7 @@ These are decisions to make before the corresponding implementation step.
     front does the same thing.
 
 14. **Disk retention.** **Partially mitigated.**
-    A `max_artifact_files` config cap (current default 350) now bounds the per-frame
+    A `max_artifact_files` config cap (default 200) now bounds the per-frame
     visualization PNGs written per run (the unbounded growth source); the
     tracked mp4 and `extraction_summary.json` are always kept. Still open: a
     run-level retention policy (delete after N days / keep last K) and a
@@ -922,6 +960,14 @@ These are decisions to make before the corresponding implementation step.
     Use the raw input as the `<video>` source and overlay our own SVG boxes —
     full control, supports layer toggles. The baked tracked mp4 stays as a
     download.
+
+18. **Advisory chat scope & memory (§13).**
+    Conversation memory via LangGraph checkpointer (`MemorySaver` in dev, the
+    Postgres checkpointer when deployed so sessions survive API restarts and
+    span replicas). Decide: one implicit session per run vs. multiple named
+    sessions; whether the agent may ever compare across runs (default **no** —
+    tools stay strictly bound to a single `run_id`); and whether transcripts are
+    retained/purged alongside run retention (§9.14).
 
 ---
 
@@ -956,35 +1002,42 @@ Strictly ordered; each step is shippable on its own.
 5. **FastAPI app, sync path only.** **DONE.** `POST /jobs` writes a queued
    job and submits it to a single-slot in-process executor (no Celery yet), so
    the HTTP contract is already asynchronous from the client's perspective.
-   Implemented routes include uploads, input listing, job list/get/cancel/retry/
-   delete, read-only `/runs/*`, filesystem artifacts, health, and metadata;
-   errors use RFC7807. Request shape intentionally omits device, using yaml
-   config instead.
+   Implemented routes include uploads, input listing, job list/get, read-only
+   `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
+   Request shape intentionally omits device, using yaml config instead.
 
-6. **Frontend bootstrap.** **DONE.** Vite + React + TS + Tailwind + TanStack Router /
-   Query are under `frontend/`. Implemented pages are the jobs list, new-job
-   form, and first-pass run inspector. No live progress page yet; the jobs list
-   polls `GET /jobs` and links completed jobs to `/runs/{run_id}`.
+6. **Frontend bootstrap.** **NEXT.** Vite + React + TS + Tailwind + TanStack Router /
+   Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
+   No live progress yet — submit, poll `GET /jobs/{job_id}`, then navigate by
+   the completed `run_id`.
 
-7. **Inspector overlay.** **PARTIAL.** `frame_detections` are drawn as SVG boxes
-   on `<video>` for tracked objects and OCR text, with shot/audio timeline
-   tracks and parser results. Remaining inspector work: DINO/face toggles,
-   confidence filter, active-detection list, object lifespan tracks, OCR-second
-   timeline, and CSV/JSON downloads.
+7. **Inspector overlay.** Use `frame_detections` to draw SVG boxes on
+   `<video>`. Layer toggles, confidence filter, timeline tracks. This is
+   where the project starts to feel real.
 
-8. **Celery + Redis.** Move `POST /jobs` to enqueue. `worker_process_init`
-   builds one long-lived `ClipScribeBuilder`. One worker, concurrency 1. `jobs` table tracks
-   status transitions.
+8. **Celery + Redis.** **DONE (backend wiring).** `POST /jobs` dispatches on
+   `settings.job_backend`: `inline` (the step-5 executor) or `celery`
+   (`celery_app.send_task("app.tasks.run_job", …)`). New files: `app/celery_app.py`
+   (thin shared broker handle, no torch — the §8 import boundary),
+   `app/tasks.py` (worker-only; `worker_process_init` / lazy `get_builder()`
+   loads one long-lived `ClipScribeBuilder` per process), and
+   `app/job_execution.py` (`run_job_core`, the single lifecycle both paths
+   share). In celery mode the API loads **no models** — lifespan builds only a
+   standalone reader/writer, and `get_reader`/`get_writer` read from
+   `app.state`. Cancel `revoke`s the task (no `terminate`; cooperative cancel is
+   step 10). `docker-compose.yml` gains a `redis` service; `celery` + `redis`
+   added to deps + the `api` group. Config: `CLIPSCRIBE_JOB_BACKEND=celery`,
+   `REDIS_URL`. Run the worker natively on macOS/MPS with
+   `uv run celery -A app.celery_app worker --pool=solo --concurrency=1`.
+   Remaining: an end-to-end run against live Redis + a real worker (needs models).
 
 9. **Redis pub/sub bridge + SSE.** Swap `NullProgressReporter` for
    `RedisProgressReporter` in the worker. FastAPI multiplexes
    `job:{id}:events` + `job:{id}:logs` into the SSE response. Frontend live
    page renders from the reducer.
 
-10. **Cooperative cancel.** Queued-job cancel exists; add a "should_cancel" flag
-    honored by the shot loop + parser for running jobs. Keep
-    `POST /jobs/{id}/cancel` as the API surface and decide partial result
-    handling.
+10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
+    parser. `POST /jobs/{id}/cancel`. Partial result handling.
 
 11. **Docker split.** Fill in the currently empty
     `backend/docker/api/Dockerfile` (slim) and `backend/docker/core/Dockerfile`
@@ -993,6 +1046,18 @@ Strictly ordered; each step is shippable on its own.
 
 12. **Polish:** retention policy, auth (if/when needed), cost tracking,
     OpenAPI codegen in CI, expand tests.
+
+13. **Advisory chat agent — backend (§13).** Add a `query_parser_results` tool
+    and an `"advisory"` tool group (all query tools) in `src/parser/tools.py`;
+    add `build_advisory_agent(reader_db, run_id)` (ReAct agent + checkpointer +
+    advisory system prompt); implement `POST /runs/{id}/chat` (streamed) plus
+    session list/history/delete. **API-only — no worker, no GPU**, so it can
+    land before or after Celery (step 8).
+
+14. **Advisory chat agent — frontend (§13).** Chat panel in the run inspector
+    that streams the answer token-by-token, shows tool-call chips for
+    transparency, and adds an "ask about this" shortcut on each failed
+    criterion row that seeds a question.
 
 ---
 
@@ -1100,3 +1165,94 @@ orchestrator.
   are paid for only during the run. `backoffLimit` gives per-video retries.
 - The CLI (on the operator's machine) renders and `kubectl apply`s the Job (or
   uses the Python k8s client) against a GKE cluster with a GPU node pool.
+
+---
+
+## 13. Advisory chat agent (post-run Q&A)
+
+An interactive follow-up to evaluation. After a run completes, the user opens
+the run inspector, sees the ABCD verdicts, and can **ask questions** of an agent
+that already knows the whole video and every verdict the evaluator agents
+produced — e.g. *"criterion X failed — how would we fix it?"* or *"overall,
+what should change in this creative?"*. This is post-MVP (steps 13–14 in §10);
+it does **not** block the Celery/Redis work.
+
+### Why it's a clean fit (not a new subsystem)
+
+The evaluation agents already do the hard part. `src/parser/agent.py` builds a
+LangGraph ReAct agent via `create_react_agent(model, tools)`, and
+`src/parser/tools.py` exposes read-only, run-scoped query tools
+(`query_audio_segments`, `query_text_events`, `query_visual_objects`,
+`query_scene_descriptions`, `query_global_stats`, `query_field_descriptions`),
+grouped by feature type in `tool_map`. The advisory chat agent is the same
+pattern with three deltas:
+
+1. **All tools, not one group.** It gets a new `"advisory"` tool group that
+   includes every existing query tool.
+2. **One new tool — `query_parser_results`.** Reads the run's `parser_results`
+   rows so the agent can cite each criterion's verdict, `llm_explanation`, and
+   `llm_prompt`. This is what lets it reason about *why* something failed and
+   what the evaluators saw.
+3. **Conversational + advisory.** Multi-turn, free-form guidance (a strategist
+   proposing concrete, testable changes) instead of the evaluators' one-shot
+   structured pass/fail (`_parse_agent_response` in `agent.py`).
+
+### The architectural win: API-only, no GPU
+
+The chat agent does **only LLM calls + DB reads**. It never imports torch,
+never loads a model, never touches the Celery worker. It runs entirely in the
+slim API process (§8). Consequences:
+
+- It can ship **before or independent of** the Celery migration (step 8).
+- It reuses the API's existing `reader_db` and `OPENAI_API_KEY`; no new heavy
+  dependency and no worker round-trip.
+
+### Security model — read-only and run-scoped
+
+Every tool is bound to a single `run_id` **server-side**, exactly as the
+evaluators do today (`build_tools(reader_db, run_id, tool_group)`). The client
+sends a message and an optional `session_id`; it never passes a `run_id` into a
+tool. The agent physically cannot read another run's data because no tool
+accepts a cross-run argument. That closure is the entire isolation story.
+
+### Components
+
+- **`query_parser_results(feature_category=None, only_failed=False)`** — new
+  read tool in `src/parser/tools.py`; requires a matching
+  `reader_db.get_parser_results(run_id, ...)` reader method.
+- **`"advisory"` tool group** — registered in `tool_map` with all query tools
+  plus `query_parser_results`.
+- **`build_advisory_agent(reader_db, run_id)`** — `create_react_agent(model,
+  advisory_tools, checkpointer=...)` with an advisory system prompt: persona is
+  a senior creative strategist; must cite specific field values / verdicts; must
+  fetch data via tools rather than invent it; must give concrete, testable
+  recommendations.
+- **Conversation memory via LangGraph checkpointer**, keyed by
+  `thread_id = session_id`. `MemorySaver` (in-process) in dev; the LangGraph
+  **Postgres checkpointer** when deployed so sessions survive API restarts and
+  span replicas. This replaces any hand-rolled message-history plumbing for the
+  agent's working state; the `chat_messages` table (§4) is only the
+  user-facing transcript for listing/replay in the UI.
+- **Streaming** — `agent.stream(..., stream_mode="messages")` piped over an SSE
+  response. This reuses the §9 SSE *pattern*, but the event source is the LLM
+  token stream directly — no Redis pub/sub, no worker involved.
+
+### Frontend (extends §7 page 4, Run inspector)
+
+A chat panel below the ABCD criteria table:
+- Streams the assistant answer token-by-token.
+- Renders tool-call chips ("queried visual objects…", "read parser verdicts…")
+  so the reasoning is transparent.
+- Each failed criterion row gets an **"ask about this"** shortcut that seeds a
+  question like *"Criterion '{feature_name}' failed — what would fix it?"*.
+
+### Open questions (tracked in §9.18 and §9.8)
+
+- **Cost.** A turn can fan out into many tool calls over a large dataset. Cap
+  reasoning depth with `recursion_limit` (as the evaluators already do) and
+  consider a per-session token budget; ties into cost tracking (§9.8).
+- **Context size.** Don't prefill the whole run into the system prompt — rely on
+  the on-demand tool-call pattern the evaluators use, so only fetched slices
+  enter the context window.
+- **Model.** Advisory reasoning wants a strong model; make it configurable in
+  `clip_scribe.yaml` next to the existing agent-model settings.

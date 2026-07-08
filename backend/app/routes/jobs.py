@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.deps import get_executor, get_futures, get_reader, get_writer
+from app.deps import get_reader, get_writer
 from app.errors import ProblemException
 from app.job_runner import JobService
 from app.models import (
@@ -27,13 +27,21 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 def get_job_service(request: Request) -> JobService:
-    """Assemble the job service from process-wide state (overridable in tests)."""
-    from app.deps import get_builder
+    """Assemble the job service from process-wide state (overridable in tests).
 
-    builder = get_builder(request)
-    executor = get_executor(request)
-    futures = get_futures(request)
-    return JobService(builder, executor, request.app.state.settings, futures)
+    DB reader/writer come from ``app.state`` (populated in lifespan from the
+    builder inline, or a standalone engine in celery mode). The builder,
+    executor, and futures are inline-only and stay ``None`` under celery.
+    """
+    state = request.app.state
+    return JobService(
+        get_reader(request),
+        get_writer(request),
+        state.settings,
+        builder=getattr(state, "builder", None),
+        executor=getattr(state, "executor", None),
+        futures=getattr(state, "futures", None),
+    )
 
 
 @router.post(

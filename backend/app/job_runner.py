@@ -1,60 +1,61 @@
-"""Job orchestration for the sync path (web-app-plan §10 step 5).
+"""Job orchestration: validate, persist, and dispatch (web-app-plan §10.5, §10.8).
 
-``JobService`` validates a request, writes the ``jobs`` row, and submits the
-run to a single-slot executor that mirrors Celery ``concurrency=1``. The
-executor callback drives the job lifecycle (queued -> running -> completed /
-failed) around ``ClipScribeEngine.run``.
+``JobService`` validates a request, writes the ``jobs`` row, and dispatches the
+run to one of two backends selected by ``settings.job_backend``:
 
-The HTTP contract here is deliberately identical to the eventual async path:
-``create_job`` returns immediately with a job id, and clients poll
-``GET /jobs/{id}``. When Celery lands (step 8), only the submit call changes
-(``executor.submit`` -> ``celery_app.send_task``); validation, the row shape,
-and the response stay put.
+- ``inline`` — submit to a single-slot ``ThreadPoolExecutor`` that mirrors
+  Celery ``concurrency=1`` and runs the engine in this process (step 5).
+- ``celery`` — ``send_task`` the job to a Redis-backed worker (step 8). The API
+  loads no models in this mode; it only reads/writes the DB and dispatches.
+
+The HTTP contract is identical either way: ``create_job`` returns immediately
+with a job id and clients poll ``GET /jobs/{id}``. Both paths converge on
+:func:`app.job_execution.run_job_core`, so lifecycle behavior never drifts.
 """
 
 from __future__ import annotations
 
 import logging
-from concurrent.futures import Future
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.errors import ProblemException
+from app.job_execution import build_task_payload, now_iso
 from app.models import JobCreatedResponse, JobCreateRequest, JobMode, JobStatus
-from src.clip_scribe.build_clip_scribe_plalform import build_platform
 from src.utils.ids import new_ulid
 
 if TYPE_CHECKING:
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import Future, ThreadPoolExecutor
 
     from app.settings import Settings
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 
 logger = logging.getLogger("clip_scribe")
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class JobService:
     def __init__(
         self,
-        builder: "ClipScribeBuilder",
-        executor: "ThreadPoolExecutor",
+        reader: "ClipScribeReaderDB",
+        writer: "ClipScribeWriterDB",
         settings: "Settings",
-        futures: "dict[str, Future[None]]",
+        *,
+        builder: "ClipScribeBuilder | None" = None,
+        executor: "ThreadPoolExecutor | None" = None,
+        futures: "dict[str, Future[None]] | None" = None,
     ) -> None:
+        self.reader = reader
+        self.writer = writer
+        self.settings = settings
+        # Inline-mode only: the model-loaded builder + single-slot executor that
+        # run the engine in-process. Both are None in celery mode.
         self.builder = builder
         self.executor = executor
-        self.settings = settings
-        self.futures = futures
-        self.reader = builder.reader_db
-        self.writer = builder.writer_db
+        self.futures = futures if futures is not None else {}
 
     def create_job(self, req: JobCreateRequest) -> JobCreatedResponse:
-        """Validate, persist a queued job, and submit it to the executor."""
+        """Validate, persist a queued job, and dispatch it to the backend."""
         video_name = req.video_name
         video_path = req.video_path
         video_type = req.video_type
@@ -95,104 +96,90 @@ class JobService:
             params_json=req.model_dump(mode="json"),
         )
 
-        future: Future[None] = self.executor.submit(
-            self._run, job_id, run_id, req, video_name, video_path_abs, video_type
+        payload = build_task_payload(
+            job_id=job_id,
+            run_id=run_id,
+            req=req,
+            video_name=video_name,
+            # Inline runs on this machine, so pass the resolved absolute path;
+            # parse jobs (no local file) fall back to the request path.
+            video_path=str(video_path_abs) if video_path_abs else req.video_path,
+            video_type=video_type,
         )
-        self.futures[job_id] = future
+        self._dispatch(job_id, payload)
 
         return JobCreatedResponse(job_id=job_id, run_id=run_id, status=JobStatus.QUEUED)
 
-    def _run(
-        self,
-        job_id: str,
-        run_id: str,
-        req: JobCreateRequest,
-        video_name: str | None,
-        video_path_abs: Path | None,
-        video_type: str | None,
-    ) -> None:
-        """Executor callback: run one job and record its terminal state."""
-        self.writer.update_job(
-            job_id, status=JobStatus.RUNNING.value, started_at=_now_iso()
-        )
-        try:
-            platform_conf = build_platform(
-                req.platform.value, **req.resolved_params.to_build_kwargs()
-            )
-            if platform_conf is None:
-                raise ValueError(f"unsupported platform: {req.platform.value}")
+    def _dispatch(self, job_id: str, payload: dict) -> None:
+        """Hand the job off to the configured backend."""
+        if self.settings.job_backend == "celery":
+            from app.celery_app import celery_app
 
-            engine = self.builder.build_clip_scribe(
-                video_name=video_name or "",
-                video_path=str(video_path_abs)
-                if video_path_abs
-                else (req.video_path or ""),
-                video_type=video_type,
-                clib_scribe_mode=req.mode.value,
-                clib_scribe_platform_name=req.platform.value,
-                clib_scribe_platform_conf=platform_conf,
-                user_hints=req.user_hints,
-                generate_hint_from_name=req.generate_hint_from_name,
-            )
-            engine.run(run_id=run_id)
-        except Exception as exc:  # noqa: BLE001 - recorded on the job row
-            logger.exception("Job %s failed", job_id)
-            if not self._is_canceled(job_id):
-                self.writer.update_job(
-                    job_id,
-                    status=JobStatus.FAILED.value,
-                    error_text=str(exc),
-                    finished_at=_now_iso(),
-                )
+            result = celery_app.send_task("app.tasks.run_job", args=[payload])
+            self.writer.update_job(job_id, celery_task_id=result.id)
+            logger.info("Enqueued job %s to celery (task %s)", job_id, result.id)
         else:
-            if not self._is_canceled(job_id):
-                self.writer.update_job(
-                    job_id, status=JobStatus.COMPLETED.value, finished_at=_now_iso()
+            if self.executor is None or self.builder is None:
+                raise ProblemException(
+                    status=503,
+                    title="Service Unavailable",
+                    detail="Inline job execution is unavailable (models not loaded).",
                 )
-        finally:
-            self.futures.pop(job_id, None)
+            future: "Future[None]" = self.executor.submit(self._run, payload)
+            self.futures[job_id] = future
 
-    def _is_canceled(self, job_id: str) -> bool:
-        """Return True if the job was externally canceled while running."""
-        job = self.reader.get_job(job_id)
-        return job is not None and job.get("status") == JobStatus.CANCELED.value
+    def _run(self, payload: dict) -> None:
+        """Inline executor callback: run one job on the API's own builder."""
+        from app.job_execution import run_job_core
+
+        try:
+            assert self.builder is not None  # guarded in _dispatch
+            run_job_core(self.builder, payload)
+        finally:
+            self.futures.pop(payload["job_id"], None)
 
     def cancel_job(self, job_id: str) -> None:
-        """Cancel a queued job before it starts."""
+        """Cancel a queued or running job.
+
+        Queued jobs are prevented from starting (``Future.cancel()`` inline, or
+        ``revoke`` for celery). Running jobs cannot be interrupted mid-engine yet
+        (cooperative cancel is web-app-plan §10.10); the DB is marked canceled
+        immediately and :func:`run_job_core` respects it when the engine returns
+        so the status is never overwritten to completed.
+        """
         job = self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
-        if job["status"] == JobStatus.RUNNING.value:
-            raise ProblemException(
-                status=409,
-                title="Conflict",
-                detail=(
-                    f"job '{job_id}' is running and cannot be canceled until "
-                    "cooperative cancellation is implemented"
-                ),
-            )
-        if job["status"] != JobStatus.QUEUED.value:
+        cancellable = {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
+        if job["status"] not in cancellable:
             raise ProblemException(
                 status=409,
                 title="Conflict",
                 detail=(
                     f"job '{job_id}' is '{job['status']}' — "
-                    "only queued jobs can be canceled"
+                    "only queued or running jobs can be canceled"
                 ),
             )
-        future = self.futures.get(job_id)
-        if future is not None and not future.cancel():
-            raise ProblemException(
-                status=409,
-                title="Conflict",
-                detail=f"job '{job_id}' has already started and cannot be canceled",
-            )
+
+        if self.settings.job_backend == "celery":
+            task_id = job.get("celery_task_id")
+            if task_id:
+                from app.celery_app import celery_app
+
+                # No terminate=True: hard-kill would leak files + GPU state.
+                # Revoke stops a still-queued task; a running one finishes and
+                # its terminal write is suppressed by is_canceled().
+                celery_app.control.revoke(task_id)
+        else:
+            future = self.futures.get(job_id)
+            if future is not None:
+                future.cancel()  # no-op if already running, succeeds if queued
+
         self.writer.update_job(
-            job_id, status=JobStatus.CANCELED.value, finished_at=_now_iso()
+            job_id, status=JobStatus.CANCELED.value, finished_at=now_iso()
         )
-        self.futures.pop(job_id, None)
 
     def retry_job(self, job_id: str) -> JobCreatedResponse:
         """Create a fresh job from the stored params of a failed/canceled job."""
