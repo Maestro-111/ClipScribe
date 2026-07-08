@@ -31,7 +31,8 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 5. **Parallel Tasks:** Whisper extracts audio, PaddleOCR extracts text, and MTCNN extracts faces.
 6. **Persistence:** `backend/src/db/` writes and reads structured run data, including raw frame detections, shot boundaries, and parser results. Alembic migrations in `backend/alembic/` own schema creation.
 7. **Parser:** `backend/src/parser/` evaluates persisted data against platform-specific criteria such as YouTube rules.
-8. **Web API:** `backend/app/` exposes the sync-path FastAPI layer for uploads, job creation/polling, run reads, artifacts, health, and metadata. It runs jobs through a single in-process executor for now; Celery, Redis, SSE, and cancellation are still planned.
+8. **Web API:** `backend/app/` exposes the sync-path FastAPI layer for uploads, job creation/polling, queued-job cancellation/retry/delete, run reads, artifacts, health, and metadata. It runs jobs through a single in-process executor for now; Celery, Redis, SSE, and cooperative running-job cancellation are still planned.
+9. **Frontend:** `frontend/` contains the initial Vite/React dashboard for job listing, job creation, and run inspection. It uses pnpm, TanStack Router/Query, Tailwind v4, and OpenAPI-generated types.
 
 ## Setup And Environment
 - **Repository layout:** This is a monorepo. The Python project lives in `backend/`, but the git root is the repository root. Run `uv ...`, Alembic, and pre-commit commands from `backend/` so relative paths like `pyproject.toml` and `src/clip_scribe` resolve. The root `Makefile` still lives at the repository root; only `make migrate` is currently reliable after the backend move.
@@ -53,10 +54,11 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `uv run pre-commit run --all-files` - run formatting, lint, and type hooks. Must be invoked from `backend/`: the config is `backend/.pre-commit-config.yaml` (pre-commit discovers the config from the current directory), but hooks always execute from the git root with paths relative to it. This is why the `exclude` patterns are prefixed with `backend/` and the mypy hook is a local hook that `cd backend` before running `uv run mypy`. Running from the repo root fails with `.pre-commit-config.yaml is not a file`.
   - Corollary: the third-party `backend/src/sam2/` and `backend/src/dino/groundingdino/` trees are protected only by the `backend/`-prefixed `exclude`. If the layout changes, update that regex or `ruff --fix` will strip side-effect imports from their `__init__.py` files (notably the GroundingDINO model-registry imports) and break model loading.
 - `make migrate` - from the repository root, delegates to `cd backend && uv run alembic upgrade head`. Other root Makefile setup/checkpoint/clean targets are stale after the backend move.
+- Frontend commands run from `frontend/`: `pnpm install`, `pnpm gen:api`, `pnpm dev`, `pnpm build`, and `pnpm typecheck`.
 
 ## Current Caveats
 - `backend/main.py` is an entry point to run the pipeline for local dev, not a stable CLI.
-- `backend/app/` is a sync-path API with one in-process job slot; Celery, Redis, SSE, and cancellation are not implemented yet.
+- `backend/app/` is a sync-path API with one in-process job slot; Celery, Redis, SSE, and cooperative cancellation for running jobs are not implemented yet. Queued jobs can be canceled.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; avoid documenting them as working setup commands until fixed.
 - The test suite is minimal.
 - Generated media, databases, logs, and parser/extractor artifacts should usually be ignored during code review unless the task is about outputs.
@@ -71,3 +73,4 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
+- `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

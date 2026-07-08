@@ -22,13 +22,25 @@ uv run pytest -q
 uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser
 ```
 
-4. Run pre-commit when the user asks for full validation or before preparing a commit:
+4. If frontend files changed, run the frontend typecheck from `frontend/`:
+
+```bash
+(cd ../frontend && pnpm typecheck)
+```
+
+For full frontend validation, run:
+
+```bash
+(cd ../frontend && pnpm build)
+```
+
+5. Run pre-commit when the user asks for full validation or before preparing a commit:
 
 ```bash
 uv run pre-commit run --all-files
 ```
 
-5. If a tool is missing, recommend `uv sync --extra dev` rather than installing ad hoc packages.
-6. If failures are unrelated to the task, report them separately and avoid broad refactors.
+6. If a backend tool is missing, recommend `uv sync --extra dev`; if a frontend tool is missing, recommend `pnpm install` from `frontend/` rather than installing ad hoc packages.
+7. If failures are unrelated to the task, report them separately and avoid broad refactors.
 
 Summarize the commands run and the remaining failures.

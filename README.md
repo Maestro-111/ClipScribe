@@ -34,6 +34,7 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - SQLite or PostgreSQL persistence through SQLAlchemy
 - Per-run extraction artifacts and parser report generation
 - FastAPI sync-path API for uploads, jobs, run inspection, and artifact serving
+- Initial Vite/React dashboard for job submission and run inspection
 
 ## Setup
 
@@ -67,7 +68,7 @@ Common environment variables:
 - `POSTGRESQL_URL` - required when `database.backend` is set to `postgresql`.
 - `SQLITE_URL` - optional when `database.backend` is set to `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
-- `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for read-only/test API startup without loading ML models.
+- `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for limited schema/health/test startup without loading ML models; job and run routes need an injected or loaded builder.
 - `CLIPSCRIBE_CORS_ORIGINS` - comma-separated browser origins for the API; defaults to `http://localhost:5173`.
 
 The main configuration file is:
@@ -106,7 +107,7 @@ A proper CLI is still a TODO. Until then, prefer changing existing builder/engin
 
 ### Web API
 
-The checked-in FastAPI app is the first web/API layer. It uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor, so `POST /jobs` returns immediately while the job runs in the background. Celery, Redis, SSE, and cancellation are not implemented yet.
+The checked-in FastAPI app is the first web/API layer. It uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor, so `POST /jobs` returns immediately while the job runs in the background. Celery, Redis, SSE, and cooperative cancellation for already-running jobs are not implemented yet; queued jobs can be canceled.
 
 Start the API from `backend/`:
 
@@ -120,9 +121,27 @@ Useful API routes:
 - `GET /inputs` - list server-side input videos accepted by the job form.
 - `POST /jobs` - create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` still writes artifacts only without creating a run row for `/runs`.
 - `GET /jobs` and `GET /jobs/{job_id}` - poll job state.
+- `POST /jobs/{job_id}/cancel` - cancel a queued job; running jobs return `409` until cooperative cancellation lands.
+- `POST /jobs/{job_id}/retry` - create a fresh job from a failed or canceled job's stored request payload.
+- `DELETE /jobs/{job_id}` - remove a completed, failed, or canceled job row.
 - `GET /runs/{run_id}/...` - inspect persisted run data, frame detections, parser results, and artifacts.
 
 The API request does not accept a device field. The app uses `clip_scribe.device` from `clip_scribe.yaml`; `main.py` can still pass an override when running locally.
+
+### Frontend
+
+The initial dashboard lives in `frontend/`. It is a Vite + React + TypeScript app using pnpm, TanStack Router, TanStack Query, Tailwind v4, and OpenAPI-generated types from the FastAPI schema.
+
+Run it from the repository root with the API listening on port 8000:
+
+```bash
+cd frontend
+pnpm install
+pnpm gen:api
+pnpm dev
+```
+
+The dev server runs at `http://localhost:5173` and proxies `/api/*` to the backend. Implemented screens are the jobs list (`/`), the new-job form (`/jobs/new`), and the run inspector (`/runs/{run_id}`). Live job progress over SSE and a dedicated job detail page are still planned.
 
 ## Development Commands
 
@@ -178,6 +197,7 @@ backend/artifacts/              Per-run extraction outputs keyed by run id
 backend/parser_artifacts/       Generated parser reports
 backend/data/                   Local database files
 backend/logs/                   Runtime logs
+frontend/                       Vite/React dashboard and generated API types
 ```
 
 ## Artifacts And Data
@@ -194,7 +214,7 @@ Do not hardcode absolute paths to these directories. Use project-relative paths 
 ## Current Caveats
 
 - `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.
-- The FastAPI app is a sync-path implementation with a single in-process job slot; no Celery, Redis, SSE, or cancellation endpoint yet.
+- The FastAPI app is a sync-path implementation with a single in-process job slot; no Celery, Redis, SSE, or cooperative running-job cancellation yet.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
 - Test coverage is minimal.
 - Full extraction is resource-intensive and can trigger model downloads and API calls.
