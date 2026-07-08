@@ -1,6 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { useCreateJob, useInputs, useUploadVideo } from "../api/hooks";
+import {
+  useCreateJob,
+  useInputs,
+  usePlatforms,
+  useUploadVideo,
+  type JobCreateRequest,
+} from "../api/hooks";
 
 // "/jobs/new" — the create-job form (web-app-plan §7, page 2).
 export const Route = createFileRoute("/jobs/new")({
@@ -15,6 +21,7 @@ function splitComma(s: string): string[] {
 function NewJob() {
   const navigate = useNavigate();
   const inputs = useInputs();
+  const platforms = usePlatforms();
   const createJob = useCreateJob();
 
   // Job-level fields
@@ -24,6 +31,14 @@ function NewJob() {
   const [videoTab, setVideoTab] = useState<"pick" | "upload">("pick");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadVideo();
+
+  // Platform selection. Options come from GET /platforms; today the backend
+  // only advertises "youtube", so this renders as a single-option select.
+  // When more platforms are added, list them here without touching this form.
+  const [platform, setPlatform] = useState("youtube");
+  const platformOptions = platforms.data?.platforms.map((p) => p.name) ?? [
+    "youtube",
+  ];
 
   // YouTube platform params (matches YouTubePlatformParams in backend/app/models.py)
   const [brandName, setBrandName] = useState("");
@@ -42,16 +57,18 @@ function NewJob() {
     createJob.mutate(
       {
         mode,
-        platform: "youtube",
+        platform: platform as JobCreateRequest["platform"],
         video_path: videoPath,
         video_name: videoPath, // picker returns a bare filename, which is the name
         video_type: videoType || null,
-        platform_params: {
-          brand_name: brandName,
-          branded_products: splitComma(brandedProducts),
-          branded_products_categories: splitComma(brandedProductsCategories),
-          call_to_actions: splitComma(callToActions),
-        },
+        platform_params: (platform === "youtube"
+          ? {
+              brand_name: brandName,
+              branded_products: splitComma(brandedProducts),
+              branded_products_categories: splitComma(brandedProductsCategories),
+              call_to_actions: splitComma(callToActions),
+            }
+          : {}) as JobCreateRequest["platform_params"],
         user_hints: splitComma(userHints).length ? splitComma(userHints) : null,
         generate_hint_from_name: generateHintFromName,
       },
@@ -205,64 +222,83 @@ function NewJob() {
           </div>
         </section>
 
-        {/* ── Platform — YouTube ──────────────────────────────────── */}
+        {/* ── Platform ────────────────────────────────────────────── */}
         <section>
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
             Platform
           </h2>
-          <p className="mb-3 text-xs text-neutral-500">
-            YouTube — the only supported evaluation platform. These fields are
-            passed to the parser agents to evaluate ABCD criteria.
-          </p>
           <div className="space-y-4">
             <Field
-              label="Brand name"
-              hint="The brand being advertised. Used by parser agents to identify brand presence."
-              required
+              label="Evaluation platform"
+              hint="The platform whose ABCD criteria the parser evaluates against."
             >
-              <input
-                value={brandName}
-                onChange={(e) => setBrandName(e.target.value)}
-                placeholder="e.g. RAM"
+              <select
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
                 className="w-full rounded border px-2 py-1.5"
-              />
+              >
+                {platformOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
             </Field>
 
-            <Field
-              label="Branded products"
-              hint="Specific products shown or mentioned. Comma-separated."
-            >
-              <input
-                value={brandedProducts}
-                onChange={(e) => setBrandedProducts(e.target.value)}
-                placeholder="e.g. RAM 1500, RAM 2500"
-                className="w-full rounded border px-2 py-1.5"
-              />
-            </Field>
+            {/* YouTube-specific params. Rendered only when YouTube is selected;
+                each platform owns its own field block. */}
+            {platform === "youtube" && (
+              <>
+                <Field
+                  label="Brand name"
+                  hint="The brand being advertised. Used by parser agents to identify brand presence."
+                  required
+                >
+                  <input
+                    value={brandName}
+                    onChange={(e) => setBrandName(e.target.value)}
+                    placeholder="e.g. RAM"
+                    className="w-full rounded border px-2 py-1.5"
+                  />
+                </Field>
 
-            <Field
-              label="Branded product categories"
-              hint="Category phrasings used to match products when exact names aren't spoken. Comma-separated."
-            >
-              <input
-                value={brandedProductsCategories}
-                onChange={(e) => setBrandedProductsCategories(e.target.value)}
-                placeholder="e.g. pickup truck, heavy-duty truck"
-                className="w-full rounded border px-2 py-1.5"
-              />
-            </Field>
+                <Field
+                  label="Branded products"
+                  hint="Specific products shown or mentioned. Comma-separated."
+                >
+                  <input
+                    value={brandedProducts}
+                    onChange={(e) => setBrandedProducts(e.target.value)}
+                    placeholder="e.g. RAM 1500, RAM 2500"
+                    className="w-full rounded border px-2 py-1.5"
+                  />
+                </Field>
 
-            <Field
-              label="Call-to-actions"
-              hint="CTA phrases the parser should detect in speech or on-screen text. Comma-separated."
-            >
-              <input
-                value={callToActions}
-                onChange={(e) => setCallToActions(e.target.value)}
-                placeholder="e.g. learn more, visit us today"
-                className="w-full rounded border px-2 py-1.5"
-              />
-            </Field>
+                <Field
+                  label="Branded product categories"
+                  hint="Category phrasings used to match products when exact names aren't spoken. Comma-separated."
+                >
+                  <input
+                    value={brandedProductsCategories}
+                    onChange={(e) => setBrandedProductsCategories(e.target.value)}
+                    placeholder="e.g. pickup truck, heavy-duty truck"
+                    className="w-full rounded border px-2 py-1.5"
+                  />
+                </Field>
+
+                <Field
+                  label="Call-to-actions"
+                  hint="CTA phrases the parser should detect in speech or on-screen text. Comma-separated."
+                >
+                  <input
+                    value={callToActions}
+                    onChange={(e) => setCallToActions(e.target.value)}
+                    placeholder="e.g. learn more, visit us today"
+                    className="w-full rounded border px-2 py-1.5"
+                  />
+                </Field>
+              </>
+            )}
           </div>
         </section>
 

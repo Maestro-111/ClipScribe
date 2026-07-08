@@ -8,12 +8,21 @@ Pydantic models can come with the inspector work (step 7).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query
 
 from app.deps import get_reader
 from app.errors import ProblemException
+from app.models import (
+    AudioSegment,
+    FrameDetection,
+    GlobalStatsResponse,
+    ParserResult,
+    RunResponse,
+    ShotBoundary,
+    TextEvent,
+)
 
 if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB
@@ -33,25 +42,27 @@ def _require_run(reader: "ClipScribeReaderDB", run_id: str) -> dict:
 @router.get("/{run_id}", summary="Get a run")
 def get_run(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> dict[str, Any]:
-    return _require_run(reader, run_id)
+) -> RunResponse:
+    return RunResponse.model_validate(_require_run(reader, run_id))
 
 
 @router.get("/{run_id}/global-stats", summary="Global stats + shot boundaries")
 def get_global_stats(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> dict[str, Any]:
+) -> GlobalStatsResponse:
     _require_run(reader, run_id)
-    return {
-        "global_stats": reader.get_global_stats(run_id),
-        "shot_boundaries": reader.get_shot_boundaries(run_id),
-    }
+    return GlobalStatsResponse(
+        global_stats=reader.get_global_stats(run_id),
+        shot_boundaries=[
+            ShotBoundary.model_validate(s) for s in reader.get_shot_boundaries(run_id)
+        ],
+    )
 
 
 @router.get("/{run_id}/objects", summary="Visual object occurrences")
 def get_objects(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> list[dict[str, Any]]:
+) -> list[dict]:
     _require_run(reader, run_id)
     return reader.get_visual_objects(run_id)
 
@@ -59,23 +70,23 @@ def get_objects(
 @router.get("/{run_id}/text-events", summary="OCR text events")
 def get_text_events(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> list[dict[str, Any]]:
+) -> list[TextEvent]:
     _require_run(reader, run_id)
-    return reader.get_text_events(run_id)
+    return [TextEvent.model_validate(r) for r in reader.get_text_events(run_id)]
 
 
 @router.get("/{run_id}/audio-segments", summary="Audio transcript segments")
 def get_audio_segments(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> list[dict[str, Any]]:
+) -> list[AudioSegment]:
     _require_run(reader, run_id)
-    return reader.get_audio_segments(run_id)
+    return [AudioSegment.model_validate(r) for r in reader.get_audio_segments(run_id)]
 
 
 @router.get("/{run_id}/scenes", summary="Scene descriptions")
 def get_scenes(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> list[dict[str, Any]]:
+) -> list[dict]:
     _require_run(reader, run_id)
     return reader.get_scene_descriptions(run_id)
 
@@ -86,14 +97,17 @@ def get_frames(
     from_sec: float | None = Query(default=None, alias="from"),
     to_sec: float | None = Query(default=None, alias="to"),
     reader: "ClipScribeReaderDB" = Depends(get_reader),
-) -> list[dict[str, Any]]:
+) -> list[FrameDetection]:
     _require_run(reader, run_id)
-    return reader.get_frame_detections(run_id, from_sec=from_sec, to_sec=to_sec)
+    return [
+        FrameDetection.model_validate(r)
+        for r in reader.get_frame_detections(run_id, from_sec=from_sec, to_sec=to_sec)
+    ]
 
 
 @router.get("/{run_id}/parser", summary="Parser results")
 def get_parser(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
-) -> list[dict[str, Any]]:
+) -> list[ParserResult]:
     _require_run(reader, run_id)
-    return reader.get_parser_results(run_id)
+    return [ParserResult.model_validate(r) for r in reader.get_parser_results(run_id)]
