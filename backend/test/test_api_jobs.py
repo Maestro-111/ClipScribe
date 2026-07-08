@@ -241,7 +241,11 @@ def test_unsupported_platform_is_422(ctx):
 def test_youtube_params_map_to_build_kwargs(ctx):
     from app.models import JobCreateRequest
 
-    req = JobCreateRequest.model_validate(_full_body(platform_params={"brand_name": "RAM", "call_to_actions": ["buy now"]}))
+    req = JobCreateRequest.model_validate(
+        _full_body(
+            platform_params={"brand_name": "RAM", "call_to_actions": ["buy now"]}
+        )
+    )
     assert req.resolved_params.to_build_kwargs() == {
         "youtube_brand_name": "RAM",
         "youtube_branded_products": [],
