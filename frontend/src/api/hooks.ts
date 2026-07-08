@@ -11,6 +11,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "./client";
+import type {
+  AudioSegment,
+  FrameDetection,
+  GlobalStatsResponse,
+  ParserResult,
+  Run,
+  TextEvent,
+} from "../lib/run-types";
 import type { components } from "./types";
 
 // The request body for POST /jobs, taken straight from the generated schema
@@ -26,7 +34,11 @@ export const keys = {
   jobs: (status?: string) => ["jobs", { status }] as const,
   job: (id: string) => ["jobs", id] as const,
   run: (id: string) => ["runs", id] as const,
+  runFrames: (id: string) => ["runs", id, "frames"] as const,
+  runGlobalStats: (id: string) => ["runs", id, "global-stats"] as const,
   runParser: (id: string) => ["runs", id, "parser"] as const,
+  runAudioSegments: (id: string) => ["runs", id, "audio-segments"] as const,
+  runTextEvents: (id: string) => ["runs", id, "text-events"] as const,
   platforms: () => ["platforms"] as const,
   inputs: () => ["inputs"] as const,
 };
@@ -92,7 +104,34 @@ export function useRun(runId: string) {
         await api.GET("/runs/{run_id}", {
           params: { path: { run_id: runId } },
         }),
-      ),
+      ) as unknown as Run,
+    staleTime: Infinity,
+  });
+}
+
+export function useRunFrames(runId: string) {
+  return useQuery({
+    queryKey: keys.runFrames(runId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/frames", {
+          params: { path: { run_id: runId } },
+        }),
+      ) as unknown as FrameDetection[],
+    staleTime: Infinity,
+  });
+}
+
+export function useRunGlobalStats(runId: string) {
+  return useQuery({
+    queryKey: keys.runGlobalStats(runId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/global-stats", {
+          params: { path: { run_id: runId } },
+        }),
+      ) as unknown as GlobalStatsResponse,
+    staleTime: Infinity,
   });
 }
 
@@ -104,7 +143,34 @@ export function useRunParser(runId: string) {
         await api.GET("/runs/{run_id}/parser", {
           params: { path: { run_id: runId } },
         }),
-      ),
+      ) as unknown as ParserResult[],
+    staleTime: Infinity,
+  });
+}
+
+export function useRunAudioSegments(runId: string) {
+  return useQuery({
+    queryKey: keys.runAudioSegments(runId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/audio-segments", {
+          params: { path: { run_id: runId } },
+        }),
+      ) as unknown as AudioSegment[],
+    staleTime: Infinity,
+  });
+}
+
+export function useRunTextEvents(runId: string) {
+  return useQuery({
+    queryKey: keys.runTextEvents(runId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/text-events", {
+          params: { path: { run_id: runId } },
+        }),
+      ) as unknown as TextEvent[],
+    staleTime: Infinity,
   });
 }
 

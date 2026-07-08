@@ -53,6 +53,7 @@ function JobsList() {
               <tr>
                 <th className="px-3 py-2">Video</th>
                 <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Platform</th>
                 <th className="px-3 py-2">Mode</th>
                 <th className="px-3 py-2">Created</th>
                 <th className="px-3 py-2">Duration</th>
@@ -62,7 +63,7 @@ function JobsList() {
             <tbody>
               {data.jobs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-neutral-500">
+                  <td colSpan={7} className="px-3 py-6 text-center text-neutral-500">
                     No jobs yet.
                   </td>
                 </tr>
@@ -78,6 +79,9 @@ function JobsList() {
                     >
                       {job.status}
                     </span>
+                  </td>
+                  <td className="px-3 py-2 text-neutral-600">
+                    {job.platform ?? "—"}
                   </td>
                   <td className="px-3 py-2 text-neutral-600">{job.mode ?? "—"}</td>
                   <td className="px-3 py-2 text-neutral-600">

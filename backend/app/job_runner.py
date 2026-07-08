@@ -81,6 +81,7 @@ class JobService:
             run_id = new_ulid()
 
         job_id = new_ulid()
+
         self.writer.create_job(
             job_id=job_id,
             mode=req.mode.value,

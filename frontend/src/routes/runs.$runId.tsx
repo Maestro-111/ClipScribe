@@ -1,91 +1,539 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRun, useRunParser } from "../api/hooks";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
+import {
+  useRun,
+  useRunAudioSegments,
+  useRunFrames,
+  useRunGlobalStats,
+  useRunParser,
+} from "../api/hooks";
+import type {
+  AudioSegment,
+  DetectionSource,
+  FrameDetection,
+  ParserResult,
+  ShotBoundary,
+} from "../lib/run-types";
 
-// "/runs/:runId" — the run inspector (web-app-plan §7, page 4).
-// This is the step-6 version: run metadata, the video player, and the parser
-// (ABCD) results table. The SVG detection overlay + timeline tracks are step 7.
 export const Route = createFileRoute("/runs/$runId")({
   component: RunInspector,
 });
 
+// ── constants ──────────────────────────────────────────────────────────────
+
+// Only two layers are surfaced in the inspector:
+//   - sam_mask → tracked objects (shown as "Object"; DINO records the same
+//     boxes upstream, so we drop DINO here to avoid duplicates);
+//   - ocr → on-screen text (shown as "Text").
+// mtcnn (faces) is intentionally excluded — it is unreliable and SAM already
+// tracks faces as objects.
+const SOURCES: DetectionSource[] = ["sam_mask", "ocr"];
+
+const SOURCE_COLORS: Record<DetectionSource, string> = {
+  dino: "#3b82f6",
+  ocr: "#22c55e",
+  mtcnn: "#f59e0b",
+  sam_mask: "#a855f7",
+};
+
+const SOURCE_LABELS: Record<DetectionSource, string> = {
+  dino: "DINO",
+  ocr: "Text",
+  mtcnn: "Face",
+  sam_mask: "Object",
+};
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+// Bounds for a source's hold window (see holdWindowsFor). A detection stays on
+// screen for at most this long after its sample, regardless of the source rate.
+const MIN_HOLD_SEC = 0.4;
+const MAX_HOLD_SEC = 2.5;
+
+// Per-source "hold window": how long one sample keeps showing after its
+// timestamp. Derived from the source's own median inter-sample gap (×3) so it
+// self-tunes to each source's sampling rate:
+//   - dense sources (sam_mask, ~every frame) → tiny window → never linger;
+//   - sparse clustered sources (ocr/dino, sampled every N frames) → a window
+//     wide enough to stay continuous WITHIN a cluster, but far smaller than a
+//     real gap (a stretch with no text/objects), so stale boxes clear instead
+//     of lingering until the next distant sample.
+function holdWindowsFor(
+  bySource: Map<string, FrameDetection[]>,
+): Map<string, number> {
+  const holds = new Map<string, number>();
+  for (const [src, dets] of bySource) {
+    const gaps: number[] = [];
+    for (let i = 1; i < dets.length; i++) {
+      const g = (dets[i]!.timestamp_sec ?? 0) - (dets[i - 1]!.timestamp_sec ?? 0);
+      if (g > 0) gaps.push(g);
+    }
+    gaps.sort((a, b) => a - b);
+    const median = gaps.length ? gaps[gaps.length >> 1]! : 0;
+    holds.set(src, Math.min(MAX_HOLD_SEC, Math.max(MIN_HOLD_SEC, median * 3)));
+  }
+  return holds;
+}
+
+// Currently-active detections. For EACH source independently, find its most
+// recent sample ≤ currentTime and show it only if we are still within that
+// source's hold window (otherwise we are in a real gap and show nothing).
+// Per-source is essential: a single global "latest timestamp" lets a dense
+// source (sam_mask) constantly evict a sparse source's (ocr) boxes.
+function activeDetections(
+  bySource: Map<string, FrameDetection[]>,
+  holdWindows: Map<string, number>,
+  currentTime: number,
+): FrameDetection[] {
+  const out: FrameDetection[] = [];
+  for (const [src, dets] of bySource) {
+    // dets is sorted ascending by timestamp. Find the greatest ts <= now.
+    let latestTs: number | null = null;
+    for (const d of dets) {
+      const ts = d.timestamp_sec ?? 0;
+      if (ts <= currentTime) latestTs = ts;
+      else break;
+    }
+    if (latestTs === null) continue;
+    if (currentTime - latestTs > (holdWindows.get(src) ?? MAX_HOLD_SEC)) continue;
+    for (const d of dets) {
+      if (d.timestamp_sec === latestTs) out.push(d);
+    }
+  }
+  return out;
+}
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ── VideoOverlay ─────────────────────────────────────────────────────────
+// Absolutely-positioned SVG that sits over the <video>. The viewBox matches
+// the video's natural pixel dimensions and preserveAspectRatio="xMidYMid meet"
+// mirrors the video element's default object-fit:contain, so box coordinates
+// need no manual scaling.
+
+interface VideoDims {
+  w: number;
+  h: number;
+  duration: number;
+}
+
+interface OverlayProps {
+  detections: FrameDetection[];
+  dims: VideoDims | null;
+}
+
+function VideoOverlay({ detections, dims }: OverlayProps) {
+  if (!dims || !detections.length) return null;
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      viewBox={`0 0 ${dims.w} ${dims.h}`}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {detections.map((d) => {
+        const x = d.box_x1 ?? 0;
+        const y = d.box_y1 ?? 0;
+        const w = (d.box_x2 ?? 0) - x;
+        const h = (d.box_y2 ?? 0) - y;
+        const color = SOURCE_COLORS[d.source as DetectionSource] ?? "#ef4444";
+        const pct =
+          d.confidence != null ? Math.round(d.confidence * 100) : null;
+        const label = (d.label ?? d.text ?? d.source ?? "").slice(0, 16);
+        return (
+          <g key={d.id}>
+            <rect
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+            />
+            {/* label tag inside top of box, only when the box is tall enough */}
+            {h > 18 && (
+              <>
+                <rect
+                  x={x}
+                  y={y}
+                  width={Math.min(w, label.length * 6.5 + 8)}
+                  height={15}
+                  fill={color}
+                  fillOpacity={0.85}
+                />
+                <text
+                  x={x + 3}
+                  y={y + 11}
+                  fontSize={10}
+                  fill="white"
+                  fontFamily="monospace"
+                >
+                  {label}
+                  {pct != null ? ` ${pct}%` : ""}
+                </text>
+              </>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── RunTimeline ───────────────────────────────────────────────────────────
+// Two horizontal tracks: shots (blue) and audio (green).
+// Click anywhere to seek the video.
+
+interface TimelineProps {
+  duration: number;
+  shots: ShotBoundary[];
+  audio: AudioSegment[];
+  currentTime: number;
+  onSeek: (t: number) => void;
+}
+
+function RunTimeline({
+  duration,
+  shots,
+  audio,
+  currentTime,
+  onSeek,
+}: TimelineProps) {
+  if (duration <= 0) return null;
+
+  const pct = (t: number) => `${((t / duration) * 100).toFixed(3)}%`;
+
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    onSeek(((e.clientX - rect.left) / rect.width) * duration);
+  };
+
+  return (
+    <div className="space-y-1 select-none">
+      <div className="flex justify-between text-xs text-neutral-400">
+        <span>{formatTime(currentTime)}</span>
+        <span>{formatTime(duration)}</span>
+      </div>
+
+      <div
+        className="relative flex h-14 cursor-pointer flex-col overflow-hidden rounded border bg-neutral-50"
+        onClick={handleClick}
+      >
+        {/* Playhead — spans all tracks */}
+        <div
+          className="pointer-events-none absolute inset-y-0 z-10 w-px bg-red-500"
+          style={{ left: pct(currentTime) }}
+        />
+
+        {/* Shot track */}
+        <div className="relative flex-1 border-b border-neutral-200">
+          <span className="pointer-events-none absolute left-1 top-0 z-20 text-xs text-neutral-400">
+            shots
+          </span>
+          {shots.map((s) => (
+            <div
+              key={s.shot_index}
+              className="absolute inset-y-1 rounded-sm border border-blue-300 bg-blue-100"
+              style={{
+                left: pct(s.start_sec ?? 0),
+                width: pct(s.duration_sec ?? 0),
+              }}
+              title={`Shot ${s.shot_index} — ${formatTime(s.start_sec ?? 0)}–${formatTime(s.end_sec ?? 0)}`}
+            />
+          ))}
+        </div>
+
+        {/* Audio track */}
+        <div className="relative flex-1">
+          <span className="pointer-events-none absolute left-1 top-0 z-20 text-xs text-neutral-400">
+            audio
+          </span>
+          {audio.map((a) => (
+            <div
+              key={a.id}
+              className="absolute inset-y-1 overflow-hidden truncate rounded-sm border border-green-300 bg-green-100 px-0.5 text-xs text-green-800"
+              style={{
+                left: pct(a.start_time ?? 0),
+                width: pct((a.end_time ?? 0) - (a.start_time ?? 0)),
+              }}
+              title={a.text ?? ""}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ParserTable ───────────────────────────────────────────────────────────
+// Criteria table grouped by feature_category. Each row expands to show the
+// LLM explanation, criteria text, and (optionally) the full prompt.
+
+function ParserTable({ results }: { results: ParserResult[] }) {
+  // Allow any number of rows open at once (independent toggles).
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const toggleRow = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  if (!results.length) {
+    return (
+      <p className="text-sm text-neutral-500">No parser results for this run.</p>
+    );
+  }
+
+  const byCategory = results.reduce<Record<string, ParserResult[]>>((acc, r) => {
+    const cat = r.feature_category ?? "Other";
+    (acc[cat] ??= []).push(r);
+    return acc;
+  }, {});
+
+  const evalIcon = (v: boolean | null) =>
+    v === true ? "✅" : v === false ? "❌" : "—";
+
+  return (
+    <div className="space-y-5">
+      {Object.entries(byCategory).map(([cat, rows]) => (
+        <div key={cat}>
+          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            {cat}
+          </h3>
+          <table className="w-full text-sm">
+            <tbody>
+              {rows.map((row) => (
+                <Fragment key={row.id}>
+                  <tr
+                    className="cursor-pointer border-t hover:bg-neutral-50"
+                    onClick={() => toggleRow(row.id)}
+                  >
+                    <td className="w-8 py-1.5 text-center">
+                      {evalIcon(row.evaluation)}
+                    </td>
+                    <td className="py-1.5 pr-4">{row.feature_name ?? "—"}</td>
+                    <td className="py-1.5 text-xs text-neutral-400">
+                      {expanded.has(row.id) ? "▲" : "▼"}
+                    </td>
+                  </tr>
+                  {expanded.has(row.id) && (
+                    <tr>
+                      <td
+                        colSpan={3}
+                        className="bg-neutral-50 px-4 py-3 text-xs"
+                      >
+                        <div className="space-y-2">
+                          {row.feature_criteria && (
+                            <p className="text-neutral-600">
+                              <span className="font-medium">Criteria: </span>
+                              {row.feature_criteria}
+                            </p>
+                          )}
+                          {row.llm_explanation && (
+                            <p className="text-neutral-700">
+                              <span className="font-medium">Explanation: </span>
+                              {row.llm_explanation}
+                            </p>
+                          )}
+                          {row.llm_prompt && (
+                            <details>
+                              <summary className="cursor-pointer text-neutral-500">
+                                Show prompt
+                              </summary>
+                              <pre className="mt-1 overflow-auto whitespace-pre-wrap rounded bg-neutral-100 p-2 text-neutral-700">
+                                {row.llm_prompt}
+                              </pre>
+                            </details>
+                          )}
+                          {row.langsmith_run_id && (
+                            <p>
+                              <span className="font-medium">LangSmith: </span>
+                              <code className="text-blue-600">
+                                {row.langsmith_run_id}
+                              </code>
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── RunInspector ──────────────────────────────────────────────────────────
+
 function RunInspector() {
-  // useParams reads the dynamic segment. Because of the file name ($runId) and
-  // the router type augmentation, `runId` is typed as a string here.
   const { runId } = Route.useParams();
+
   const run = useRun(runId);
+  const frames = useRunFrames(runId);
+  const globalStats = useRunGlobalStats(runId);
+  const audioSegments = useRunAudioSegments(runId);
   const parser = useRunParser(runId);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [dims, setDims] = useState<VideoDims | null>(null);
+  const [enabledSources, setEnabledSources] = useState<Set<DetectionSource>>(
+    new Set(SOURCES),
+  );
+
+  const toggleSource = useCallback((src: DetectionSource) => {
+    setEnabledSources((prev) => {
+      const next = new Set(prev);
+      if (next.has(src)) next.delete(src);
+      else next.add(src);
+      return next;
+    });
+  }, []);
+
+  // Group detections by source once (each group sorted ascending by time).
+  // activeDetections() then holds each source at its own most-recent sample.
+  const bySource = useMemo(() => {
+    const map = new Map<string, FrameDetection[]>();
+    for (const d of frames.data ?? []) {
+      const src = d.source ?? "unknown";
+      (map.get(src) ?? map.set(src, []).get(src)!).push(d);
+    }
+    for (const dets of map.values()) {
+      dets.sort((a, b) => (a.timestamp_sec ?? 0) - (b.timestamp_sec ?? 0));
+    }
+    return map;
+  }, [frames.data]);
+
+  // Per-source hold windows, recomputed only when the grouped data changes.
+  const holdWindows = useMemo(() => holdWindowsFor(bySource), [bySource]);
+
+  // Currently-active detections, filtered by the layer toggles only
+  // (confidence is intentionally not filtered — show every detection).
+  const visibleDetections = useMemo(() => {
+    return activeDetections(bySource, holdWindows, currentTime).filter((d) =>
+      enabledSources.has(d.source as DetectionSource),
+    );
+  }, [bySource, holdWindows, currentTime, enabledSources]);
+
+  const handleSeek = useCallback((t: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = t;
+      setCurrentTime(t);
+    }
+  }, []);
+
+  const duration = dims?.duration ?? 0;
+  const shots = globalStats.data?.shot_boundaries ?? [];
+  const audio = audioSegments.data ?? [];
+  const parserResults = parser.data ?? [];
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Run {runId}</h1>
+      {/* heading */}
+      <div>
+        <h1 className="text-2xl font-semibold">Run inspector</h1>
+        {run.data?.video_name && (
+          <p className="text-neutral-500">{run.data.video_name}</p>
+        )}
+        {run.error && (
+          <p className="text-sm text-red-600">
+            {(run.error as Error).message}
+          </p>
+        )}
+      </div>
 
-      {run.isLoading && <p className="text-neutral-500">Loading…</p>}
-      {run.error && <p className="text-red-600">{(run.error as Error).message}</p>}
+      {/* ── video + SVG overlay ── */}
+      <section className="space-y-3 rounded border bg-white p-4">
+        <h2 className="font-medium">Video</h2>
 
-      {run.data && (
-        <section className="rounded border bg-white p-4">
-          <h2 className="mb-2 font-medium">Metadata</h2>
-          <pre className="overflow-auto rounded bg-neutral-50 p-3 text-xs">
-            {JSON.stringify(run.data, null, 2)}
-          </pre>
-        </section>
-      )}
+        <div className="relative overflow-hidden rounded bg-black">
+          <video
+            ref={videoRef}
+            src={`/api/runs/${runId}/video`}
+            controls
+            className="w-full"
+            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              setDims({ w: v.videoWidth, h: v.videoHeight, duration: v.duration });
+            }}
+          />
+          <VideoOverlay detections={visibleDetections} dims={dims} />
+        </div>
 
-      <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Video</h2>
-        {/*
-          The <video> source is the ORIGINAL input, served Range-aware by the
-          artifacts route (plan §9.17: raw input + our own overlay beats the
-          baked tracked mp4). We hit it through the /api proxy.
+        {/* layer controls */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <div className="flex gap-3">
+            {SOURCES.map((src) => (
+              <label
+                key={src}
+                className="flex cursor-pointer select-none items-center gap-1"
+              >
+                <input
+                  type="checkbox"
+                  checked={enabledSources.has(src)}
+                  onChange={() => toggleSource(src)}
+                />
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: SOURCE_COLORS[src] }}
+                />
+                {SOURCE_LABELS[src]}
+              </label>
+            ))}
+          </div>
 
-          STEP 7 (inspector overlay) will wrap this <video> in a relative-
-          positioned container and lay an absolutely-positioned <svg> on top.
-          On the video's `timeupdate` event we look up frame_detections for the
-          current time (GET /runs/{id}/frames) and draw <rect> boxes scaled to
-          the video's displayed size. That's the piece that makes this feel real.
-        */}
-        <video
-          src={`/api/runs/${runId}/video`}
-          controls
-          className="w-full rounded bg-black"
-        />
+          <span className="ml-auto text-xs text-neutral-400">
+            {frames.isLoading
+              ? "Loading detections…"
+              : frames.data
+                ? `${visibleDetections.length} shown`
+                : ""}
+          </span>
+        </div>
+
         <a
           href={`/api/runs/${runId}/tracked-video`}
-          className="mt-2 inline-block text-sm text-blue-600 hover:underline"
+          className="inline-block text-sm text-blue-600 hover:underline"
         >
           Download tracked_output.mp4
         </a>
       </section>
 
+      {/* ── timeline ── */}
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">ABCD criteria</h2>
-        {parser.isLoading && <p className="text-neutral-500">Loading…</p>}
-        {parser.data && parser.data.length === 0 && (
-          <p className="text-neutral-500">No parser results for this run.</p>
+        <h2 className="mb-3 font-medium">Timeline</h2>
+        {globalStats.isLoading ? (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        ) : (
+          <RunTimeline
+            duration={duration}
+            shots={shots}
+            audio={audio}
+            currentTime={currentTime}
+            onSeek={handleSeek}
+          />
         )}
-        {parser.data && parser.data.length > 0 && (
-          <table className="w-full text-sm">
-            <thead className="text-left text-neutral-600">
-              <tr>
-                <th className="py-1">Feature</th>
-                <th className="py-1">Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* The /runs/{id}/parser endpoint currently returns untyped
-                  dict rows (dict[str, Any] on the backend), so fields arrive as
-                  `unknown` — hence the String()/Boolean() coercions. Step 7 can
-                  give these a real Pydantic model and delete the casts. */}
-              {parser.data.map((row, i) => (
-                <tr key={i} className="border-t align-top">
-                  <td className="py-1 pr-4">
-                    {String(row.feature_name ?? "—")}
-                  </td>
-                  <td className="py-1">{row.evaluation ? "✅" : "❌"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      </section>
+
+      {/* ── ABCD criteria ── */}
+      <section className="rounded border bg-white p-4">
+        <h2 className="mb-3 font-medium">ABCD criteria</h2>
+        {parser.isLoading ? (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        ) : (
+          <ParserTable results={parserResults} />
         )}
       </section>
     </div>

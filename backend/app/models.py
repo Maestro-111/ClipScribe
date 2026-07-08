@@ -196,3 +196,90 @@ class UploadedVideo(BaseModel):
 
 class UploadResponse(BaseModel):
     uploaded: list[UploadedVideo]
+
+
+# --------------------------------------------------------------------- run inspector
+
+
+class RunResponse(BaseModel):
+    """A completed extraction run."""
+
+    run_id: str
+    video_name: str | None = None
+    video_path: str | None = None
+    video_type: str | None = None
+    created_at: str | None = None
+
+
+class FrameDetection(BaseModel):
+    """A single bounding-box detection in one video frame."""
+
+    id: int
+    run_id: str
+    shot_index: int | None = None
+    frame_idx: int | None = None
+    timestamp_sec: float | None = None
+    source: str | None = None  # dino | ocr | mtcnn | sam_mask
+    label: str | None = None
+    text: str | None = None
+    box_x1: float | None = None
+    box_y1: float | None = None
+    box_x2: float | None = None
+    box_y2: float | None = None
+    confidence: float | None = None
+    object_id: int | None = None
+
+
+class ShotBoundary(BaseModel):
+    """Temporal extent of a single shot."""
+
+    id: int
+    run_id: str
+    shot_index: int | None = None
+    start_sec: float | None = None
+    end_sec: float | None = None
+    duration_sec: float | None = None
+
+
+class GlobalStatsResponse(BaseModel):
+    """Combined global stats + shot boundary list for a run."""
+
+    global_stats: dict[str, Any] | None = None
+    shot_boundaries: list[ShotBoundary]
+
+
+class ParserResult(BaseModel):
+    """Persisted per-criterion evaluation from the parser."""
+
+    id: int
+    run_id: str
+    platform: str | None = None
+    feature_category: str | None = None
+    feature_name: str | None = None
+    feature_criteria: str | None = None
+    evaluation: bool | None = None
+    llm_prompt: str | None = None
+    llm_explanation: str | None = None
+    langsmith_run_id: str | None = None
+    created_at: str | None = None
+
+
+class AudioSegment(BaseModel):
+    """Whisper transcript segment."""
+
+    id: int
+    run_id: str
+    start_time: float | None = None
+    end_time: float | None = None
+    text: str | None = None
+    confidence: float | None = None
+
+
+class TextEvent(BaseModel):
+    """OCR text event at a specific second."""
+
+    id: int
+    run_id: str
+    second: int | None = None
+    line_index: int | None = None
+    text: str | None = None
