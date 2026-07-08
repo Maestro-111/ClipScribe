@@ -43,6 +43,8 @@ export const keys = {
   inputs: () => ["inputs"] as const,
 };
 
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "canceled"]);
+
 // --- Jobs list ---
 export function useJobs(status?: string) {
   return useQuery({
@@ -56,6 +58,10 @@ export function useJobs(status?: string) {
           params: { query: status ? { status } : {} },
         }),
       ),
+    refetchInterval: (query) =>
+      query.state.data?.jobs.some((job) => !TERMINAL_JOB_STATUSES.has(job.status))
+        ? 2000
+        : false,
   });
 }
 
@@ -214,7 +220,7 @@ export function useDeleteJob() {
   });
 }
 
-// Cancel a queued or running job (POST /jobs/{id}/cancel → 204).
+// Cancel a queued job (POST /jobs/{id}/cancel → 204).
 export function useCancelJob() {
   const qc = useQueryClient();
   return useMutation({

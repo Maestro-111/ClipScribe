@@ -1,6 +1,7 @@
 """Core parser for video information extraction and evaluation."""
 
 import logging
+import re
 from pathlib import Path
 
 from src.db import ClipScribeReaderDB, ClipScribeWriterDB
@@ -11,6 +12,12 @@ from src.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger("clip_scribe")
+
+
+def _safe_path_segment(value: str, fallback: str) -> str:
+    name = Path(value).name
+    segment = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return segment or fallback
 
 
 class VideoInformationParser:
@@ -121,12 +128,9 @@ class VideoInformationParser:
 
         report_name = self.create_report_name()
 
-        report_output_path = (
-            Path(self.output_dir) / video_name / f"{report_name}_report.csv"
-        )
-        scores_output_path = (
-            Path(self.output_dir) / video_name / f"{report_name}_scores.csv"
-        )
+        report_dir = Path(self.output_dir) / _safe_path_segment(run_id, "run")
+        report_output_path = report_dir / f"{report_name}_report.csv"
+        scores_output_path = report_dir / f"{report_name}_scores.csv"
 
         evaluator = self.create_evaluator(reader_db)
         report_writer = self.create_report_writer(
