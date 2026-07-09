@@ -193,3 +193,22 @@ shot_boundaries_table = Table(
     Column("end_sec", Float),
     Column("duration_sec", Float),
 )
+
+# User-facing transcript for the advisory chat agent (web-app-plan §13). The
+# agent fetches run data on demand via read-only tools; this table just stores
+# the conversation so the UI can list sessions and replay history.
+chat_messages_table = Table(
+    "chat_messages",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Text, nullable=False),
+    # Groups messages into one conversation; == the LangGraph thread id.
+    Column("session_id", Text, nullable=False),
+    # user | assistant
+    Column("role", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    # Optional: tool names the assistant invoked, for UI transparency.
+    Column("tool_calls_json", JSON),
+    Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    Index("ix_chat_messages_run_session", "run_id", "session_id"),
+)

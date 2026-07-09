@@ -283,3 +283,45 @@ class TextEvent(BaseModel):
     second: int | None = None
     line_index: int | None = None
     text: str | None = None
+
+
+# ── Advisory chat (web-app-plan §13) ───────────────────────────────────────
+
+
+class ChatRequest(BaseModel):
+    """One user turn in an advisory-chat session."""
+
+    message: str = Field(min_length=1)
+    # Omit to start a new session; the response's first SSE event returns the id.
+    session_id: str | None = None
+
+
+class ChatMessage(BaseModel):
+    """One persisted transcript message."""
+
+    id: int
+    role: str
+    content: str
+    tool_calls_json: list[str] | None = None
+    created_at: str | None = None
+
+
+class ChatHistoryResponse(BaseModel):
+    run_id: str
+    session_id: str
+    messages: list[ChatMessage]
+
+
+class ChatSession(BaseModel):
+    """Summary of one chat session for the run's session list."""
+
+    session_id: str
+    message_count: int
+    title: str | None = None
+    started_at: str | None = None
+    last_at: str | None = None
+
+
+class ChatSessionsResponse(BaseModel):
+    run_id: str
+    sessions: list[ChatSession]

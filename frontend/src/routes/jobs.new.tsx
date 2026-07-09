@@ -24,8 +24,10 @@ function NewJob() {
   const platforms = usePlatforms();
   const createJob = useCreateJob();
 
-  // Job-level fields
-  const [mode, setMode] = useState<"full" | "extract" | "parse">("full");
+  // Job-level fields. Mode is always "full" from the UI: "extract" is a
+  // developer-only path for inspecting extraction artifacts, and "parse"
+  // (re-evaluate an existing run) isn't supported yet — neither is user-facing.
+  const mode = "full" as const;
   const [videoPath, setVideoPath] = useState("");
   const [videoType, setVideoType] = useState("");
   const [videoTab, setVideoTab] = useState<"pick" | "upload">("pick");
@@ -50,7 +52,7 @@ function NewJob() {
   const [userHints, setUserHints] = useState("");
   const [generateHintFromName, setGenerateHintFromName] = useState(false);
 
-  const canSubmit = mode !== "parse" && Boolean(videoPath);
+  const canSubmit = Boolean(videoPath);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -91,20 +93,6 @@ function NewJob() {
             Job
           </h2>
           <div className="space-y-4">
-            <Field label="Mode">
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as typeof mode)}
-                className="w-full rounded border px-2 py-1.5"
-              >
-                <option value="full">full — extract + evaluate</option>
-                <option value="extract">extract only — no parser evaluation</option>
-                <option value="parse" disabled>
-                  parse — re-evaluate an existing run (not yet supported)
-                </option>
-              </select>
-            </Field>
-
             <div>
               <span className="mb-1 block text-sm font-medium">Video</span>
 

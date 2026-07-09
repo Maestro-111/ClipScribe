@@ -23,7 +23,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.errors import register_error_handlers
-from app.routes import artifacts, health, jobs, meta, runs, uploads
+from app.routes import artifacts, chat, health, jobs, meta, runs, uploads
 from app.settings import get_settings
 
 logger = logging.getLogger("clip_scribe")
@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(meta.router)
     app.include_router(jobs.router)
     app.include_router(runs.router)
+    app.include_router(chat.router)
     app.include_router(uploads.router)
     app.include_router(artifacts.router)
 

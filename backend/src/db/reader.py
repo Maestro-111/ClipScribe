@@ -215,6 +215,45 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             )
             return [dict(row) for row in result.mappings().fetchall()]
 
+    def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
+        """Fetch the transcript for one advisory-chat session, oldest first."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT id, run_id, session_id, role, content, "
+                    "tool_calls_json, created_at FROM chat_messages "
+                    "WHERE run_id = :run_id AND session_id = :session_id "
+                    "ORDER BY id"
+                ),
+                {"run_id": run_id, "session_id": session_id},
+            )
+            rows = [dict(row) for row in result.mappings().fetchall()]
+        for row in rows:
+            raw = row.get("tool_calls_json")
+            if isinstance(raw, str) and raw:
+                try:
+                    row["tool_calls_json"] = json.loads(raw)
+                except json.JSONDecodeError:
+                    pass
+        return rows
+
+    def get_chat_sessions(self, run_id: str) -> list[dict]:
+        """List advisory-chat sessions for a run, most recently active first."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT session_id, COUNT(*) AS message_count, "
+                    "MIN(created_at) AS started_at, MAX(created_at) AS last_at, "
+                    "(SELECT content FROM chat_messages c2 "
+                    " WHERE c2.run_id = c.run_id AND c2.session_id = c.session_id "
+                    " ORDER BY id LIMIT 1) AS title "
+                    "FROM chat_messages c WHERE run_id = :run_id "
+                    "GROUP BY session_id ORDER BY MAX(id) DESC"
+                ),
+                {"run_id": run_id},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
     def get_job(self, job_id: str) -> dict | None:
         """Fetch a single orchestration job by id."""
         with self._engine.connect() as conn:
