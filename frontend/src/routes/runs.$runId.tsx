@@ -14,6 +14,7 @@ import type {
   ParserResult,
   ShotBoundary,
 } from "../lib/run-types";
+import { ChatPanel } from "../components/ChatPanel";
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunInspector,
@@ -207,6 +208,13 @@ function RunTimeline({
 
   const pct = (t: number) => `${((t / duration) * 100).toFixed(3)}%`;
 
+  // The segment being spoken at the playhead — drives the live caption below
+  // and highlights its block in the audio track.
+  const activeAudio = audio.find(
+    (a) =>
+      currentTime >= (a.start_time ?? 0) && currentTime <= (a.end_time ?? 0),
+  );
+
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     onSeek(((e.clientX - rect.left) / rect.width) * duration);
@@ -255,7 +263,11 @@ function RunTimeline({
           {audio.map((a) => (
             <div
               key={a.id}
-              className="absolute inset-y-1 overflow-hidden truncate rounded-sm border border-green-300 bg-green-100 px-0.5 text-xs text-green-800"
+              className={`absolute inset-y-1 overflow-hidden truncate rounded-sm border px-0.5 text-xs ${
+                a.id === activeAudio?.id
+                  ? "border-green-500 bg-green-300 text-green-900"
+                  : "border-green-300 bg-green-100 text-green-800"
+              }`}
               style={{
                 left: pct(a.start_time ?? 0),
                 width: pct((a.end_time ?? 0) - (a.start_time ?? 0)),
@@ -264,6 +276,18 @@ function RunTimeline({
             />
           ))}
         </div>
+      </div>
+
+      {/* Live caption: the transcript for the segment under the playhead. */}
+      <div className="min-h-[2.5rem] rounded border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm">
+        {activeAudio?.text ? (
+          <p className="text-neutral-700">
+            <span className="mr-2 align-middle text-xs text-green-600">🔊</span>
+            {activeAudio.text}
+          </p>
+        ) : (
+          <p className="italic text-neutral-300">— no speech at this moment —</p>
+        )}
       </div>
     </div>
   );
@@ -535,6 +559,12 @@ function RunInspector() {
         ) : (
           <ParserTable results={parserResults} />
         )}
+      </section>
+
+      {/* ── Advisory chat (web-app-plan §13) ── */}
+      <section className="rounded border bg-white p-4">
+        <h2 className="mb-3 font-medium">Ask about this video</h2>
+        <ChatPanel runId={runId} />
       </section>
     </div>
   );

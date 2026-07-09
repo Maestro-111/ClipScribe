@@ -1047,17 +1047,26 @@ Strictly ordered; each step is shippable on its own.
 12. **Polish:** retention policy, auth (if/when needed), cost tracking,
     OpenAPI codegen in CI, expand tests.
 
-13. **Advisory chat agent — backend (§13).** Add a `query_parser_results` tool
-    and an `"advisory"` tool group (all query tools) in `src/parser/tools.py`;
-    add `build_advisory_agent(reader_db, run_id)` (ReAct agent + checkpointer +
-    advisory system prompt); implement `POST /runs/{id}/chat` (streamed) plus
-    session list/history/delete. **API-only — no worker, no GPU**, so it can
-    land before or after Celery (step 8).
+13. **Advisory chat agent — backend (§13).** **DONE.** `query_parser_results`
+    tool + `"advisory"` tool group in `src/parser/tools.py`;
+    `build_advisory_agent(model, reader_db, run_id)` in `src/parser/advisory.py`;
+    `app/chat.py` `ChatService` (SSE streaming, DB-as-memory) + `chat_messages`
+    table (migration `c1a2d3e4f5a6`) + reader/writer methods; routes in
+    `app/routes/chat.py` (`POST /runs/{id}/chat` streamed, session
+    list/history/delete). **No models, no worker, no GPU.** One caveat vs the
+    original "no torch" claim: the LLM client (`langchain_openai`/`langgraph`)
+    transitively imports torch in this env, so the route lazy-imports the service
+    to keep `import app.main` torch-free; torch loads on the first chat request.
+    For the step-11 slim API image, add `langgraph` + `langchain-openai` + the
+    `src/parser` tree to the `api` group and verify it runs without torch
+    installed. Tested in `test/test_api_chat.py`.
 
-14. **Advisory chat agent — frontend (§13).** Chat panel in the run inspector
-    that streams the answer token-by-token, shows tool-call chips for
-    transparency, and adds an "ask about this" shortcut on each failed
-    criterion row that seeds a question.
+14. **Advisory chat agent — frontend (§13).** **DONE.** `ChatPanel`
+    (`frontend/src/components/ChatPanel.tsx`) mounted in the run inspector:
+    streams the answer token-by-token (POST + manual SSE parse over `fetch`),
+    shows tool-call chips, keeps a session id for multi-turn continuity, and
+    offers starter-prompt buttons. Follow-up: an "ask about this" shortcut on
+    failed criterion rows (needs lifting chat state above `ParserTable`).
 
 ---
 
@@ -1222,17 +1231,17 @@ accepts a cross-run argument. That closure is the entire isolation story.
   `reader_db.get_parser_results(run_id, ...)` reader method.
 - **`"advisory"` tool group** — registered in `tool_map` with all query tools
   plus `query_parser_results`.
-- **`build_advisory_agent(reader_db, run_id)`** — `create_react_agent(model,
-  advisory_tools, checkpointer=...)` with an advisory system prompt: persona is
-  a senior creative strategist; must cite specific field values / verdicts; must
-  fetch data via tools rather than invent it; must give concrete, testable
-  recommendations.
-- **Conversation memory via LangGraph checkpointer**, keyed by
-  `thread_id = session_id`. `MemorySaver` (in-process) in dev; the LangGraph
-  **Postgres checkpointer** when deployed so sessions survive API restarts and
-  span replicas. This replaces any hand-rolled message-history plumbing for the
-  agent's working state; the `chat_messages` table (§4) is only the
-  user-facing transcript for listing/replay in the UI.
+- **`build_advisory_agent(model, reader_db, run_id)`** —
+  `create_react_agent(model, advisory_tools)` with an advisory system prompt:
+  persona is a senior creative strategist; must cite specific field values /
+  verdicts; must fetch data via tools rather than invent it; must give concrete,
+  testable recommendations.
+- **Conversation memory = the DB (as built).** Each turn reloads the session's
+  prior `chat_messages` and replays them into the agent as Human/AI messages, so
+  history survives API restarts and spans replicas without a checkpointer — the
+  `chat_messages` table is the single source of truth. (A LangGraph
+  `MemorySaver`/Postgres checkpointer keyed by `thread_id = session_id` remains a
+  possible optimization if replaying full history ever gets expensive.)
 - **Streaming** — `agent.stream(..., stream_mode="messages")` piped over an SSE
   response. This reuses the §9 SSE *pattern*, but the event source is the LLM
   token stream directly — no Redis pub/sub, no worker involved.

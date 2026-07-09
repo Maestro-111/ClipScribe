@@ -197,6 +197,53 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             logger.error("query_field_descriptions failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
+    @tool
+    def query_parser_results(
+        feature_category: str | None = None, only_failed: bool = False
+    ) -> str:
+        """
+        Query the platform ABCD evaluation verdicts already produced for this
+        video. Use this to ground advice in what the evaluators concluded and why
+        — especially to explain a failure or suggest how to fix it.
+
+        Args:
+            feature_category: Optional substring to filter by category (e.g. "Attract").
+            only_failed: If True, return only criteria that did NOT pass.
+
+        Returns:
+            JSON string containing list of per-criterion results with fields:
+            - feature_category: the ABCD category
+            - feature_name: the criterion name
+            - feature_criteria: the criterion's definition
+            - evaluation: True (passed) / False (failed)
+            - llm_explanation: the evaluator's reasoning for the verdict
+        """
+        try:
+            results = reader_db.get_parser_results(run_id)
+            filtered = []
+            for r in results:
+                if only_failed and r.get("evaluation"):
+                    continue
+                if (
+                    feature_category
+                    and feature_category.lower()
+                    not in str(r.get("feature_category", "")).lower()
+                ):
+                    continue
+                filtered.append(
+                    {
+                        "feature_category": r.get("feature_category"),
+                        "feature_name": r.get("feature_name"),
+                        "feature_criteria": r.get("feature_criteria"),
+                        "evaluation": r.get("evaluation"),
+                        "llm_explanation": r.get("llm_explanation"),
+                    }
+                )
+            return json.dumps(filtered, indent=2)
+        except Exception as e:
+            logger.error("query_parser_results failed: %s", e)
+            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+
     # Map tool groups to relevant tools
     tool_map = {
         "audio": [
@@ -230,6 +277,16 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             query_scene_descriptions,
             query_global_stats,
             query_field_descriptions,
+        ],
+        # Everything, plus the ABCD verdicts — for the advisory chat agent (§13).
+        "advisory": [
+            query_audio_segments,
+            query_text_events,
+            query_visual_objects,
+            query_scene_descriptions,
+            query_global_stats,
+            query_field_descriptions,
+            query_parser_results,
         ],
     }
 

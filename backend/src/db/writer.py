@@ -19,6 +19,7 @@ from .schema import (
     shot_boundaries_table,
     parser_results_table,
     jobs_table,
+    chat_messages_table,
 )
 
 logger = logging.getLogger("clip_scribe")
@@ -329,6 +330,38 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 jobs_table.delete().where(jobs_table.c.job_id == job_id)
             )
             return result.rowcount > 0
+
+    def add_chat_message(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        tool_calls: list[str] | None = None,
+    ) -> None:
+        """Append one advisory-chat message to a session transcript (§13)."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                chat_messages_table.insert(),
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "role": role,
+                    "content": content,
+                    "tool_calls_json": tool_calls,
+                },
+            )
+
+    def delete_chat_session(self, run_id: str, session_id: str) -> int:
+        """Delete all messages in one chat session. Returns rows removed."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                chat_messages_table.delete()
+                .where(chat_messages_table.c.run_id == run_id)
+                .where(chat_messages_table.c.session_id == session_id)
+            )
+            return result.rowcount
 
     def save_parser_results(self, run_id: str, platform: str, results: list) -> None:
         """Persist per-criterion parser evaluations for a run.
