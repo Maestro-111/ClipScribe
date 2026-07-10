@@ -26,8 +26,9 @@ and **Celery/Redis job dispatch** have landed. `POST /jobs` runs either
 in-process (single-slot executor) or via a Redis-backed Celery worker, selected
 by `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, job
 polling, read-only run views, artifact serving, health, and metadata endpoints.
-SSE live progress, cooperative cancellation, the frontend, and the final Docker
-split are still planned.
+**SSE live progress has landed** — a per-job Redis stream feeds `GET
+/jobs/{id}/events` and the frontend live page. Cooperative cancellation of a
+running job and the final Docker split are still planned.
 
 ---
 
@@ -428,17 +429,20 @@ single-machine dev. `docker-compose.yml` already has Postgres scaffolding.
 
 ## 5. Event vocabulary (worker → UI live updates)
 
-**Core status: DONE for engine/extractor/parser phase events.** The checked-in
-core emits event type + payload through `backend/src/utils/progress.py`. Redis
-pub/sub, timestamp/job-id envelopes, SSE multiplexing, log mirroring, and
-per-criterion parser events are still worker/API work.
+**Status: DONE.** The core emits event type + payload through
+`backend/src/utils/progress.py`, and the web layer now publishes and serves them
+(step 9). Per-criterion parser events remain reserved (no per-criterion emit is
+wired yet).
 
-Future workers will publish to two Redis pub/sub channels per job:
-- `job:{id}:events` — structured JSON events (the vocabulary below)
-- `job:{id}:logs` — raw `logging.Handler` passthrough (level, msg, ts)
+The transport is a **single Redis stream per job**, `job:{id}:stream` — not the
+two pub/sub channels originally sketched. Both structured events *and* mirrored
+log lines are `XADD`ed to it, each entry tagged with a `type` (`"log"` for log
+records). One stream, so ordering is preserved and the SSE handler does one
+read. Streams (not pub/sub) so a late subscriber can replay history (§16);
+`MAXLEN` bounds growth and a TTL is set once a terminal event is written.
 
-The planned FastAPI SSE endpoint will subscribe to both and multiplex them into
-one stream. The sync-path API checked in today does not expose SSE.
+`GET /jobs/{id}/events` is an async `XREAD BLOCK` generator that replays from id
+`0` then tails, closing on a terminal event.
 
 ### Event types
 
@@ -492,18 +496,20 @@ one stream. The sync-path API checked in today does not expose SSE.
 ### Implementation
 
 A `ProgressReporter` interface is injected into the engine, extractor, and
-parser. Current implementation:
-- `NullProgressReporter()` — used by CLI and tests.
-
-Planned implementation:
-- `RedisProgressReporter(job_id, redis_client)` — used in worker.
+parser. Implementations:
+- `NullProgressReporter()` — used by CLI, tests, and as the fallback when Redis
+  is unreachable.
+- `RedisProgressReporter(job_id, client)` (`app/events.py`) — `XADD`s events to
+  `job:{id}:stream`. Built by `make_reporter(...)` and wired into the engine by
+  `run_job_core` for both the inline and celery paths.
 
 `extractor_core.py` only depends on the interface, not Redis. Same applies to
 the parser.
 
-A custom `logging.Handler` is still planned for task start to mirror `INFO+`
-log records to `job:{id}:logs`. The handler should read job id from a
-contextvar so no function signatures change.
+`JobLogStreamHandler` (`app/events.py`) mirrors `INFO+` `clip_scribe` log
+records into the same stream tagged `type: "log"`. It reads the job id from the
+`current_job_id` contextvar (set in `run_job_core`), so no function signatures
+change; records emitted outside a job context are dropped.
 
 ---
 
@@ -519,9 +525,10 @@ out separately.
 - `GET    /jobs`                       — paginated, filterable by status.
 - `GET    /jobs/{id}`                  — full state.
 
+- `GET    /jobs/{id}/events`           — **DONE.** SSE live progress. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
+
 Planned:
-- `GET    /jobs/{id}/events`           — SSE; multiplexes `events` + `logs`.
-- `POST   /jobs/{id}/cancel`           — cooperative cancel (see §10).
+- `POST   /jobs/{id}/cancel`           — cooperative cancel of a *running* job (see §10.10; queued/running cancel already exists).
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
@@ -540,7 +547,7 @@ Planned:
 
 ### Health
 - `GET /healthz`                       — liveness.
-- `GET /readyz`                        — heavy builder loaded + DB reachable. Redis check lands with the pub/sub bridge.
+- `GET /readyz`                        — DB + Redis reachable, plus (inline mode only) the heavy builder loaded; celery mode is ready without models.
 
 ### Metadata
 - `GET /platforms`                     — list, with required params.
@@ -1031,10 +1038,25 @@ Strictly ordered; each step is shippable on its own.
    `uv run celery -A app.celery_app worker --pool=solo --concurrency=1`.
    Remaining: an end-to-end run against live Redis + a real worker (needs models).
 
-9. **Redis pub/sub bridge + SSE.** Swap `NullProgressReporter` for
-   `RedisProgressReporter` in the worker. FastAPI multiplexes
-   `job:{id}:events` + `job:{id}:logs` into the SSE response. Frontend live
-   page renders from the reducer.
+9. **Redis pub/sub bridge + SSE.** **DONE.** Live progress uses a per-job Redis
+   **stream** (`job:{id}:stream`, `XADD` with `MAXLEN`), not pub/sub — pub/sub
+   drops events with no subscriber, so a late-loading page would miss history
+   (§16). `app/events.py` holds `RedisProgressReporter` (torch-free), a
+   `make_reporter` factory that falls back to `NullProgressReporter` when Redis
+   is down, and `JobLogStreamHandler` — a `logging.Handler` that reads a
+   `current_job_id` contextvar and mirrors `INFO+` `clip_scribe` records into the
+   same stream tagged `type: "log"` (§9.10, no call-site changes). `run_job_core`
+   builds the reporter, installs the log bridge, and sets the contextvar, so
+   **both** the inline and celery paths publish. `GET /jobs/{id}/events` is an
+   async SSE generator over `redis.asyncio` `XREAD BLOCK` from id `0`: it replays
+   the whole stream to a late subscriber, then tails; it closes on a terminal
+   event, with the job row's terminal status as a backstop for jobs that never
+   emit one (queued-then-canceled, or Redis down at run time). `/readyz` gained a
+   Redis ping and no longer requires a loaded builder in celery mode. Frontend:
+   `jobs.$jobId.tsx` live page renders from a reducer keyed on `event.type`
+   (progress bar, phase tree, current-shot panel, log tail) fed by an
+   `EventSource`; `POST /jobs` now redirects there and the jobs list links to it.
+   Tested with `fakeredis` in `test/test_api_events.py`.
 
 10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
     parser. `POST /jobs/{id}/cancel`. Partial result handling.

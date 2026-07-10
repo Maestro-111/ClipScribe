@@ -75,6 +75,10 @@ class ClipScribeBuilder:
     def DEFAULT_PARSER_MODEL(self):
         return "gpt-5.4-mini"
 
+    @property
+    def DEFAULT_VIDEO_TYPE_MATCHER_MODEL(self):
+        return "gpt-5.4-mini"
+
     def __init__(self, device: str | None = None):
         configure_logging()
 
@@ -335,7 +339,15 @@ class ClipScribeBuilder:
 
             face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
 
-            profiles = ProfilesPile()
+            extractor_video_matcher_model = self.resolve_model(
+                "extractor.video_matcher",
+                self.clib_scribe_extractor_params.get("video_matcher", {}).get(
+                    "llm", self.DEFAULT_VIDEO_TYPE_MATCHER_MODEL
+                ),
+            )
+
+            profiles = ProfilesPile(model=extractor_video_matcher_model)
+
             taxonomy_objects_num: int = self.taxonomy_params.get(
                 "taxonomy_objects_num", 100
             )

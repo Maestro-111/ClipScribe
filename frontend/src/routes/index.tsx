@@ -1,6 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useCancelJob, useDeleteJob, useJobs, useRetryJob } from "../api/hooks";
+import {
+  useCancelJob,
+  useDeleteJob,
+  useJobProgress,
+  useJobs,
+  useRetryJob,
+} from "../api/hooks";
 import { formatDateTime, formatDuration, statusColor } from "../lib/format";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
@@ -9,6 +15,25 @@ export const Route = createFileRoute("/")({
 });
 
 const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
+
+// Inline progress bar for a running job. Polls GET /jobs/{id}/progress (mounted
+// only for running rows), so the list shows live progress without an SSE
+// connection per row.
+function RunningBar({ jobId }: { jobId: string }) {
+  const { data } = useJobProgress(jobId, true);
+  const pct = Math.round(data?.percent ?? 0);
+  return (
+    <div className="mt-1 w-28">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+        <div
+          className="h-full rounded-full bg-blue-500 transition-all"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-[10px] text-neutral-400">{pct}%</span>
+    </div>
+  );
+}
 
 function JobsList() {
   const [status, setStatus] = useState("");
@@ -71,7 +96,13 @@ function JobsList() {
               {data.jobs.map((job) => (
                 <tr key={job.job_id} className="border-t">
                   <td className="px-3 py-2 font-medium">
-                    {job.video_name ?? "—"}
+                    <Link
+                      to="/jobs/$jobId"
+                      params={{ jobId: job.job_id }}
+                      className="hover:underline"
+                    >
+                      {job.video_name ?? "—"}
+                    </Link>
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -79,6 +110,9 @@ function JobsList() {
                     >
                       {job.status}
                     </span>
+                    {job.status === "running" && (
+                      <RunningBar jobId={job.job_id} />
+                    )}
                   </td>
                   <td className="px-3 py-2 text-neutral-600">
                     {job.platform ?? "—"}

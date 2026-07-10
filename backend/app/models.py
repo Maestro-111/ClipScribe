@@ -158,6 +158,21 @@ class JobListResponse(BaseModel):
     offset: int
 
 
+class JobProgressResponse(BaseModel):
+    """Coarse live progress for a job, derived from its Redis event stream.
+
+    Feeds the jobs-list progress bar without a live SSE connection per row.
+    ``percent`` is 0-100; the shot fields are null until shot processing starts.
+    """
+
+    job_id: str
+    status: str
+    percent: float
+    phase: str | None = None
+    shots_done: int | None = None
+    total_shots: int | None = None
+
+
 # --------------------------------------------------------------------- metadata
 
 
