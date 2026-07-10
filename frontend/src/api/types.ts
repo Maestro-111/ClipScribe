@@ -121,6 +121,85 @@ export interface paths {
         get: operations["get_job_jobs__job_id__get"];
         put?: never;
         post?: never;
+        /** Delete a completed, failed, or canceled job */
+        delete: operations["delete_job_jobs__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live job progress (SSE)
+         * @description Stream a job's progress + log events as Server-Sent Events.
+         */
+        get: operations["job_events_jobs__job_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Coarse live progress (for the jobs list bar)
+         * @description One-shot progress percent from the job's Redis stream (no SSE).
+         *
+         *     Cheap enough to poll per running row: reads the stream once and reduces it.
+         *     A completed job reports 100 without touching Redis; if the stream is gone or
+         *     Redis is down, percent falls back to 0 (or 100 when already completed).
+         */
+        get: operations["job_progress_jobs__job_id__progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a queued job */
+        post: operations["cancel_job_jobs__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry a failed or canceled job */
+        post: operations["retry_job_jobs__job_id__retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -263,6 +342,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the advisory agent (SSE stream) */
+        post: operations["post_chat_runs__run_id__chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/chat/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List advisory-chat sessions for a run */
+        get: operations["list_sessions_runs__run_id__chat_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/chat/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one chat session's transcript */
+        get: operations["get_session_runs__run_id__chat__session_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete a chat session */
+        delete: operations["delete_session_runs__run_id__chat__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/uploads": {
         parameters: {
             query?: never;
@@ -335,10 +466,132 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AudioSegment
+         * @description Whisper transcript segment.
+         */
+        AudioSegment: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Start Time */
+            start_time?: number | null;
+            /** End Time */
+            end_time?: number | null;
+            /** Text */
+            text?: string | null;
+            /** Confidence */
+            confidence?: number | null;
+        };
         /** Body_upload_videos_uploads_post */
         Body_upload_videos_uploads_post: {
             /** Files */
             files: string[];
+        };
+        /** ChatHistoryResponse */
+        ChatHistoryResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Messages */
+            messages: components["schemas"]["ChatMessage"][];
+        };
+        /**
+         * ChatMessage
+         * @description One persisted transcript message.
+         */
+        ChatMessage: {
+            /** Id */
+            id: number;
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+            /** Tool Calls Json */
+            tool_calls_json?: string[] | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
+         * ChatRequest
+         * @description One user turn in an advisory-chat session.
+         */
+        ChatRequest: {
+            /** Message */
+            message: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
+         * ChatSession
+         * @description Summary of one chat session for the run's session list.
+         */
+        ChatSession: {
+            /** Session Id */
+            session_id: string;
+            /** Message Count */
+            message_count: number;
+            /** Title */
+            title?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Last At */
+            last_at?: string | null;
+        };
+        /** ChatSessionsResponse */
+        ChatSessionsResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Sessions */
+            sessions: components["schemas"]["ChatSession"][];
+        };
+        /**
+         * FrameDetection
+         * @description A single bounding-box detection in one video frame.
+         */
+        FrameDetection: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Shot Index */
+            shot_index?: number | null;
+            /** Frame Idx */
+            frame_idx?: number | null;
+            /** Timestamp Sec */
+            timestamp_sec?: number | null;
+            /** Source */
+            source?: string | null;
+            /** Label */
+            label?: string | null;
+            /** Text */
+            text?: string | null;
+            /** Box X1 */
+            box_x1?: number | null;
+            /** Box Y1 */
+            box_y1?: number | null;
+            /** Box X2 */
+            box_x2?: number | null;
+            /** Box Y2 */
+            box_y2?: number | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Object Id */
+            object_id?: number | null;
+        };
+        /**
+         * GlobalStatsResponse
+         * @description Combined global stats + shot boundary list for a run.
+         */
+        GlobalStatsResponse: {
+            /** Global Stats */
+            global_stats?: {
+                [key: string]: unknown;
+            } | null;
+            /** Shot Boundaries */
+            shot_boundaries: components["schemas"]["ShotBoundary"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -366,22 +619,26 @@ export interface components {
          *     Device is not user-settable: the app uses the config value (the CLI uses
          *     ``--device``). Video is referenced by a server-side path under ``INPUT_DIR``
          *     (populated via ``POST /uploads`` or already present in ``input/``).
+         *
+         *     ``platform`` selects the evaluation platform; ``platform_params`` is a raw
+         *     object validated against the selected platform's schema (see
+         *     ``PLATFORM_PARAMS_MODELS``). The validated model is exposed via
+         *     ``resolved_params``.
          */
         JobCreateRequest: {
             mode: components["schemas"]["JobMode"];
-            /**
-             * Platform
-             * @default youtube
-             * @constant
-             */
-            platform: "youtube";
+            /** @default youtube */
+            platform: components["schemas"]["PlatformName"];
             /** Video Path */
             video_path?: string | null;
             /** Video Name */
             video_name?: string | null;
             /** Video Type */
             video_type?: string | null;
-            platform_params?: components["schemas"]["YouTubePlatformParams"];
+            /** Platform Params */
+            platform_params?: {
+                [key: string]: unknown;
+            };
             /** User Hints */
             user_hints?: string[] | null;
             /**
@@ -417,6 +674,27 @@ export interface components {
          * @enum {string}
          */
         JobMode: "full" | "extract" | "parse";
+        /**
+         * JobProgressResponse
+         * @description Coarse live progress for a job, derived from its Redis event stream.
+         *
+         *     Feeds the jobs-list progress bar without a live SSE connection per row.
+         *     ``percent`` is 0-100; the shot fields are null until shot processing starts.
+         */
+        JobProgressResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Status */
+            status: string;
+            /** Percent */
+            percent: number;
+            /** Phase */
+            phase?: string | null;
+            /** Shots Done */
+            shots_done?: number | null;
+            /** Total Shots */
+            total_shots?: number | null;
+        };
         /**
          * JobResponse
          * @description Full orchestration state of a job.
@@ -454,6 +732,34 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "canceled";
+        /**
+         * ParserResult
+         * @description Persisted per-criterion evaluation from the parser.
+         */
+        ParserResult: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Platform */
+            platform?: string | null;
+            /** Feature Category */
+            feature_category?: string | null;
+            /** Feature Name */
+            feature_name?: string | null;
+            /** Feature Criteria */
+            feature_criteria?: string | null;
+            /** Evaluation */
+            evaluation?: boolean | null;
+            /** Llm Prompt */
+            llm_prompt?: string | null;
+            /** Llm Explanation */
+            llm_explanation?: string | null;
+            /** Langsmith Run Id */
+            langsmith_run_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
         /** PlatformInfo */
         PlatformInfo: {
             /** Name */
@@ -461,6 +767,16 @@ export interface components {
             /** Params */
             params: components["schemas"]["PlatformParamField"][];
         };
+        /**
+         * PlatformName
+         * @description Supported evaluation platforms.
+         *
+         *     Adding a platform = a new member here, a ``BasePlatformParams`` subclass,
+         *     and an entry in ``PLATFORM_PARAMS_MODELS``. Requests for any value not in
+         *     this enum are rejected at validation (422) — non-YouTube is blocked today.
+         * @enum {string}
+         */
+        PlatformName: "youtube";
         /** PlatformParamField */
         PlatformParamField: {
             /** Name */
@@ -476,6 +792,56 @@ export interface components {
         PlatformsResponse: {
             /** Platforms */
             platforms: components["schemas"]["PlatformInfo"][];
+        };
+        /**
+         * RunResponse
+         * @description A completed extraction run.
+         */
+        RunResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Video Name */
+            video_name?: string | null;
+            /** Video Path */
+            video_path?: string | null;
+            /** Video Type */
+            video_type?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
+         * ShotBoundary
+         * @description Temporal extent of a single shot.
+         */
+        ShotBoundary: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Shot Index */
+            shot_index?: number | null;
+            /** Start Sec */
+            start_sec?: number | null;
+            /** End Sec */
+            end_sec?: number | null;
+            /** Duration Sec */
+            duration_sec?: number | null;
+        };
+        /**
+         * TextEvent
+         * @description OCR text event at a specific second.
+         */
+        TextEvent: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Second */
+            second?: number | null;
+            /** Line Index */
+            line_index?: number | null;
+            /** Text */
+            text?: string | null;
         };
         /** UploadResponse */
         UploadResponse: {
@@ -503,23 +869,6 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
-        };
-        /**
-         * YouTubePlatformParams
-         * @description YouTube evaluation inputs (mirrors ``build_platform`` kwargs).
-         */
-        YouTubePlatformParams: {
-            /**
-             * Brand Name
-             * @default
-             */
-            brand_name: string;
-            /** Branded Products */
-            branded_products?: string[];
-            /** Branded Products Categories */
-            branded_products_categories?: string[];
-            /** Call To Actions */
-            call_to_actions?: string[];
         };
     };
     responses: never;
@@ -733,6 +1082,157 @@ export interface operations {
             };
         };
     };
+    delete_job_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_events_jobs__job_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_progress_jobs__job_id__progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobProgressResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_job_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_job_jobs__job_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -750,9 +1250,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunResponse"];
                 };
             };
             /** @description Validation Error */
@@ -783,9 +1281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GlobalStatsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -849,9 +1345,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["TextEvent"][];
                 };
             };
             /** @description Validation Error */
@@ -882,9 +1376,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["AudioSegment"][];
                 };
             };
             /** @description Validation Error */
@@ -951,9 +1443,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["FrameDetection"][];
                 };
             };
             /** @description Validation Error */
@@ -984,10 +1474,136 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ParserResult"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_chat_runs__run_id__chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_runs__run_id__chat_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_runs__run_id__chat__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_runs__run_id__chat__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

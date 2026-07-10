@@ -75,8 +75,12 @@ function NewJob() {
         generate_hint_from_name: generateHintFromName,
       },
       {
-        onSuccess: () => {
-          void navigate({ to: "/" });
+        onSuccess: (created) => {
+          // Land on the live job page so the user watches progress stream in.
+          void navigate({
+            to: "/jobs/$jobId",
+            params: { jobId: created.job_id },
+          });
         },
       },
     );

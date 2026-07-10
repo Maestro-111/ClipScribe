@@ -65,6 +65,24 @@ export function useJobs(status?: string) {
   });
 }
 
+// --- Coarse live progress for the jobs-list bar. ---
+// Polls GET /jobs/{id}/progress every 2s while enabled (i.e. the row is
+// running). Cheap server-side reduction of the Redis event stream — no SSE
+// connection per row. `enabled` gates the query so terminal rows never poll.
+export function useJobProgress(jobId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["jobs", jobId, "progress"] as const,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/jobs/{job_id}/progress", {
+          params: { path: { job_id: jobId } },
+        }),
+      ),
+    enabled,
+    refetchInterval: enabled ? 2000 : false,
+  });
+}
+
 // --- Single job. Polls while the job is not in a terminal state. ---
 export function useJob(jobId: string) {
   return useQuery({

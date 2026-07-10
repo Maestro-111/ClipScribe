@@ -6,17 +6,23 @@ executor. Clients poll ``GET /jobs/{id}``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import json
+from typing import TYPE_CHECKING, AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.deps import get_reader, get_writer
 from app.errors import ProblemException
+from app.events import TERMINAL_EVENTS, stream_key, summarize_progress
 from app.job_runner import JobService
 from app.models import (
     JobCreatedResponse,
     JobCreateRequest,
     JobListResponse,
+    JobProgressResponse,
     JobResponse,
 )
 
@@ -24,6 +30,12 @@ if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+_TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "canceled"})
+# Block window for XREAD while tailing; on each timeout we emit an SSE comment to
+# keep proxies from closing an idle connection and re-check the job row so a
+# canceled/queued job (which may never emit a terminal event) still ends cleanly.
+_XREAD_BLOCK_MS = 15000
 
 
 def get_job_service(request: Request) -> JobService:
@@ -106,6 +118,156 @@ def delete_job(
             detail=f"job '{job_id}' is '{job['status']}' — stop the job before deleting it",
         )
     writer.delete_job(job_id)
+
+
+def _sse_frame(fields: dict[str, str]) -> str:
+    """Render one stream entry as an SSE ``data:`` frame (type + parsed payload)."""
+    payload = {"type": fields["type"], "data": json.loads(fields["data"])}
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+async def _job_event_stream(
+    redis_url: str, job_id: str, reader: "ClipScribeReaderDB"
+) -> AsyncIterator[str]:
+    """Replay the job's Redis stream from the start, then tail live (§9, §16).
+
+    Reading from id ``0`` means a client that connects mid-run — or after the
+    job finished, while the stream is still within its TTL — gets the full
+    history before live updates. The stream ends when a terminal event is read;
+    as a backstop for jobs that never emit one (e.g. a queued job canceled before
+    it ran, or Redis being down at run time), each idle tick re-checks the job
+    row and closes on a terminal status.
+    """
+    import redis.asyncio as aioredis
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    # socket_timeout must exceed the XREAD BLOCK window, or the client socket
+    # read times out before the server's blocking read returns. Set it above the
+    # block (and neutralize any shorter timeout baked into REDIS_URL) so an idle
+    # tail waits the full window instead of raising; a truly hung server still
+    # trips the timeout, which the loop below catches and retries.
+    client = aioredis.Redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_timeout=_XREAD_BLOCK_MS / 1000 + 5,
+    )
+    key = stream_key(job_id)
+    last_id = "0"
+
+    async def _job_is_terminal() -> bool:
+        job = await run_in_threadpool(reader.get_job, job_id)
+        return job is not None and job.get("status") in _TERMINAL_JOB_STATUSES
+
+    try:
+        # Replay everything already in the stream.
+        for entry_id, fields in await client.xrange(key):
+            last_id = entry_id
+            yield _sse_frame(fields)
+            if fields["type"] in TERMINAL_EVENTS:
+                return
+
+        # If the job is already terminal, the replay above is the whole story.
+        if await _job_is_terminal():
+            return
+
+        # Otherwise tail for new entries.
+        while True:
+            try:
+                resp = await client.xread(
+                    {key: last_id}, block=_XREAD_BLOCK_MS, count=100
+                )
+            except RedisTimeoutError:
+                # No new entries within the block window — treat as an idle tick.
+                resp = None
+            except RedisConnectionError:
+                # Transient transport hiccup; back off before re-checking.
+                await asyncio.sleep(1.0)
+                resp = None
+            if not resp:
+                yield ": keepalive\n\n"
+                if await _job_is_terminal():
+                    return
+                continue
+            for _stream, entries in resp:
+                for entry_id, fields in entries:
+                    last_id = entry_id
+                    yield _sse_frame(fields)
+                    if fields["type"] in TERMINAL_EVENTS:
+                        return
+    except asyncio.CancelledError:  # client disconnected — let it propagate
+        raise
+    finally:
+        await client.aclose()
+
+
+@router.get("/{job_id}/events", summary="Live job progress (SSE)")
+async def job_events(
+    job_id: str,
+    request: Request,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> StreamingResponse:
+    """Stream a job's progress + log events as Server-Sent Events."""
+    if reader.get_job(job_id) is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    redis_url = request.app.state.settings.redis_url
+    return StreamingResponse(
+        _job_event_stream(redis_url, job_id, reader),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get(
+    "/{job_id}/progress",
+    response_model=JobProgressResponse,
+    summary="Coarse live progress (for the jobs list bar)",
+)
+def job_progress(
+    job_id: str,
+    request: Request,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> JobProgressResponse:
+    """One-shot progress percent from the job's Redis stream (no SSE).
+
+    Cheap enough to poll per running row: reads the stream once and reduces it.
+    A completed job reports 100 without touching Redis; if the stream is gone or
+    Redis is down, percent falls back to 0 (or 100 when already completed).
+    """
+    job = reader.get_job(job_id)
+    if job is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    job_status = job.get("status", "queued")
+    if job_status == "completed":
+        return JobProgressResponse(job_id=job_id, status=job_status, percent=100.0)
+
+    summary: dict = {
+        "percent": 0.0,
+        "phase": None,
+        "shots_done": None,
+        "total_shots": None,
+    }
+    try:
+        import redis
+
+        client = redis.Redis.from_url(
+            request.app.state.settings.redis_url, decode_responses=True
+        )
+        entries = client.xrange(stream_key(job_id))
+        events = [
+            (f["type"], json.loads(f["data"]))
+            for _id, f in entries
+            if f.get("type") != "log"
+        ]
+        summary = summarize_progress(events)
+    except Exception:  # noqa: BLE001 - progress is best-effort; never 500 the list
+        pass
+
+    return JobProgressResponse(job_id=job_id, status=job_status, **summary)
 
 
 @router.post(

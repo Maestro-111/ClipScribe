@@ -73,13 +73,27 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     ``builder`` is the long-lived, model-loaded builder (the API's in inline
     mode, the worker's in celery mode). ``payload`` is what
     :func:`build_task_payload` produced.
+
+    Both paths publish live progress to the job's Redis stream via a
+    :class:`RedisProgressReporter` (web-app-plan §9): the reporter is wired into
+    the engine, and the ``current_job_id`` contextvar is set for the duration so
+    the log bridge tags this job's log records. Both degrade to no-ops when Redis
+    is down, so a job still runs — it just has no live tail.
     """
+    from app.events import current_job_id, install_job_log_bridge, make_reporter
+    from app.settings import get_settings
+
     writer = builder.writer_db
     reader = builder.reader_db
 
     job_id = payload["job_id"]
     run_id = payload["run_id"]
     req = JobCreateRequest.model_validate(payload["req"])
+
+    redis_url = get_settings().redis_url
+    reporter = make_reporter(redis_url, job_id)
+    install_job_log_bridge(redis_url)
+    token = current_job_id.set(job_id)
 
     writer.update_job(job_id, status=JobStatus.RUNNING.value, started_at=now_iso())
     try:
@@ -98,6 +112,7 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
             clib_scribe_platform_conf=platform_conf,
             user_hints=req.user_hints,
             generate_hint_from_name=req.generate_hint_from_name,
+            progress_reporter=reporter,
         )
         engine.run(run_id=run_id)
     except Exception as exc:  # noqa: BLE001 - recorded on the job row
@@ -114,3 +129,5 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
             writer.update_job(
                 job_id, status=JobStatus.COMPLETED.value, finished_at=now_iso()
             )
+    finally:
+        current_job_id.reset(token)

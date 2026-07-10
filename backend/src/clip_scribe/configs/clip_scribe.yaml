@@ -53,6 +53,11 @@ clip_scribe:
     # Range: 0.0-1.0. Default: 0.8
     reid_similarity_difference: 0.8
 
+
+    # model to guess the closes video type
+    video_matcher:
+      llm: "gpt-5.4"
+
   # --------------------------------------------------------------------------
   # Parser Settings
   # --------------------------------------------------------------------------

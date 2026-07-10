@@ -410,6 +410,10 @@ function RunInspector() {
   const parser = useRunParser(runId);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Fullscreen the wrapper (video + SVG overlay together), not the <video>:
+  // native video fullscreen promotes only the video element to the fullscreen
+  // layer, so the sibling overlay would vanish.
+  const stageRef = useRef<HTMLDivElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [dims, setDims] = useState<VideoDims | null>(null);
   const [enabledSources, setEnabledSources] = useState<Set<DetectionSource>>(
@@ -481,11 +485,17 @@ function RunInspector() {
       <section className="space-y-3 rounded border bg-white p-4">
         <h2 className="font-medium">Video</h2>
 
-        <div className="relative overflow-hidden rounded bg-black">
+        <div
+          ref={stageRef}
+          className="video-stage relative overflow-hidden rounded bg-black"
+        >
           <video
             ref={videoRef}
             src={`/api/runs/${runId}/video`}
             controls
+            // Steer users to the wrapper-fullscreen button below; the native
+            // video fullscreen button would drop the overlay.
+            controlsList="nofullscreen"
             className="w-full"
             onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
             onLoadedMetadata={(e) => {
@@ -494,6 +504,17 @@ function RunInspector() {
             }}
           />
           <VideoOverlay detections={visibleDetections} dims={dims} />
+          <button
+            type="button"
+            onClick={() => {
+              if (document.fullscreenElement) void document.exitFullscreen();
+              else void stageRef.current?.requestFullscreen?.();
+            }}
+            title="Toggle fullscreen"
+            className="absolute right-2 top-2 z-10 rounded bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80"
+          >
+            ⛶ Fullscreen
+          </button>
         </div>
 
         {/* layer controls */}
