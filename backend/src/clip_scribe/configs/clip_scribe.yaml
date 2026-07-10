@@ -15,9 +15,10 @@ clip_scribe:
   # --------------------------------------------------------------------------
 
   # Execution device for all heavy models: "mps" | "cuda" | "cpu".
-  # One device for the whole pipeline (single-GPU/worker model). App uses this;
-  # CLI can override with --device. MTCNN is always CPU internally. Falls back
-  # to cpu with a warning if the requested device is unavailable.
+  # One device for the whole pipeline (single-GPU/worker model). backend/main.py
+  # can pass a hardcoded override for local runs; the web API/worker use
+  # CLIPSCRIBE_DEVICE. MTCNN is always CPU internally. Falls back to cpu with a
+  # warning if the requested device is unavailable.
   device: "mps"
 
   extractor:

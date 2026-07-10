@@ -31,8 +31,8 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 5. **Parallel Tasks:** Whisper extracts audio, PaddleOCR extracts text, and MTCNN extracts faces.
 6. **Persistence:** `backend/src/db/` writes and reads structured run data, including raw frame detections, shot boundaries, and parser results. Alembic migrations in `backend/alembic/` own schema creation.
 7. **Parser:** `backend/src/parser/` evaluates persisted data against platform-specific criteria such as YouTube rules.
-8. **Web API:** `backend/app/` exposes the sync-path FastAPI layer for uploads, job creation/polling, queued-job cancellation/retry/delete, run reads, artifacts, health, and metadata. It runs jobs through a single in-process executor for now; Celery, Redis, SSE, and cooperative running-job cancellation are still planned.
-9. **Frontend:** `frontend/` contains the initial Vite/React dashboard for job listing, job creation, and run inspection. It uses pnpm, TanStack Router/Query, Tailwind v4, and OpenAPI-generated types.
+8. **Web API:** `backend/app/` exposes the FastAPI layer for uploads, job creation/polling, inline or Celery dispatch, Redis Stream-backed SSE progress, cancel/retry/delete, run reads, advisory chat, artifacts, health, and metadata. Cooperative mid-run cancellation is still planned.
+9. **Frontend:** `frontend/` contains the Vite/React dashboard for job listing, job creation, live job progress, run inspection, and advisory chat. It uses pnpm, TanStack Router/Query, Tailwind v4, and OpenAPI-generated types.
 
 ## Setup And Environment
 - **Repository layout:** This is a monorepo. The Python project lives in `backend/`, but the git root is the repository root. Run `uv ...`, Alembic, and pre-commit commands from `backend/` so relative paths like `pyproject.toml` and `src/clip_scribe` resolve. The root `Makefile` still lives at the repository root; only `make migrate` is currently reliable after the backend move.
@@ -43,14 +43,15 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
   - `OPENAI_API_KEY` for scene analysis, taxonomy generation, and parser agents.
   - `POSTGRESQL_URL` when `database.backend` is `postgresql`.
   - `SQLITE_URL` is optional when `database.backend` is `sqlite`; default is `sqlite:///data/clip_scribe.db`.
-  - `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process.
+  - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.
 - Main configuration is `backend/src/clip_scribe/configs/clip_scribe.yaml`.
 
 ## Commands
 - `uv run pytest -q` - run tests.
 - `uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser` - typecheck the editable core.
 - `uv run alembic upgrade head` - apply schema migrations. Schema is owned by Alembic, not `metadata.create_all`.
-- `uv run uvicorn app.main:app --reload` - start the sync-path FastAPI app. It loads heavy models unless `CLIPSCRIBE_API_LOAD_MODELS=false`.
+- `uv run uvicorn app.main:app --reload` - start the FastAPI app. Inline mode loads heavy models unless `CLIPSCRIBE_API_LOAD_MODELS=false`; celery mode loads DB handles only.
+- `uv run celery -A app.celery_app worker --pool=solo --concurrency=1` - start a local Celery worker for `CLIPSCRIBE_JOB_BACKEND=celery`.
 - `uv run pre-commit run --all-files` - run formatting, lint, and type hooks. Must be invoked from `backend/`: the config is `backend/.pre-commit-config.yaml` (pre-commit discovers the config from the current directory), but hooks always execute from the git root with paths relative to it. This is why the `exclude` patterns are prefixed with `backend/` and the mypy hook is a local hook that `cd backend` before running `uv run mypy`. Running from the repo root fails with `.pre-commit-config.yaml is not a file`.
   - Corollary: the third-party `backend/src/sam2/` and `backend/src/dino/groundingdino/` trees are protected only by the `backend/`-prefixed `exclude`. If the layout changes, update that regex or `ruff --fix` will strip side-effect imports from their `__init__.py` files (notably the GroundingDINO model-registry imports) and break model loading.
 - `make migrate` - from the repository root, delegates to `cd backend && uv run alembic upgrade head`. Other root Makefile setup/checkpoint/clean targets are stale after the backend move.
@@ -58,19 +59,19 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 
 ## Current Caveats
 - `backend/main.py` is an entry point to run the pipeline for local dev, not a stable CLI.
-- `backend/app/` is a sync-path API with one in-process job slot; Celery, Redis, SSE, and cooperative cancellation for running jobs are not implemented yet. Queued jobs can be canceled.
+- `backend/app/` supports inline and Celery job dispatch plus Redis Stream-backed SSE progress. Running jobs can be marked canceled, but cooperative mid-run interruption is not implemented yet.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; avoid documenting them as working setup commands until fixed.
 - The test suite is minimal.
 - Generated media, databases, logs, and parser/extractor artifacts should usually be ignored during code review unless the task is about outputs.
 
 ## Module Notes
 - `backend/src/clip_scribe/`: Orchestration, dependency construction, platform configs, and config loading.
-- `backend/app/`: FastAPI sync API, route handlers, request/response models, runtime settings, and in-process job runner.
+- `backend/app/`: FastAPI routes, request/response models, runtime settings, inline/Celery job dispatch, Redis Stream events, and advisory chat.
 - `backend/src/extractor/`: Video extraction, scene description, taxonomy generation/resolution, tracking metrics, and cross-shot identity logic.
 - `backend/src/parser/`: LangGraph/LangChain parser agents, query tools, evaluator base classes, and YouTube evaluation.
 - `backend/src/ocr/`: PaddleOCR wrapper and OCR box consolidation.
 - `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer.
-- `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests.
+- `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests and Redis fallback.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
 - `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

@@ -616,9 +616,11 @@ export interface components {
          * JobCreateRequest
          * @description Create + enqueue a job. Mirrors the ``main.py`` params, minus device.
          *
-         *     Device is not user-settable: the app uses the config value (the CLI uses
-         *     ``--device``). Video is referenced by a server-side path under ``INPUT_DIR``
-         *     (populated via ``POST /uploads`` or already present in ``input/``).
+         *     Device is not user-settable: the web app uses process configuration
+         *     (``CLIPSCRIBE_DEVICE``), while ``backend/main.py`` may pass a hardcoded
+         *     local override. Video is referenced by a server-side path under
+         *     ``INPUT_DIR`` (populated via ``POST /uploads`` or already present in
+         *     ``input/``).
          *
          *     ``platform`` selects the evaluation platform; ``platform_params`` is a raw
          *     object validated against the selected platform's schema (see

@@ -2,8 +2,10 @@
 
 Builds the LLM + a run-scoped ReAct agent (``src/parser/advisory.py``), streams
 its answer as Server-Sent Events, and persists the transcript to
-``chat_messages``. No models, no worker, no torch — just LLM calls + DB reads,
-so it lives in the API process.
+``chat_messages``. It does no pipeline model loading and does not use the
+worker — just LLM calls + DB reads — so it lives in the API process. Some
+LangChain/LangGraph imports may transitively import torch in this environment,
+so routes lazy-import this service.
 
 Conversation memory is the DB: each turn reloads the session's prior messages
 and replays them into the agent, so history survives restarts and multiple API

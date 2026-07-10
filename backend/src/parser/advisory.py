@@ -7,8 +7,10 @@ gives free-form guidance instead of a structured pass/fail.
 
 The agent is read-only and strictly scoped to one ``run_id`` — every tool is
 bound to that id server-side, so it physically cannot read another run's data.
-It does only LLM calls + DB reads, so it runs in the API process (no worker, no
-models, no torch).
+It does only LLM calls + DB reads, so it runs in the API process with no worker
+and no pipeline model loading. Some LangChain/LangGraph imports may still pull
+in torch transitively in this environment, so the API route lazy-imports the
+chat service.
 """
 
 from __future__ import annotations

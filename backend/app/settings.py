@@ -65,8 +65,8 @@ class Settings:
                 f"got {self.job_backend!r}"
             )
 
-        # Redis URL used as both the Celery broker/result backend and (step 9)
-        # the live-progress pub/sub channel. Same value for API and worker when
+        # Redis URL used as both the Celery broker/result backend and the
+        # live-progress Redis Streams store. Same value for API and worker when
         # co-located; see web-app-plan §12 for the container-networking split.
         self.redis_url: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         self.clip_scribe_device: str = os.environ.get("CLIPSCRIBE_DEVICE", "cpu")

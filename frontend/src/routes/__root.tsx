@@ -8,6 +8,7 @@ import type { QueryClient } from "@tanstack/react-query";
 //   __root.tsx        -> layout for everything
 //   index.tsx         -> "/"
 //   jobs.new.tsx      -> "/jobs/new"     (dot = path separator)
+//   jobs.$jobId.tsx   -> "/jobs/:jobId"
 //   runs.$runId.tsx   -> "/runs/:runId"  ($ = dynamic segment)
 //
 // createRootRouteWithContext types the router `context` we set in main.tsx, so

@@ -1,11 +1,10 @@
 """FastAPI application entry point for the ClipScribe web API.
 
-Step 5 of web-app-plan §10: the sync-path API. This process is intentionally a
-monolith for now — it builds one long-lived :class:`ClipScribeBuilder` at
-startup (mirroring the eventual Celery ``worker_process_init``) and runs jobs
-in-process on a single-slot executor. Celery/Redis enqueue (step 8) and the
-SSE bridge (step 9) replace the inline path later without changing the HTTP
-contract.
+The app supports both execution modes from web-app-plan §10: ``inline`` builds
+one long-lived :class:`ClipScribeBuilder` at startup and runs jobs in-process on
+a single-slot executor, while ``celery`` keeps the API model-free and dispatches
+jobs to a Redis-backed worker. Redis Streams back the live-progress SSE route in
+both modes without changing the HTTP contract.
 
 Run locally from ``backend/``::
 
