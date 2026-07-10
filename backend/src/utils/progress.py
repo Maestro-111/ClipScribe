@@ -3,9 +3,9 @@
 The pipeline emits structured progress events at fixed points (see
 ``docs/web-app-plan.md`` §5). The core — extractor, parser, engine — depends
 only on the abstract :class:`ProgressReporter`, never on Redis or the web
-layer. The Celery worker later injects a ``RedisProgressReporter`` (to be
-defined in ``app/events.py``) that publishes to Redis pub/sub, while the CLI
-(``main.py``) and tests use :class:`NullProgressReporter`, which does nothing.
+layer. The web execution paths inject ``app.events.RedisProgressReporter`` to
+publish into a per-job Redis Stream, while the CLI (``main.py``), tests, and
+Redis fallback use :class:`NullProgressReporter`, which does nothing.
 
 Keeping the interface here in ``src/utils`` (rather than in ``app/``) preserves
 the dependency direction: the core never imports the web layer.

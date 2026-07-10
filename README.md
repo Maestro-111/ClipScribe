@@ -33,8 +33,9 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
 - Per-run extraction artifacts and parser report generation
-- FastAPI sync-path API for uploads, jobs, run inspection, and artifact serving
-- Initial Vite/React dashboard for job submission and run inspection
+- FastAPI API for uploads, jobs, Redis Stream-backed live progress, run inspection, advisory chat, and artifact serving
+- Inline or Redis-backed Celery job dispatch
+- Vite/React dashboard for job submission, live job progress, run inspection, and post-run advisory chat
 
 ## Setup
 
@@ -68,7 +69,10 @@ Common environment variables:
 - `POSTGRESQL_URL` - required when `database.backend` is set to `postgresql`.
 - `SQLITE_URL` - optional when `database.backend` is set to `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
-- `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for limited schema/health/test startup without loading ML models; job and run routes need an injected or loaded builder.
+- `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
+- `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
+- `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
+- `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for limited schema/health/test startup without loading ML models; ignored in `celery` mode because the API loads only DB handles.
 - `CLIPSCRIBE_CORS_ORIGINS` - comma-separated browser origins for the API; defaults to `http://localhost:5173`.
 
 The main configuration file is:
@@ -107,12 +111,18 @@ A proper CLI is still a TODO. Until then, prefer changing existing builder/engin
 
 ### Web API
 
-The checked-in FastAPI app is the first web/API layer. It uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor, so `POST /jobs` returns immediately while the job runs in the background. Celery, Redis, SSE, and cooperative cancellation for already-running jobs are not implemented yet; queued jobs can be canceled.
+The checked-in FastAPI app supports two job backends selected by `CLIPSCRIBE_JOB_BACKEND`. `inline` uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor. `celery` keeps the API model-free and dispatches jobs to a Redis-backed Celery worker. Both backends return from `POST /jobs` immediately and publish best-effort live progress to a per-job Redis Stream served over SSE. Running jobs can be marked canceled, but the engine still finishes its current run before the terminal write is suppressed; cooperative mid-run interruption is still planned.
 
 Start the API from `backend/`:
 
 ```bash
 uv run uvicorn app.main:app --reload
+```
+
+For `CLIPSCRIBE_JOB_BACKEND=celery`, run a worker from `backend/` as well:
+
+```bash
+uv run celery -A app.celery_app worker --pool=solo --concurrency=1
 ```
 
 Useful API routes:
@@ -121,12 +131,15 @@ Useful API routes:
 - `GET /inputs` - list server-side input videos accepted by the job form.
 - `POST /jobs` - create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` still writes artifacts only without creating a run row for `/runs`.
 - `GET /jobs` and `GET /jobs/{job_id}` - poll job state.
-- `POST /jobs/{job_id}/cancel` - cancel a queued job; running jobs return `409` until cooperative cancellation lands.
+- `GET /jobs/{job_id}/events` - SSE stream that replays and tails Redis Stream progress/log events.
+- `GET /jobs/{job_id}/progress` - coarse percent summary for jobs-list progress bars.
+- `POST /jobs/{job_id}/cancel` - cancel a queued job or mark a running job canceled.
 - `POST /jobs/{job_id}/retry` - create a fresh job from a failed or canceled job's stored request payload.
 - `DELETE /jobs/{job_id}` - remove a completed, failed, or canceled job row.
 - `GET /runs/{run_id}/...` - inspect persisted run data, frame detections, parser results, and artifacts.
+- `POST /runs/{run_id}/chat` and related chat session routes - stream read-only advisory Q&A over a completed run.
 
-The API request does not accept a device field. The app uses `clip_scribe.device` from `clip_scribe.yaml`; `main.py` can still pass an override when running locally.
+The API request does not accept a device field. The web app uses `CLIPSCRIBE_DEVICE` when constructing the inline API builder or Celery worker builder; `backend/main.py` still falls back to `clip_scribe.device` from `clip_scribe.yaml` when running locally.
 
 ### Frontend
 
@@ -141,7 +154,7 @@ pnpm gen:api
 pnpm dev
 ```
 
-The dev server runs at `http://localhost:5173` and proxies `/api/*` to the backend. Implemented screens are the jobs list (`/`), the new-job form (`/jobs/new`), and the run inspector (`/runs/{run_id}`). Live job progress over SSE and a dedicated job detail page are still planned.
+The dev server runs at `http://localhost:5173` and proxies `/api/*` to the backend. Implemented screens are the jobs list (`/`) with running progress bars, the new-job form (`/jobs/new`), the live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with advisory chat.
 
 ## Development Commands
 
@@ -165,7 +178,7 @@ uv run pre-commit run --all-files
 
 > **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
-Install only the slim API dependency group for API-container work:
+Install only the slim API dependency group for API-container work. This is for the planned slim API image; advisory chat still needs `langgraph` and `langchain-openai` added before that image can serve chat requests:
 
 ```bash
 uv sync --only-group api
@@ -214,7 +227,7 @@ Do not hardcode absolute paths to these directories. Use project-relative paths 
 ## Current Caveats
 
 - `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.
-- The FastAPI app is a sync-path implementation with a single in-process job slot; no Celery, Redis, SSE, or cooperative running-job cancellation yet.
+- The FastAPI app has both inline and Celery dispatch paths with Redis Stream-backed SSE progress; cooperative mid-run cancellation is not implemented yet.
 - Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
 - Test coverage is minimal.
 - Full extraction is resource-intensive and can trigger model downloads and API calls.

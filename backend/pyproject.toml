@@ -58,8 +58,9 @@ dev = [
 # Slim dependency set for the eventual API-only container image (web-app-plan
 # §8). Install with `uv sync --only-group api` — unlike an extra, --only-group
 # EXCLUDES the heavy main dependencies (torch/whisper/paddleocr), so the API
-# image never pulls the ML stack. Dormant until the step-11 Docker split; the
-# monolithic step-5 API runs from the full main dependencies above.
+# image never pulls the ML stack. Before using it for the full API surface, add
+# the advisory-chat LLM dependencies (`langgraph`, `langchain-openai`) or keep
+# chat disabled in that image.
 [dependency-groups]
 api = [
     "fastapi>=0.115.0",

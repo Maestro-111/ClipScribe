@@ -1,7 +1,9 @@
-"""Job endpoints: create + enqueue, list, and fetch (web-app-plan §6).
+"""Job endpoints: create, dispatch, inspect, cancel, and stream (web-app-plan §6).
 
 ``POST /jobs`` returns 202 with a job id immediately; the run happens on the
-executor. Clients poll ``GET /jobs/{id}``.
+configured inline or Celery backend. Clients poll ``GET /jobs/{id}`` for the
+jobs row, use ``GET /jobs/{id}/progress`` for coarse list progress, and open
+``GET /jobs/{id}/events`` for the Redis Stream-backed SSE feed.
 """
 
 from __future__ import annotations

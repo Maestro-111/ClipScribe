@@ -94,8 +94,8 @@ export function useJob(jobId: string) {
         }),
       ),
     // refetchInterval can be a function of the latest data: keep polling every
-    // 2s until the job finishes, then stop. This is our stand-in for live
-    // progress until the SSE stream (plan step 9) lands.
+    // 2s until the job finishes, then stop. The live page uses SSE for detailed
+    // progress; this query remains the canonical jobs-row state.
     refetchInterval: (query) => {
       const s = query.state.data?.status;
       return s === "completed" || s === "failed" || s === "canceled"
@@ -262,9 +262,9 @@ export function useCancelJob() {
   });
 }
 
-// Retry a failed or canceled job. The endpoint (POST /jobs/{id}/retry) is not
-// in the generated types.ts (it was added after the last codegen run), so we
-// use plain fetch and cast the known response shape.
+// Retry a failed or canceled job. This uses plain fetch because the lifecycle
+// helpers predate the typed wrapper call sites; the response shape is still
+// generated from OpenAPI and cast below.
 export function useRetryJob() {
   const qc = useQueryClient();
   return useMutation({

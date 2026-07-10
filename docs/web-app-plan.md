@@ -25,10 +25,11 @@ load-once builder, progress seam, raw detection persistence, the FastAPI app,
 and **Celery/Redis job dispatch** have landed. `POST /jobs` runs either
 in-process (single-slot executor) or via a Redis-backed Celery worker, selected
 by `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, job
-polling, read-only run views, artifact serving, health, and metadata endpoints.
+polling/progress, read-only run views, advisory chat, artifact serving, health,
+and metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
-/jobs/{id}/events` and the frontend live page. Cooperative cancellation of a
-running job and the final Docker split are still planned.
+/jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
+Cooperative mid-run interruption and the final Docker split are still planned.
 
 ---
 
@@ -47,7 +48,7 @@ running job and the final Docker split are still planned.
                        │  - request validation     │
                        │  - DB reads               │
                        │  - artifact serving       │
-                       │  - SSE pub/sub bridge     │
+                       │  - SSE stream bridge      │
                        │  - enqueue Celery tasks   │
                        └─────┬────────────┬────────┘
                              │            │
@@ -55,7 +56,7 @@ running job and the final Docker split are still planned.
                        ┌─────────┐  ┌──────────────┐
                        │  Redis  │  │  Postgres    │
                        │ broker  │  │  schema/runs │
-                       │ + pubsub│  │  + jobs +    │
+                       │ +streams │  │  + jobs +    │
                        │         │  │  detections  │
                        └────┬────┘  └──────────────┘
                             │
@@ -71,17 +72,18 @@ running job and the final Docker split are still planned.
 - **API container**: small, fast restart, scales horizontally.
 - **Worker container**: big (8–15 GB), GPU/MPS-bound, one job at a time per
   GPU. Multiple machines = multiple workers, same Redis queue.
-- **Redis**: both the Celery broker and the live-progress pub/sub channel.
-- **Postgres**: existing schema (`backend/src/db/schema.py`) plus four web-app
-  tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`).
+- **Redis**: both the Celery broker/result backend and the live-progress Streams store.
+- **Postgres**: existing schema (`backend/src/db/schema.py`) plus web-app
+  tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`,
+  `chat_messages`).
 
 ---
 
 ## 2. Repo restructure (monorepo)
 
-**Status: PARTIAL.** The Python project and sync FastAPI app now live under
-`backend/`; the frontend, Celery/Redis/SSE pieces, and final Docker image
-contents remain planned.
+**Status: PARTIAL.** The Python project, FastAPI app, frontend bootstrap,
+Celery/Redis dispatch, and SSE progress pieces now live in the monorepo. The
+final Docker image contents remain planned.
 
 ```
 clipscribe/
@@ -99,9 +101,9 @@ clipscribe/
       job_runner.py               # JobService: validate, persist, dispatch (inline|celery)
       settings.py                 # CLIPSCRIBE_* API env settings (job_backend, redis_url)
       errors.py                   # RFC7807 problem+json handlers
-      routes/                     # jobs, runs, artifacts, health, meta, uploads
+      routes/                     # jobs, runs, artifacts, chat, health, meta, uploads
       models.py                   # Pydantic request/response schemas
-      events.py                   # PLANNED — Redis pub/sub progress helpers (step 9)
+      events.py                   # Redis Streams progress helpers + log bridge
     docker/
       api/
         Dockerfile                # existing placeholder for slim API image
@@ -113,12 +115,12 @@ clipscribe/
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
     test/
-  frontend/                       # PLANNED TS SPA
+  frontend/                       # TS SPA
     src/
-      api/                        # generated TS client from OpenAPI
-      lib/                        # state, hooks, utils
-      pages/                      # JobsList / NewJob / JobLive / RunInspector
-      components/                 # VideoOverlay, Timeline, PhaseTree, LogTail
+      api/                        # generated TS client + query hooks
+      lib/                        # state, formatting, run types
+      routes/                     # JobsList / NewJob / JobLive / RunInspector
+      components/                 # ChatPanel and reusable UI pieces
     package.json
     vite.config.ts
   docker-compose.yml              # Postgres + Redis scaffolding (worker/api still native)
@@ -162,13 +164,13 @@ handles. The refactor is what makes that possible.
 
 ### Process model recap
 
-The API process and the worker process are **separate**. The API never
-imports torch and never loads a model — it only validates requests, reads
-the DB, and sends Celery tasks into Redis by name (see §8 on the import
-boundary trick). The worker imports everything heavy. Workers can run on
-the same machine as the API or on remote machines (e.g. a GPU box); they
-only need network reach to Redis (broker + pubsub) and Postgres. Routing
-is automatic via the Celery queue.
+The API process and the worker process are **separate** in celery mode. The API
+loads no pipeline models — it validates requests, reads the DB, serves SSE from
+Redis Streams, and sends Celery tasks into Redis by name (see §8 on the import
+boundary trick). The worker imports everything heavy. Workers can run on the
+same machine as the API or on remote machines (e.g. a GPU box); they only need
+network reach to Redis (broker + streams) and Postgres. Routing is automatic via
+the Celery queue.
 
 ### What actually changed
 
@@ -224,8 +226,9 @@ Key consequences:
   `platform_name`, `platform_conf`, `user_hints`, `generate_hint_from_name`
   arrive as call args.
 - Device is no longer a per-job argument. `ClipScribeBuilder(device=...)`
-  resolves one process-wide pipeline device at boot: the API uses
-  `clip_scribe.device` from yaml, while `main.py` may still pass an override.
+  resolves one process-wide pipeline device at boot: the web API and Celery
+  worker pass `CLIPSCRIBE_DEVICE`, while `main.py` falls back to
+  `clip_scribe.device` from yaml.
 - `combined_hints` derivation (only OpenAI-roundtrip if
   `generate_hint_from_name=True`).
 - Fresh `GPTSceneDescriber` (cheap — OpenAI client wrapper, not a model).
@@ -236,56 +239,16 @@ Key consequences:
 Target cost: a few hundred ms (dominated by the optional hint-generation
 OpenAI call when enabled), versus 30–60s pre-refactor.
 
-### Worker integration (the shape that will land in §10)
+### Worker integration
 
-The actual Celery wiring is unchanged from the planned approach — it's
-just thinner now because there's no `ModelRegistry` / `assemble_engine`
-plumbing in the middle:
-
-```python
-# backend/app/celery_app.py
-from celery import Celery
-import os
-celery_app = Celery("clipscribe", broker=os.environ["REDIS_URL"])
-```
-
-```python
-# backend/app/tasks.py
-from celery.signals import worker_process_init
-from app.celery_app import celery_app
-from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
-from src.clip_scribe.build_clip_scribe_plalform import build_platform
-
-BUILDER = None
-
-@worker_process_init.connect
-def boot(**_):
-    global BUILDER
-    BUILDER = ClipScribeBuilder()   # 30–60s, ONCE per worker process
-
-@celery_app.task(name="app.tasks.run_job")
-def run_job(job_params: dict):
-    platform_conf = build_platform(
-        job_params["platform_name"], **job_params["platform_params"]
-    )
-    engine = BUILDER.build_clip_scribe(
-        video_name=job_params["video_name"],
-        video_path=job_params["video_path"],
-        video_type=job_params["video_type"],
-        clib_scribe_mode=job_params["mode"],
-        clib_scribe_platform_name=job_params["platform_name"],
-        clib_scribe_platform_conf=platform_conf,
-        user_hints=job_params.get("user_hints"),
-        generate_hint_from_name=job_params.get("generate_hint_from_name", False),
-    )
-    engine.run(run_id=job_params.get("run_id", ""))
-```
+The Celery wiring is implemented in `backend/app/celery_app.py`,
+`backend/app/tasks.py`, and `backend/app/job_execution.py`. The API dispatches
+by task name, the worker loads one long-lived `ClipScribeBuilder` per process
+(`worker_process_init` or lazy first task for `--pool=solo`), and both inline
+and celery paths call the same `run_job_core(...)` lifecycle.
 
 ### What still needs to happen in this area later (tracked elsewhere)
 
-- Implement a worker/web `RedisProgressReporter` and log bridge. The core
-  already accepts `ProgressReporter` and defaults to `NullProgressReporter`
-  (§5).
 - Pass `download_root` to `whisper.load_model` and the equivalent dirs to
   `OCRSystem` so all weight downloads land under
   `backend/checkpoints/` instead of `~/.cache/...` (§8).
@@ -398,9 +361,9 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
   same SQLAlchemy metadata from `backend/src/db/schema.py`. `env.py` resolves
   the DB URL via `resolve_database_url()` (config + env), never the static
   `alembic.ini` placeholder — so migrations always target the app's DB.
-- Current revisions are a baseline migration for the existing schema followed
-  by a migration adding `jobs`, `frame_detections`, `parser_results`, and
-  `shot_boundaries`.
+- Current revisions are a baseline migration for the existing schema, a
+  migration adding `jobs`, `frame_detections`, `parser_results`, and
+  `shot_boundaries`, and a chat migration adding `chat_messages`.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
   repository root). Authoring a new migration: `make revision m="..."` then
@@ -517,18 +480,19 @@ change; records emitted outside a job context are dropped.
 
 OpenAPI-generated; TS client codegen via `openapi-typescript`. All routes
 return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
-Implemented routes are the sync-path API; planned Celery/SSE routes are called
-out separately.
+Implemented routes cover the inline and Celery dispatch paths, Redis
+Stream-backed SSE progress, read-only run views, artifacts, metadata, uploads,
+and advisory chat.
 
 ### Jobs
-- `POST   /jobs`                       — create a queued job and submit it to the single-slot in-process executor. Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
+- `POST   /jobs`                       — create a queued job and submit it to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
 - `GET    /jobs`                       — paginated, filterable by status.
 - `GET    /jobs/{id}`                  — full state.
-
-- `GET    /jobs/{id}/events`           — **DONE.** SSE live progress. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
-
-Planned:
-- `POST   /jobs/{id}/cancel`           — cooperative cancel of a *running* job (see §10.10; queued/running cancel already exists).
+- `GET    /jobs/{id}/events`           — SSE live progress. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
+- `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
+- `POST   /jobs/{id}/cancel`           — cancel a queued job or mark a running job canceled. Cooperative mid-run interruption is still planned (see §10.10).
+- `POST   /jobs/{id}/retry`            — create a fresh job from a failed/canceled job's stored request payload.
+- `DELETE /jobs/{id}`                  — delete a completed, failed, or canceled job row.
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
@@ -592,8 +556,8 @@ Planned:
      `input/` directory via `GET /inputs`.
    - Defaults pre-populated from `GET /defaults` so the form shows the yaml
      values and the user only overrides what they care about.
-   - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and poll until
-     the response contains a completed `run_id`.
+  - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and watch the SSE
+    progress stream until the response contains a completed `run_id`.
 
 3. **Live job** (`/jobs/{id}`)
    - Layout from prior chat sketch:
@@ -602,8 +566,8 @@ Planned:
      - Right: current-shot panel (description, dino prompt, taxonomy
        targets, frames processed).
      - Bottom: live log tail (ring buffer ~500 lines, level filter).
-   - Step-6 frontend state can poll `GET /jobs/{job_id}`; the later live
-     version is driven by SSE with a reducer keyed off `event.type`.
+   - Implemented live state is driven by SSE with a reducer keyed off
+     `event.type`, while `GET /jobs/{job_id}` remains the canonical status row.
    - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
@@ -649,9 +613,9 @@ sketch.
 
 Two images, two roles, one shared volume for weights. Placeholder Dockerfiles
 already live under `backend/docker/`; the actual image contents still need to
-be filled in. The checked-in sync-path API is intentionally monolithic and
-loads `ClipScribeBuilder` in the API process; the slim/heavy split below starts
-when Celery moves execution out of the API process.
+be filled in. The checked-in API can already run in celery mode without loading
+pipeline models, but the final slim/heavy container contents below still need
+to be built.
 
 ```
 backend/docker/
@@ -671,7 +635,7 @@ backend/docker/
 | Heavy deps | none (no `torch`, no `whisper`, no `paddleocr`) | full stack |
 | Imports `src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
 | Imports `app/tasks.py`? | **no** — sends tasks by name | yes |
-| Talks to Redis | yes (broker client + pubsub subscriber) | yes (broker consumer + pubsub publisher) |
+| Talks to Redis | yes (broker client + stream reader) | yes (broker consumer + stream publisher) |
 | Talks to Postgres | yes (read-mostly + jobs writes) | yes (writer + reader) |
 | Mounts `backend/checkpoints/`? | no | yes in dev, baked in prod |
 | Approx size | ~300 MB | 8–15 GB |
@@ -709,7 +673,7 @@ Backend vars (current):
 | Var | Purpose | Local (native) | Container |
 |---|---|---|---|
 | `CLIPSCRIBE_JOB_BACKEND` | `inline` \| `celery` dispatch | `celery` | `celery` |
-| `REDIS_URL` | broker + pub/sub | `redis://localhost:6379/0` | `redis://redis:6379/0` |
+| `REDIS_URL` | broker + Redis Streams | `redis://localhost:6379/0` | `redis://redis:6379/0` |
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
 | `CLIPSCRIBE_DEVICE` | builder device (web app) | `cpu` default; set `mps` for native GPU | `cpu` (Mac) / `cuda` (GPU box) |
@@ -920,16 +884,15 @@ These are decisions to make before the corresponding implementation step.
    the UI let users submit a 2nd job while one is running? It can — Redis
    queues it. Show queue position on the live page.
 
-10. **Logging refactor.**
-    `backend/src/utils/clip_scribe_logging.py` is a singleton. With a worker pool +
-    per-job event streams we need a contextvar with `job_id` propagated into
-    every log record so the SSE handler can route correctly. No call-site
-    changes if done via a `logging.Filter` that reads the contextvar.
+10. **Logging refactor.** **Resolved for job streams.**
+    `JobLogStreamHandler` reads the `current_job_id` contextvar set by
+    `run_job_core` and mirrors `INFO+` `clip_scribe` records into the same Redis
+    stream as structured progress events. No call-site changes were needed.
 
 11. **Tests.**
     Test suite is "minimal" per CLAUDE.md. New code should land with tests:
     Pydantic model round-trips, `ProgressReporter` event ordering, `frame_detections`
-    population, sync API job validation/routes, and the later SSE multiplexer.
+    population, API job validation/routes, and SSE stream replay/tailing.
     Don't try to test the engine end-to-end — that needs models.
 
 12. **OpenAPI → TS codegen as CI step.**
@@ -957,11 +920,10 @@ These are decisions to make before the corresponding implementation step.
     as-is.
 
 16. **What does the SSE channel do when there are zero subscribers?**
-    Redis pub/sub drops messages with no subscribers. If a user opens the live
-    page after a job is already running, they miss the early events. Two
-    options: (a) also write events to a Redis stream (XADD) keyed by job_id
-    so the SSE handler can replay history on connect; (b) keep the last N
-    events in a per-job list in Postgres `jobs.events_json`. (a) is cleaner.
+    **Resolved.** Live progress uses one Redis stream per job (`XADD` to
+    `job:{id}:stream`) instead of pub/sub. The SSE handler replays from id `0`
+    on connect and then tails with `XREAD BLOCK`, so late subscribers receive
+    prior events while the stream is retained.
 
 17. **`tracked_output.mp4` vs raw input video for the player.**
     Use the raw input as the `<video>` source and overlay our own SVG boxes —
@@ -1006,21 +968,22 @@ Strictly ordered; each step is shippable on its own.
    `remote_artifact_write` `ArtifactUploader` seam (§9.2). Unit-tested with an
    in-memory DB; full end-to-end proof is the first real `main.py` run.
 
-5. **FastAPI app, sync path only.** **DONE.** `POST /jobs` writes a queued
-   job and submits it to a single-slot in-process executor (no Celery yet), so
-   the HTTP contract is already asynchronous from the client's perspective.
+5. **FastAPI app, inline path.** **DONE.** `POST /jobs` writes a queued
+   job and submits it to a single-slot in-process executor in `inline` mode, so
+   the HTTP contract is asynchronous from the client's perspective.
    Implemented routes include uploads, input listing, job list/get, read-only
    `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
-   Request shape intentionally omits device, using yaml config instead.
+   Request shape intentionally omits device, using process configuration
+   (`CLIPSCRIBE_DEVICE` in web mode) instead.
 
-6. **Frontend bootstrap.** **NEXT.** Vite + React + TS + Tailwind + TanStack Router /
-   Query. Pages: Jobs list, New job, Run inspector (against existing DB data).
-   No live progress yet — submit, poll `GET /jobs/{job_id}`, then navigate by
-   the completed `run_id`.
+6. **Frontend bootstrap.** **DONE.** Vite + React + TS + Tailwind + TanStack Router /
+   Query. Pages: Jobs list, New job, live Job page, and Run inspector against
+   existing DB data.
 
-7. **Inspector overlay.** Use `frame_detections` to draw SVG boxes on
-   `<video>`. Layer toggles, confidence filter, timeline tracks. This is
-   where the project starts to feel real.
+7. **Inspector overlay.** **DONE (first pass).** Uses `frame_detections` to draw
+   SVG boxes on `<video>`, with layer toggles, active detections, timeline
+   tracks, parser results, and tracked-video download. Remaining polish lives in
+   step 12.
 
 8. **Celery + Redis.** **DONE (backend wiring).** `POST /jobs` dispatches on
    `settings.job_backend`: `inline` (the step-5 executor) or `celery`
@@ -1038,7 +1001,7 @@ Strictly ordered; each step is shippable on its own.
    `uv run celery -A app.celery_app worker --pool=solo --concurrency=1`.
    Remaining: an end-to-end run against live Redis + a real worker (needs models).
 
-9. **Redis pub/sub bridge + SSE.** **DONE.** Live progress uses a per-job Redis
+9. **Redis Streams bridge + SSE.** **DONE.** Live progress uses a per-job Redis
    **stream** (`job:{id}:stream`, `XADD` with `MAXLEN`), not pub/sub — pub/sub
    drops events with no subscriber, so a late-loading page would miss history
    (§16). `app/events.py` holds `RedisProgressReporter` (torch-free), a
@@ -1058,8 +1021,10 @@ Strictly ordered; each step is shippable on its own.
    `EventSource`; `POST /jobs` now redirects there and the jobs list links to it.
    Tested with `fakeredis` in `test/test_api_events.py`.
 
-10. **Cooperative cancel.** "should_cancel" flag honored by the shot loop +
-    parser. `POST /jobs/{id}/cancel`. Partial result handling.
+10. **Cooperative cancel.** Queue/running cancel endpoint exists and marks the
+    job canceled, but the engine cannot yet interrupt mid-run. Remaining:
+    "should_cancel" flag honored by the shot loop + parser, plus partial result
+    handling.
 
 11. **Docker split.** Fill in the currently empty
     `backend/docker/api/Dockerfile` (slim) and `backend/docker/core/Dockerfile`
@@ -1101,8 +1066,9 @@ Strictly ordered; each step is shippable on its own.
 
 - **MPS in Docker on Mac.** Already flagged. Lots of dev pain if we forget.
 
-- **Redis pub/sub is lossy without subscribers.** Must use streams or
-  Postgres-backed replay for late subscribers (open question §16).
+- **Live-progress replay depends on Redis Stream retention.** Streams solve the
+  subscriber-loss problem, but `MAXLEN` and terminal TTL still bound how much
+  history a late user can replay.
 
 - **OpenAI cost.** Adding a "Run job" button in a web UI makes it easy to
   burn through credits. Cost cap or per-user budget should exist before
@@ -1160,17 +1126,17 @@ where they run.
 
 ### Mode A — web app deployment
 
-- **Local dev (near term):** today the sync-path API can run natively from
-  `backend/` so `device=mps` works while `docker-compose` supplies Postgres.
-  Once Celery lands, `docker-compose` brings up API + Redis + Postgres
-  (+ frontend) and the worker runs natively on the Mac for MPS. No cloud, no
-  K8s. This mode is primarily a learning/dev surface.
+- **Local dev (near term):** the API can run natively from `backend/` in
+  `inline` mode so `device=mps` works while `docker-compose` supplies Postgres
+  and Redis. In `celery` mode, `docker-compose` supplies Redis + Postgres and
+  the worker can run natively on the Mac for MPS. No cloud, no K8s. This mode is
+  primarily a learning/dev surface.
 - **GCP shape (sketch, not a build target):**
 
   | Component | GCP service | Note |
   |---|---|---|
-  | API (slim, no torch) | **Cloud Run** | Enqueues to Redis, serves SSE. Mind Cloud Run request timeouts for long SSE streams. |
-  | Redis (broker + pubsub) | **Memorystore for Redis** | Managed. |
+  | API (slim, no pipeline models) | **Cloud Run** | Enqueues to Redis, serves SSE. Mind Cloud Run request timeouts for long SSE streams. |
+  | Redis (broker + streams) | **Memorystore for Redis** | Managed. |
   | Postgres | **Cloud SQL for PostgreSQL** | Managed. |
   | Celery GPU worker | **GKE GPU node pool** | Deployment with `nvidia.com/gpu: 1`, concurrency 1; autoscale pods on **queue depth** via KEDA (Redis scaler), scale to zero when idle. |
 
@@ -1205,8 +1171,8 @@ An interactive follow-up to evaluation. After a run completes, the user opens
 the run inspector, sees the ABCD verdicts, and can **ask questions** of an agent
 that already knows the whole video and every verdict the evaluator agents
 produced — e.g. *"criterion X failed — how would we fix it?"* or *"overall,
-what should change in this creative?"*. This is post-MVP (steps 13–14 in §10);
-it does **not** block the Celery/Redis work.
+what should change in this creative?"*. Backend and frontend support have landed
+as steps 13–14 in §10.
 
 ### Why it's a clean fit (not a new subsystem)
 
@@ -1228,15 +1194,17 @@ pattern with three deltas:
    proposing concrete, testable changes) instead of the evaluators' one-shot
    structured pass/fail (`_parse_agent_response` in `agent.py`).
 
-### The architectural win: API-only, no GPU
+### The architectural win: API-only, no pipeline models
 
-The chat agent does **only LLM calls + DB reads**. It never imports torch,
-never loads a model, never touches the Celery worker. It runs entirely in the
-slim API process (§8). Consequences:
+The chat agent does **only LLM calls + DB reads**. It never loads pipeline
+models and never touches the Celery worker. It runs in the API process; routes
+lazy-import the service because LangChain/LangGraph may transitively import
+torch in this environment. Consequences:
 
-- It can ship **before or independent of** the Celery migration (step 8).
-- It reuses the API's existing `reader_db` and `OPENAI_API_KEY`; no new heavy
-  dependency and no worker round-trip.
+- It ships independently of the Celery worker path.
+- It reuses the API's existing `reader_db` and `OPENAI_API_KEY`; no worker
+  round-trip. The future slim API image needs the LLM dependencies added before
+  it can serve this route.
 
 ### Security model — read-only and run-scoped
 
@@ -1266,7 +1234,7 @@ accepts a cross-run argument. That closure is the entire isolation story.
   possible optimization if replaying full history ever gets expensive.)
 - **Streaming** — `agent.stream(..., stream_mode="messages")` piped over an SSE
   response. This reuses the §9 SSE *pattern*, but the event source is the LLM
-  token stream directly — no Redis pub/sub, no worker involved.
+  token stream directly — no Redis stream, no worker involved.
 
 ### Frontend (extends §7 page 4, Run inspector)
 
@@ -1274,8 +1242,9 @@ A chat panel below the ABCD criteria table:
 - Streams the assistant answer token-by-token.
 - Renders tool-call chips ("queried visual objects…", "read parser verdicts…")
   so the reasoning is transparent.
-- Each failed criterion row gets an **"ask about this"** shortcut that seeds a
-  question like *"Criterion '{feature_name}' failed — what would fix it?"*.
+- Planned follow-up: each failed criterion row gets an **"ask about this"**
+  shortcut that seeds a question like *"Criterion '{feature_name}' failed — what
+  would fix it?"*.
 
 ### Open questions (tracked in §9.18 and §9.8)
 

@@ -401,7 +401,7 @@ class ClipScribeBuilder:
         """
         try:
             # One reporter per job, shared by engine + extractor + parser. The
-            # CLI leaves this None (Null = no-op); the Celery worker will pass a
+            # CLI leaves this None (Null = no-op); web execution paths pass a
             # RedisProgressReporter bound to the job id.
             reporter = progress_reporter or NullProgressReporter()
 
