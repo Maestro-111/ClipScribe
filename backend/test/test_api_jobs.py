@@ -170,6 +170,21 @@ def test_create_job_records_failure(ctx):
     assert row["finished_at"]
 
 
+def test_dispatch_failure_marks_job_failed(ctx):
+    client, state = ctx
+    svc = JobService(state.reader, state.writer, state.settings)
+    app.dependency_overrides[get_job_service] = lambda: svc
+
+    resp = client.post("/jobs", json=_full_body())
+    assert resp.status_code == 503
+
+    assert state.reader.list_jobs(status="queued") == []
+    failed = state.reader.list_jobs(status="failed")
+    assert len(failed) == 1
+    assert "Inline job execution is unavailable" in failed[0]["error_text"]
+    assert failed[0]["finished_at"]
+
+
 def test_canceled_job_does_not_start_if_task_later_runs(ctx):
     _, state = ctx
     from app.job_execution import build_task_payload, run_job_core

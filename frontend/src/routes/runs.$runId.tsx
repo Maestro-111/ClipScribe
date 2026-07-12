@@ -50,6 +50,8 @@ const SOURCE_LABELS: Record<DetectionSource, string> = {
 // screen for at most this long after its sample, regardless of the source rate.
 const MIN_HOLD_SEC = 0.4;
 const MAX_HOLD_SEC = 2.5;
+const FRAME_WINDOW_STEP_SEC = 5;
+const FRAME_WINDOW_AHEAD_SEC = 5;
 
 // Per-source "hold window": how long one sample keeps showing after its
 // timestamp. Derived from the source's own median inter-sample gap (×3) so it
@@ -108,6 +110,20 @@ function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function frameWindowFor(currentTime: number, duration: number) {
+  if (duration <= 0) return null;
+  const bucketStart =
+    Math.floor(currentTime / FRAME_WINDOW_STEP_SEC) * FRAME_WINDOW_STEP_SEC;
+  return {
+    fromSec: Math.max(0, bucketStart - MAX_HOLD_SEC),
+    toSec: Math.min(
+      duration,
+      bucketStart + FRAME_WINDOW_STEP_SEC + FRAME_WINDOW_AHEAD_SEC,
+    ),
+    enabled: true,
+  };
 }
 
 // ── VideoOverlay ─────────────────────────────────────────────────────────
@@ -404,7 +420,6 @@ function RunInspector() {
   const { runId } = Route.useParams();
 
   const run = useRun(runId);
-  const frames = useRunFrames(runId);
   const globalStats = useRunGlobalStats(runId);
   const audioSegments = useRunAudioSegments(runId);
   const parser = useRunParser(runId);
@@ -418,6 +433,16 @@ function RunInspector() {
   const [dims, setDims] = useState<VideoDims | null>(null);
   const [enabledSources, setEnabledSources] = useState<Set<DetectionSource>>(
     new Set(SOURCES),
+  );
+
+  const duration = dims?.duration ?? 0;
+  const frameWindow = useMemo(
+    () => frameWindowFor(currentTime, duration),
+    [currentTime, duration],
+  );
+  const frames = useRunFrames(
+    runId,
+    frameWindow ?? { fromSec: 0, toSec: 0, enabled: false },
   );
 
   const toggleSource = useCallback((src: DetectionSource) => {
@@ -461,7 +486,6 @@ function RunInspector() {
     }
   }, []);
 
-  const duration = dims?.duration ?? 0;
   const shots = globalStats.data?.shot_boundaries ?? [];
   const audio = audioSegments.data ?? [];
   const parserResults = parser.data ?? [];

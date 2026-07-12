@@ -106,7 +106,17 @@ class JobService:
             video_path=str(video_path_abs) if video_path_abs else req.video_path,
             video_type=video_type,
         )
-        self._dispatch(job_id, payload)
+        try:
+            self._dispatch(job_id, payload)
+        except Exception as exc:
+            self.writer.update_job_if_status(
+                job_id,
+                allowed_statuses=(JobStatus.QUEUED.value,),
+                status=JobStatus.FAILED.value,
+                finished_at=now_iso(),
+                error_text=str(exc),
+            )
+            raise
 
         return JobCreatedResponse(job_id=job_id, run_id=run_id, status=JobStatus.QUEUED)
 
