@@ -18,6 +18,7 @@ from app.deps import settings_dep
 from app.errors import ProblemException
 from app.models import UploadedVideo, UploadResponse
 from app.settings import Settings
+from src.utils.ids import new_ulid
 
 logger = logging.getLogger("clip_scribe")
 
@@ -48,13 +49,16 @@ def upload_videos(
                 detail=f"unsupported file type '{suffix}'. Allowed: {allowed}",
             )
 
-        dest = settings.input_dir / name
+        stored_name = f"{new_ulid()}{suffix}"
+        dest = settings.input_dir / stored_name
         with dest.open("wb") as out:
             shutil.copyfileobj(file.file, out)  # streamed, not buffered in memory
 
         uploaded.append(
-            UploadedVideo(name=name, path=name, size_bytes=dest.stat().st_size)
+            UploadedVideo(name=name, path=stored_name, size_bytes=dest.stat().st_size)
         )
-        logger.info("Uploaded %s (%d bytes)", name, dest.stat().st_size)
+        logger.info(
+            "Uploaded %s as %s (%d bytes)", name, stored_name, dest.stat().st_size
+        )
 
     return UploadResponse(uploaded=uploaded)

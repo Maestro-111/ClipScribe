@@ -92,6 +92,32 @@ def test_update_job_noop_when_nothing_provided(db):
     assert reader.get_job(job_id)["status"] == "queued"
 
 
+def test_update_job_if_status_respects_current_status(db):
+    writer, reader, _ = db
+    job_id = new_ulid()
+    writer.create_job(job_id=job_id, mode="full", status="canceled")
+
+    updated = writer.update_job_if_status(
+        job_id,
+        allowed_statuses=("queued", "running"),
+        status="running",
+        started_at="2026-07-03T10:00:00",
+    )
+
+    assert updated is False
+    job = reader.get_job(job_id)
+    assert job["status"] == "canceled"
+    assert job["started_at"] is None
+
+    updated = writer.update_job_if_status(
+        job_id,
+        allowed_statuses=("canceled",),
+        error_text="kept canceled",
+    )
+    assert updated is True
+    assert reader.get_job(job_id)["error_text"] == "kept canceled"
+
+
 def test_list_jobs_orders_recent_first_and_filters_status(db):
     writer, reader, _ = db
     # ULIDs are monotonic, so a later create sorts first under DESC ordering.

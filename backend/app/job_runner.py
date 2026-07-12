@@ -177,9 +177,23 @@ class JobService:
             if future is not None:
                 future.cancel()  # no-op if already running, succeeds if queued
 
-        self.writer.update_job(
-            job_id, status=JobStatus.CANCELED.value, finished_at=now_iso()
+        canceled = self.writer.update_job_if_status(
+            job_id,
+            allowed_statuses=tuple(cancellable),
+            status=JobStatus.CANCELED.value,
+            finished_at=now_iso(),
         )
+        if not canceled:
+            latest = self.reader.get_job(job_id)
+            latest_status = latest["status"] if latest else "missing"
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"job '{job_id}' is '{latest_status}' — "
+                    "only queued or running jobs can be canceled"
+                ),
+            )
 
     def retry_job(self, job_id: str) -> JobCreatedResponse:
         """Create a fresh job from the stored params of a failed/canceled job."""

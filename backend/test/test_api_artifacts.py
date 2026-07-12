@@ -64,7 +64,24 @@ def test_upload_accepts_video(client):
     assert r.status_code == 200
     body = r.json()
     assert body["uploaded"][0]["name"] == "clip.mp4"
+    assert body["uploaded"][0]["path"] != "clip.mp4"
+    assert body["uploaded"][0]["path"].endswith(".mp4")
     assert body["uploaded"][0]["size_bytes"] == 4
+
+
+def test_upload_duplicate_names_get_distinct_paths(client):
+    first = client.post(
+        "/uploads", files={"files": ("clip.mp4", b"first", "video/mp4")}
+    )
+    second = client.post(
+        "/uploads", files={"files": ("clip.mp4", b"second", "video/mp4")}
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["uploaded"][0]["name"] == "clip.mp4"
+    assert second.json()["uploaded"][0]["name"] == "clip.mp4"
+    assert first.json()["uploaded"][0]["path"] != second.json()["uploaded"][0]["path"]
 
 
 def test_upload_rejects_bad_extension(client):
@@ -75,11 +92,11 @@ def test_upload_rejects_bad_extension(client):
     assert r.headers["content-type"] == "application/problem+json"
 
 
-def test_upload_strips_path_from_filename(client, tmp_path):
+def test_upload_strips_path_from_filename(client):
     r = client.post("/uploads", files={"files": ("../../pwn.mp4", b"x", "video/mp4")})
     assert r.status_code == 200
-    # Saved under the bare name, never outside input_dir.
     assert r.json()["uploaded"][0]["name"] == "pwn.mp4"
+    assert r.json()["uploaded"][0]["path"].endswith(".mp4")
 
 
 # ---- artifacts -----------------------------------------------------------
