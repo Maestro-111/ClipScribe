@@ -9,7 +9,7 @@ Use this workflow when the user wants parser-only evaluation for an existing ext
 
 1. Confirm the `run_id` and platform details from `$ARGUMENTS`.
 2. Run backend commands from `backend/`.
-3. Check `backend/src/clip_scribe/configs/clip_scribe.yaml` for `database.backend`.
+3. Check `CLIPSCRIBE_DB_BACKEND` first, then `database.backend` in `backend/src/clip_scribe/configs/clip_scribe.yaml`.
 4. Ensure the matching database environment exists:
    - PostgreSQL: `POSTGRESQL_URL`.
    - SQLite: `SQLITE_URL` or default `sqlite:///data/clip_scribe.db`.

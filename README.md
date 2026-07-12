@@ -142,7 +142,7 @@ Three images back the web app, all built from the repository root as context:
 | Image | Dockerfile                           | Role                                                                                                                                                      |
 | --- |--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, Celery dispatch, advisory chat). Also runs the one-shot Alembic migration.              |
-| `worker` | `backend/docker/core/cpu/Dockerfile` | Heavy Celery worker running the full pipeline. CPU build here; `gpu/Dockerfile` is the CUDA variant for a Linux + NVIDIA host (see `docs/deployment.md`). |
+| `worker` | `backend/docker/core/cpu/Dockerfile` | Heavy Celery worker running the full pipeline. CPU build here; `backend/docker/core/gpu/Dockerfile` is the CUDA variant for a Linux + NVIDIA host (see `docs/deployment.md`). |
 | `frontend` | `frontend/Dockerfile`                | Vite/React SPA built with pnpm and served by nginx, which reverse-proxies `/api/*` to the `api` service (SSE-safe).                                       |
 
 `docker-compose.yml` wires these plus `postgres`, `redis`, and two one-shot services: `migrate` (`alembic upgrade head`) and `prewarm` (model-weight download). There are two ways to run.

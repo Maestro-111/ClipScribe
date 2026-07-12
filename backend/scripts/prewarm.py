@@ -26,7 +26,7 @@ Usage::
     # container (env vars already set by the image):
     python scripts/prewarm.py
     # or via compose into the mounted checkpoints volume:
-    docker compose run --rm worker python scripts/prewarm.py
+    docker compose run --rm prewarm python scripts/prewarm.py --force
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ os.environ.setdefault("NLTK_DATA", str(CHECKPOINTS / "nltk"))
 os.environ.setdefault("PADDLE_OCR_BASE_DIR", str(CHECKPOINTS / "paddleocr"))
 
 # SAM2 checkpoints actually used by the default configs (see clip_scribe.yaml
-# sam2.size). Kept in sync with checkpoints/download_sam_ckpts.sh; we fetch only
-# the sizes the pipeline loads rather than all four.
+# sam2.size). Kept in sync with scripts/download_sam_ckpts.sh; we fetch only the
+# sizes the pipeline loads rather than all four.
 SAM2_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824"
 SAM2_CHECKPOINTS = ("sam2.1_hiera_tiny.pt", "sam2.1_hiera_small.pt")
 
@@ -132,8 +132,8 @@ def prewarm_whisper_and_ocr() -> None:
 
     from paddleocr import PaddleOCR
 
-    # Mirror the constructor in src/ocr/paddle_wrapper.py so the same det/rec/cls
-    # models get pulled into PADDLE_OCR_BASE_DIR.
+    # Mirror the constructor in backend/src/ocr/paddle_wrapper.py so the same
+    # det/rec/cls models get pulled into PADDLE_OCR_BASE_DIR.
     PaddleOCR(
         use_textline_orientation=True,
         lang="en",

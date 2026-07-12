@@ -55,24 +55,27 @@ dev = [
     "fakeredis>=2.20.0"
 ]
 
-# Dependency set for the slim API container image (docker/api, web-app-plan §8).
+# Dependency set for the slim API container image (backend/docker/api, web-app-plan §8).
 # Install with `uv sync --only-group api` — unlike an extra, --only-group
 # EXCLUDES the heavy main dependencies (paddleocr/whisper/sam2/dino/opencv), so
 # the API image never pulls the pipeline ML stack. It DOES include the
 # advisory-chat LLM libraries (`langgraph`, `langchain-openai`) so the API can
 # serve `/runs/{id}/chat`.
 [dependency-groups]
-# Runtime dependency set for the heavy Celery worker container image
-# (docker/core). It is a dependency-group (not an extra) for the same reason as
-# `api`: groups install in ISOLATION via `uv pip install --group worker`, so the
+# Runtime dependency set for the heavy Celery worker container images
+# (backend/docker/core/{cpu,gpu}). It is a dependency-group (not an extra) for
+# the same reason as `api`: groups install in ISOLATION via
+# `uv pip install --group worker`, so the
 # image gets exactly this curated set and NOT the base `[project.dependencies]`
 # superset. It is the full pipeline ML stack plus `psycopg2-binary` for Postgres
 # writes. The only base dep intentionally omitted is `types-PyYAML` (a mypy stub,
 # not needed at runtime). NOTE: `yapf` IS required at runtime — the vendored
-# GroundingDINO code imports it (src/dino/groundingdino/util/slconfig.py) — so it
-# stays here despite looking like formatter-only tooling. The worker Dockerfile
-# installs this with `--extra-index-url https://download.pytorch.org/whl/cpu` for
-# CPU torch; the GPU variant swaps the base image + a CUDA torch index.
+# GroundingDINO code imports it
+# (backend/src/dino/groundingdino/util/slconfig.py), so it stays here despite
+# looking like formatter-only tooling. The CPU worker Dockerfile exports this
+# locked group, strips torch/torchvision, installs those from the CPU torch wheel
+# index, then installs the remaining pinned requirements; the GPU variant swaps
+# the base image and torch wheel index for CUDA.
 worker = [
     "colorlog>=6.10.1",
     "hydra-core>=1.3.2",

@@ -1,6 +1,6 @@
 """Advisory chat service (web-app-plan §13) — API-side glue for post-run Q&A.
 
-Builds the LLM + a run-scoped ReAct agent (``src/parser/advisory.py``), streams
+Builds the LLM + a run-scoped ReAct agent (``backend/src/parser/advisory.py``), streams
 its answer as Server-Sent Events, and persists the transcript to
 ``chat_messages``. It does no pipeline model loading and does not use the
 worker — just LLM calls + DB reads — so it lives in the API process. Some
