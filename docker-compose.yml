@@ -56,6 +56,7 @@ services:
     env_file: .env
     environment:
       CLIPSCRIBE_DB_BACKEND: postgresql
+      CLIPSCRIBE_DEVICE: cpu
       POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
     command: ["alembic", "upgrade", "head"]
     depends_on:
@@ -71,6 +72,7 @@ services:
     environment:
       CLIPSCRIBE_JOB_BACKEND: celery
       CLIPSCRIBE_DB_BACKEND: postgresql
+      CLIPSCRIBE_DEVICE: cpu
       POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
       REDIS_URL: redis://redis:6379/0
       CLIPSCRIBE_CORS_ORIGINS: http://localhost:5173
@@ -104,6 +106,8 @@ services:
     # fine for the CPU worker, which is smoke-test-only (fast path is Mode 2).
     platform: linux/amd64
     env_file: .env
+    environment:
+      CLIPSCRIBE_DEVICE: cpu
     command: ["python", "scripts/prewarm.py"]
     volumes:
       - ./backend/checkpoints:/app/backend/checkpoints
