@@ -4,7 +4,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 
 ## Overview
 
-ClipScribe splits a video into scenes, detects and tracks objects across shots, transcribes speech, extracts on-screen text, and assembles the result into structured metadata. A parser layer can then evaluate the extracted data against platform-specific criteria. 
+ClipScribe splits a video into scenes, detects and tracks objects across shots, transcribes speech, extracts on-screen text, and assembles the result into structured metadata. A parser layer can then evaluate the extracted data against platform-specific criteria.
 
 ## Pipeline
 
