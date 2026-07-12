@@ -27,6 +27,12 @@ import type { components } from "./types";
 // compiling until it matches. That's the anti-drift guarantee, made concrete.
 export type JobCreateRequest = components["schemas"]["JobCreateRequest"];
 
+export interface RunFramesWindow {
+  fromSec: number;
+  toSec: number;
+  enabled?: boolean;
+}
+
 // Centralized query keys. Keeping them in one factory means invalidation and
 // fetching always agree on the exact key array (a common source of "why won't
 // my list refresh?" bugs).
@@ -34,7 +40,13 @@ export const keys = {
   jobs: (status?: string) => ["jobs", { status }] as const,
   job: (id: string) => ["jobs", id] as const,
   run: (id: string) => ["runs", id] as const,
-  runFrames: (id: string) => ["runs", id, "frames"] as const,
+  runFrames: (id: string, window?: RunFramesWindow) =>
+    [
+      "runs",
+      id,
+      "frames",
+      { fromSec: window?.fromSec, toSec: window?.toSec },
+    ] as const,
   runGlobalStats: (id: string) => ["runs", id, "global-stats"] as const,
   runParser: (id: string) => ["runs", id, "parser"] as const,
   runAudioSegments: (id: string) => ["runs", id, "audio-segments"] as const,
@@ -133,15 +145,22 @@ export function useRun(runId: string) {
   });
 }
 
-export function useRunFrames(runId: string) {
+export function useRunFrames(runId: string, window?: RunFramesWindow) {
   return useQuery({
-    queryKey: keys.runFrames(runId),
+    queryKey: keys.runFrames(runId, window),
     queryFn: async () =>
       unwrap(
         await api.GET("/runs/{run_id}/frames", {
-          params: { path: { run_id: runId } },
+          params: {
+            path: { run_id: runId },
+            query: window
+              ? { from: window.fromSec, to: window.toSec }
+              : undefined,
+          },
         }),
       ) as unknown as FrameDetection[],
+    enabled: window?.enabled ?? true,
+    placeholderData: (previousData) => previousData,
     staleTime: Infinity,
   });
 }
