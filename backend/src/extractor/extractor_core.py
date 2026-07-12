@@ -559,11 +559,25 @@ class VideoInformationExtractor:
         self.fps = fps
 
         output_filename = os.path.join(artifact_path, "tracked_output.mp4")
-        fourcc = cv2.VideoWriter.fourcc(*"avc1")
 
+        # Prefer H.264 (avc1) for a compact, widely-playable file. In some
+        # environments the avc1 writer can't open — notably Linux containers,
+        # where OpenCV's ffmpeg resolves H.264 to the hardware encoder
+        # h264_v4l2m2m, which needs a /dev/video* device that isn't present.
+        # Fall back to mp4v (MPEG-4 Part 2, pure software, always available) so
+        # tracked_output.mp4 is still written.
         self.video_writer = cv2.VideoWriter(
-            output_filename, fourcc, fps, (width, height)
+            output_filename, cv2.VideoWriter.fourcc(*"avc1"), fps, (width, height)
         )
+        if not self.video_writer.isOpened():
+            logger.warning(
+                "avc1/H.264 VideoWriter unavailable (no hardware encoder in this "
+                "environment); falling back to mp4v for tracked_output.mp4"
+            )
+            self.video_writer.release()
+            self.video_writer = cv2.VideoWriter(
+                output_filename, cv2.VideoWriter.fourcc(*"mp4v"), fps, (width, height)
+            )
         logger.info(f"Recording video to: {output_filename}")
 
         self.inference_state = self.sam_model.init_state(video_path=video_path)

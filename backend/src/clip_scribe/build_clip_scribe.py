@@ -312,9 +312,7 @@ class ClipScribeBuilder:
                 self.device,
             )
 
-            logger.info(
-                f"Loading DINOv2 (ViT-S/14) for Object Re-Identification on {self.device}..."
-            )
+            logger.info(f"Loading DINOv2 (ViT-S/14) on {self.device}...")
 
             reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
                 self.device
@@ -324,7 +322,15 @@ class ClipScribeBuilder:
 
             logger.info(f"loading whisper to {self.device}")
 
-            audio_model = whisper.load_model("base", device=self.device)
+            # Whisper ignores the TORCH_HOME/HF_HOME-style env vars other
+            # downloaders honor, so point its weights under checkpoints/ with an
+            # explicit download_root. Keeps every model cache in one directory
+            # (one Docker volume in dev, one baked image layer in prod).
+            audio_model = whisper.load_model(
+                "base",
+                device=self.device,
+                download_root=str(self.models_weights_dir / "whisper"),
+            )
 
             embedding_transform = transforms.Compose(
                 [

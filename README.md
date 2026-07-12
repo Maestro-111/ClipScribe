@@ -4,7 +4,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 
 ## Overview
 
-ClipScribe splits a video into scenes, detects and tracks objects across shots, transcribes speech, extracts on-screen text, and assembles the result into structured metadata. A parser layer can then evaluate the extracted data against platform-specific criteria, such as YouTube ad requirements.
+ClipScribe splits a video into scenes, detects and tracks objects across shots, transcribes speech, extracts on-screen text, and assembles the result into structured metadata. A parser layer can then evaluate the extracted data against platform-specific criteria. 
 
 ## Pipeline
 
@@ -39,35 +39,40 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 
 ## Setup
 
-ClipScribe is a monorepo: the Python backend lives in `backend/`, while the git root is the repository root. **Run `uv`, Alembic, and pre-commit commands below from the `backend/` directory** so project config and relative paths resolve correctly.
+ClipScribe is a monorepo: the Python backend lives in `backend/`, the React frontend in `frontend/`, and the git root is the repository root. **Run `uv`, Alembic, and pre-commit from the `backend/` directory** so project config and relative paths resolve correctly.
+
+**Prerequisites:** Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 22+ with pnpm (`corepack enable`), and Docker (for Postgres + Redis, and the full container stack).
+
+Install the **backend** dependencies (from `backend/`):
 
 ```bash
 cd backend
-```
-
-ClipScribe requires Python 3.12 or newer.
-
-Install project dependencies:
-
-```bash
-uv sync
-```
-
-Install development dependencies:
-
-```bash
 uv sync --extra dev
 ```
 
-Download checkpoints and pre-cache large models only when you need to run extraction. The helper scripts live in `backend/checkpoints/`, but the root `Makefile` setup/checkpoint targets still reference pre-monorepo paths and need cleanup before use.
+Install the **frontend** dependencies (from `frontend/`):
+
+```bash
+cd frontend
+pnpm install
+```
+
+Download the **model weights** — only needed to run extraction. From the repository root, `make setup` fetches the GroundingDINO/SAM2 checkpoints and the spaCy model, and pre-caches the auto-downloaded models (DINOv2, SBERT, Whisper, PaddleOCR, WordNet) under `backend/checkpoints/`:
+
+```bash
+make setup
+```
+
+`backend/scripts/prewarm.py` is the container's equivalent (run automatically by the `prewarm` compose service); it fetches the same downloaded weights but relies on the spaCy wheel being installed separately, as the worker Dockerfile does.
 
 ## Environment
 
 Common environment variables:
 
 - `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
-- `POSTGRESQL_URL` - required when `database.backend` is set to `postgresql`.
-- `SQLITE_URL` - optional when `database.backend` is set to `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
+- `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
+- `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
+- `CLIPSCRIBE_DB_BACKEND` - optional override for `database.backend` from `clip_scribe.yaml` (`sqlite` | `postgresql`). The env var wins over yaml, so the Docker/compose stack and prod force `postgresql` without editing the config; local CLI runs keep the yaml default.
 - `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
@@ -91,70 +96,109 @@ uv run alembic upgrade head
 
 ## Running
 
-### Local Scratch Entry Point
+ClipScribe has two run surfaces: the **web app** (dashboard + API + worker) and a **local batch entry point** for one-off pipeline runs. To bring up the full web app, see [Running with Docker](#running-with-docker).
 
-The current `main.py` is a temporary hardcoded entry point, not a stable CLI. It is useful for local experiments, but video names, mode, run id, platform parameters, and device settings are currently edited in the file.
+### Web app
 
-Current modes:
+The stack is a Vite/React dashboard, a FastAPI API, one or more Celery workers, Postgres, and Redis. `POST /jobs` returns immediately and streams live progress from a per-job Redis Stream over SSE. `CLIPSCRIBE_JOB_BACKEND` selects dispatch:
 
-- `extract` - run extraction and write local artifacts only; it does not persist run metadata to the database.
-- `parse` - evaluate an existing persisted run id.
-- `full` - run extraction and then parse the saved run.
+- `inline` — one long-lived `ClipScribeBuilder` and a single-slot in-process executor.
+- `celery` — a model-free API that dispatches jobs to a Redis-backed Celery worker.
 
-Example:
+Running jobs can be marked canceled, but cooperative mid-run interruption is still planned. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with advisory chat.
 
-```bash
-uv run python main.py
-```
+Useful API routes (reached from the browser under the `/api` proxy prefix):
 
-A proper CLI is still a TODO. Until then, prefer changing existing builder/engine code rather than adding one-off scripts for each run.
+- `POST /uploads` — upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
+- `GET /inputs` — list server-side input videos accepted by the job form.
+- `POST /jobs` — create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` writes artifacts only (no `runs` row).
+- `GET /jobs` and `GET /jobs/{job_id}` — poll job state.
+- `GET /jobs/{job_id}/events` — SSE stream that replays and tails Redis Stream progress/log events.
+- `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
+- `POST /jobs/{job_id}/cancel` — cancel a queued job or mark a running job canceled.
+- `POST /jobs/{job_id}/retry` — create a fresh job from a failed/canceled job's stored request.
+- `DELETE /jobs/{job_id}` — remove a completed, failed, or canceled job row.
+- `GET /runs/{run_id}/...` — inspect persisted run data, frame detections, parser results, and artifacts.
+- `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed run.
 
-### Web API
+### Local batch entry point (`main.py`)
 
-The checked-in FastAPI app supports two job backends selected by `CLIPSCRIBE_JOB_BACKEND`. `inline` uses one long-lived `ClipScribeBuilder` and a single-slot in-process executor. `celery` keeps the API model-free and dispatches jobs to a Redis-backed Celery worker. Both backends return from `POST /jobs` immediately and publish best-effort live progress to a per-job Redis Stream served over SSE. Running jobs can be marked canceled, but the engine still finishes its current run before the terminal write is suppressed; cooperative mid-run interruption is still planned.
+`backend/main.py` is a temporary, hardcoded entry point (not a stable CLI) for local experiments — video name, mode, run id, platform params, and device are edited in the file. Modes:
 
-Start the API from `backend/`:
-
-```bash
-uv run uvicorn app.main:app --reload
-```
-
-For `CLIPSCRIBE_JOB_BACKEND=celery`, run a worker from `backend/` as well:
-
-```bash
-uv run celery -A app.celery_app worker --pool=solo --concurrency=1
-```
-
-Useful API routes:
-
-- `POST /uploads` - upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
-- `GET /inputs` - list server-side input videos accepted by the job form.
-- `POST /jobs` - create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` still writes artifacts only without creating a run row for `/runs`.
-- `GET /jobs` and `GET /jobs/{job_id}` - poll job state.
-- `GET /jobs/{job_id}/events` - SSE stream that replays and tails Redis Stream progress/log events.
-- `GET /jobs/{job_id}/progress` - coarse percent summary for jobs-list progress bars.
-- `POST /jobs/{job_id}/cancel` - cancel a queued job or mark a running job canceled.
-- `POST /jobs/{job_id}/retry` - create a fresh job from a failed or canceled job's stored request payload.
-- `DELETE /jobs/{job_id}` - remove a completed, failed, or canceled job row.
-- `GET /runs/{run_id}/...` - inspect persisted run data, frame detections, parser results, and artifacts.
-- `POST /runs/{run_id}/chat` and related chat session routes - stream read-only advisory Q&A over a completed run.
-
-The API request does not accept a device field. The web app uses `CLIPSCRIBE_DEVICE` when constructing the inline API builder or Celery worker builder; `backend/main.py` still falls back to `clip_scribe.device` from `clip_scribe.yaml` when running locally.
-
-### Frontend
-
-The initial dashboard lives in `frontend/`. It is a Vite + React + TypeScript app using pnpm, TanStack Router, TanStack Query, Tailwind v4, and OpenAPI-generated types from the FastAPI schema.
-
-Run it from the repository root with the API listening on port 8000:
+- `extract` — run extraction and write local artifacts only (no DB run row); local dev only.
+- `parse` — evaluate an existing persisted `run_id`.
+- `full` — run extraction, then parse the saved run.
 
 ```bash
-cd frontend
-pnpm install
-pnpm gen:api
-pnpm dev
+cd backend && uv run python main.py
 ```
 
-The dev server runs at `http://localhost:5173` and proxies `/api/*` to the backend. Implemented screens are the jobs list (`/`) with running progress bars, the new-job form (`/jobs/new`), the live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with advisory chat.
+Prefer changing existing builder/engine code over adding one-off run scripts.
+
+## Running with Docker
+
+Three images back the web app, all built from the repository root as context:
+
+| Image | Dockerfile                           | Role                                                                                                                                                      |
+| --- |--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, Celery dispatch, advisory chat). Also runs the one-shot Alembic migration.              |
+| `worker` | `backend/docker/core/cpu/Dockerfile` | Heavy Celery worker running the full pipeline. CPU build here; `gpu/Dockerfile` is the CUDA variant for a Linux + NVIDIA host (see `docs/deployment.md`). |
+| `frontend` | `frontend/Dockerfile`                | Vite/React SPA built with pnpm and served by nginx, which reverse-proxies `/api/*` to the `api` service (SSE-safe).                                       |
+
+`docker-compose.yml` wires these plus `postgres`, `redis`, and two one-shot services: `migrate` (`alembic upgrade head`) and `prewarm` (model-weight download). There are two ways to run.
+
+### Mode 1 — Everything in Compose (CPU worker)
+
+```bash
+docker compose build
+docker compose up      # api :8000, frontend :5173, worker, postgres, redis
+```
+
+The app is at `http://localhost:5173`. Model weights are fetched automatically: the one-shot `prewarm` service populates the shared `./backend/checkpoints` volume before the worker starts. The **first** `up` downloads several GB (the GroundingDINO/SAM2 `.pth` already on your host appear immediately); later `up`s short-circuit on a `.prewarm_complete` marker. Force a refetch with `docker compose run --rm prewarm python scripts/prewarm.py --force`.
+
+The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has no arm64 wheel, and amd64 is the deploy target). On an **Apple Silicon** Mac they run under QEMU emulation — correct but slow, and `prewarm` loading models emulated can take a while. Mode 1 is best on a Linux/amd64 host or CI; on a Mac, use **Mode 2** for real work (native MPS worker) and treat Mode 1 as an end-to-end smoke test.
+
+### Mode 2 — Hybrid local dev (native MPS worker)
+
+Run only Postgres + Redis in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
+
+```bash
+# shell 0 — infra only
+docker compose up postgres redis
+
+# shell 1 — migrations (once)
+make migrate                                          # or: cd backend && uv run alembic upgrade head
+
+# shell 2 — API (native)
+cd backend && uv run uvicorn app.main:app --reload
+
+# shell 3 — Celery worker (native, MPS)
+cd backend && uv run celery -A app.celery_app worker --pool=solo --concurrency=1
+
+# shell 4 — frontend (native, Vite dev proxy)
+cd frontend && pnpm install && pnpm dev
+```
+
+Mode 2 uses the Vite dev-server `/api` proxy; Mode 1 serves the built SPA behind nginx doing the same proxy — same mental model in both.
+
+### `.env` values per mode
+
+Keep one repo-root `.env` with the **native-host** values. Compose feeds it to every service with `env_file` and then overrides only the network-sensitive vars per service (with in-container service names), so you never edit `.env` when switching modes:
+
+| Var | Hybrid / native host | Full Compose (container) | Prod (GCP) |
+| --- | --- | --- | --- |
+| `POSTGRESQL_URL` | `…@localhost:5433/clipscribe` | `…@postgres:5432/clipscribe` | Secret Manager |
+| `REDIS_URL` | `redis://localhost:6379/0` | `redis://redis:6379/0` | Memorystore URL |
+| `CLIPSCRIBE_DB_BACKEND` | unset (yaml `sqlite`) or `postgresql` | `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
+| `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
+| `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |
+
+The container-column values live in each service's `environment:` block in `docker-compose.yml` and win over `env_file`.
+
+### How imports resolve in the containers
+
+The backend images set `WORKDIR /app/backend` and `PYTHONPATH=/app/backend`, then copy the code there — mirroring how you run locally from `backend/`. That is what makes both `from app.X import …` (the `app` package is not installed as a wheel) and `from src.X import …` resolve, without `pip install .`. The images install only third-party dependencies (the `api` or `worker` dependency group).
 
 ## Development Commands
 
@@ -178,7 +222,7 @@ uv run pre-commit run --all-files
 
 > **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
-Install only the slim API dependency group for API-container work. This is for the planned slim API image; advisory chat still needs `langgraph` and `langchain-openai` added before that image can serve chat requests:
+Install only the slim API dependency group for API-container work. The `api` group includes the advisory-chat LLM libraries (`langgraph`, `langchain-openai`) and resolves torch-free, so the API container stays slim while still serving `/runs/{id}/chat`:
 
 ```bash
 uv sync --only-group api
@@ -190,27 +234,43 @@ Apply database migrations from the repository root via the Makefile:
 make migrate
 ```
 
-The root Makefile currently has stale setup/checkpoint/clean targets after the backend move; `make migrate` is the reliable target in the checked-in Makefile.
+Working Makefile targets include `make setup` (model prefetch), `make checkpoints`, `make migrate`, and `make revision`.
 
 ## Project Structure
 
 ```text
-backend/src/clip_scribe/        Engine, builders, platform config, main app config
-backend/app/                    FastAPI sync API, routes, settings, job runner
-backend/src/extractor/          Scene extraction, taxonomy, tracking, scene description
-backend/src/parser/             Parser agents, tools, evaluators, reports
-backend/src/ocr/                PaddleOCR wrapper and OCR post-processing
-backend/src/db/                 SQLAlchemy schema, engine, reader, writer
-backend/src/utils/progress.py   Progress event interface and null reporter
-backend/src/dino/dino_wrapper.py Safe wrapper around GroundingDINO
-backend/alembic/                Alembic migration environment and versions
-backend/checkpoints/            Model checkpoint download helpers
-backend/input/                  Local input videos
-backend/artifacts/              Per-run extraction outputs keyed by run id
-backend/parser_artifacts/       Generated parser reports
-backend/data/                   Local database files
-backend/logs/                   Runtime logs
-frontend/                       Vite/React dashboard and generated API types
+clipscribe/
+├── backend/
+│   ├── app/                    FastAPI: routes, settings, inline/Celery dispatch, Redis events, chat
+│   ├── src/
+│   │   ├── clip_scribe/        Engine, builder, platform configs, clip_scribe.yaml
+│   │   ├── extractor/          Scene extraction, taxonomy, tracking, scene description
+│   │   ├── parser/             LangGraph parser agents, query tools, evaluators, reports
+│   │   ├── ocr/                PaddleOCR wrapper and box consolidation
+│   │   ├── db/                 SQLAlchemy schema, engine, reader, writer
+│   │   ├── dino/               GroundingDINO wrapper (+ vendored groundingdino, third-party)
+│   │   ├── sam2/               Vendored SAM2 (third-party)
+│   │   └── utils/              Progress, artifacts, ids, logging
+│   ├── scripts/                prewarm.py + model-download helpers
+│   ├── docker/
+│   │   ├── api/                Slim, torch-free API image
+│   │   └── core/{cpu,gpu}/     Heavy Celery worker images
+│   ├── alembic/                Migration environment and versions
+│   ├── checkpoints/            Model weights (gitignored; populated by prewarm)
+│   ├── input/ artifacts/ parser_artifacts/ data/ logs/    Local I/O (gitignored)
+│   ├── main.py                 Local batch entry point
+│   └── pyproject.toml, uv.lock
+├── frontend/
+│   ├── src/
+│   │   ├── routes/             Jobs list, new job, live job, run inspector
+│   │   ├── api/                Generated OpenAPI types + client/hooks
+│   │   ├── components/         ChatPanel and shared UI
+│   │   └── lib/                State, formatting, run types
+│   ├── Dockerfile, nginx.conf  Build + nginx-serve the SPA
+│   └── package.json
+├── docs/                       web-app-plan.md, deployment.md, deep-dive docs
+├── docker-compose.yml          Full local stack (postgres, redis, migrate, prewarm, api, worker, frontend)
+└── Makefile                    setup, migrate, revision helpers
 ```
 
 ## Artifacts And Data
@@ -224,13 +284,9 @@ Generated artifacts are intentionally kept out of the core source tree:
 
 Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values. The `artifacts.max_artifact_files` setting caps per-frame PNGs only; `tracked_output.mp4` and `extraction_summary.json` are always kept. `artifacts.remote_artifact_write` defaults to `false` and currently only logs a simulated GCS bundle upload.
 
-## Current Caveats
-
+## Important
 - `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.
-- The FastAPI app has both inline and Celery dispatch paths with Redis Stream-backed SSE progress; cooperative mid-run cancellation is not implemented yet.
-- Root Makefile setup/checkpoint/clean targets are stale after the backend move; `make migrate` is the current working target.
-- Test coverage is minimal.
-- Full extraction is resource-intensive and can trigger model downloads and API calls.
+
 
 ## AI Agent Notes
 
