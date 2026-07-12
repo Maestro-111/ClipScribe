@@ -26,25 +26,12 @@ from src.clip_scribe.build_clip_scribe_plalform import build_platform
 
 if TYPE_CHECKING:
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
-    from src.db import ClipScribeReaderDB
 
 logger = logging.getLogger("clip_scribe")
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def is_canceled(reader: "ClipScribeReaderDB", job_id: str) -> bool:
-    """Return True if the job was externally canceled while running.
-
-    Cancellation marks the DB row immediately; the engine cannot yet be
-    interrupted mid-run (cooperative cancel is web-app-plan §10.10), so both
-    execution paths check this before writing a terminal status and never
-    overwrite ``canceled`` with ``completed``/``failed``.
-    """
-    job = reader.get_job(job_id)
-    return job is not None and job.get("status") == JobStatus.CANCELED.value
 
 
 def build_task_payload(
@@ -84,8 +71,6 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     from app.settings import get_settings
 
     writer = builder.writer_db
-    reader = builder.reader_db
-
     job_id = payload["job_id"]
     run_id = payload["run_id"]
     req = JobCreateRequest.model_validate(payload["req"])
@@ -95,8 +80,17 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     install_job_log_bridge(redis_url)
     token = current_job_id.set(job_id)
 
-    writer.update_job(job_id, status=JobStatus.RUNNING.value, started_at=now_iso())
     try:
+        started = writer.update_job_if_status(
+            job_id,
+            allowed_statuses=(JobStatus.QUEUED.value, JobStatus.RUNNING.value),
+            status=JobStatus.RUNNING.value,
+            started_at=now_iso(),
+        )
+        if not started:
+            logger.info("Job %s was not startable; skipping execution", job_id)
+            return
+
         platform_conf = build_platform(
             req.platform.value, **req.resolved_params.to_build_kwargs()
         )
@@ -117,17 +111,19 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
         engine.run(run_id=run_id)
     except Exception as exc:  # noqa: BLE001 - recorded on the job row
         logger.exception("Job %s failed", job_id)
-        if not is_canceled(reader, job_id):
-            writer.update_job(
-                job_id,
-                status=JobStatus.FAILED.value,
-                error_text=str(exc),
-                finished_at=now_iso(),
-            )
+        writer.update_job_if_status(
+            job_id,
+            allowed_statuses=(JobStatus.RUNNING.value,),
+            status=JobStatus.FAILED.value,
+            error_text=str(exc),
+            finished_at=now_iso(),
+        )
     else:
-        if not is_canceled(reader, job_id):
-            writer.update_job(
-                job_id, status=JobStatus.COMPLETED.value, finished_at=now_iso()
-            )
+        writer.update_job_if_status(
+            job_id,
+            allowed_statuses=(JobStatus.RUNNING.value,),
+            status=JobStatus.COMPLETED.value,
+            finished_at=now_iso(),
+        )
     finally:
         current_job_id.reset(token)

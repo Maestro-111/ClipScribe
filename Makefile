@@ -2,7 +2,7 @@ PYTHON := uv run python
 PYTHON_MODULE := uv run python -m
 PIP := uv pip install
 
-.PHONY: setup checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet migrate revision
+.PHONY: setup prewarm checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl clean run_extractor download_wordnet migrate revision
 
 # -------------------------------------------------------------------------
 # Database migrations (Alembic owns the schema; create_all was removed).
@@ -23,8 +23,12 @@ revision:
 	@cd backend && uv run alembic revision --autogenerate -m "$(m)"
 	@echo "Review the new file in backend/alembic/versions/ (delete it if empty)."
 
-setup: fix_mac_ssl checkpoints spacy dinov2 sentence_transformers download_wordnet
+setup: spacy prewarm
 	@echo "\nProject Setup Complete! You can now run the extractor."
+
+prewarm:
+	@echo "\n--- Prewarming ClipScribe model assets ---"
+	@cd backend && uv run python scripts/prewarm.py
 
 # -------------------------------------------------------------------------
 # 1. Download Model Checkpoints (DINO & SAM 2)
@@ -41,7 +45,7 @@ checkpoints:
 # -------------------------------------------------------------------------
 spacy:
 	@echo "\n--- 2. Installing spaCy Model ---"
-	@$(PIP) "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+	@cd backend && $(PIP) "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 	@echo "spaCy model installed."
 
 # -------------------------------------------------------------------------
@@ -49,7 +53,7 @@ spacy:
 # -------------------------------------------------------------------------
 dinov2:
 	@echo "\n--- 5. Pre-fetching DINOv2 Model ---"
-	@$(PYTHON) -c "import ssl; ssl._create_default_https_context = ssl._create_unverified_context; \
+	@cd backend && $(PYTHON) -c "import ssl; ssl._create_default_https_context = ssl._create_unverified_context; \
 	import torch; \
 	print('Downloading DINOv2 to cache...'); \
 	torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')"
@@ -60,7 +64,7 @@ dinov2:
 # -------------------------------------------------------------------------
 sentence_transformers:
 	@echo "\n--- 6. Pre-fetching Sentence Transformer ---"
-	@$(PYTHON) -c "from sentence_transformers import SentenceTransformer; \
+	@cd backend && $(PYTHON) -c "from sentence_transformers import SentenceTransformer; \
 		print('Caching all-MiniLM-L6-v2...'); \
 		SentenceTransformer('all-MiniLM-L6-v2')"
 	@echo "Sentence Transformer model cached."
@@ -89,13 +93,12 @@ fix_mac_ssl:
 # -------------------------------------------------------------------------
 download_wordnet:
 	@echo "Ensuring WordNet is installed..."
-	@python -c "import nltk; nltk.download('wordnet')"
+	@cd backend && $(PYTHON) -c "import nltk; nltk.download('wordnet')"
 
 clean:
 	@echo "Cleaning up..."
-	@cd backend
-	@rm -f checkpoints/*.pth
-	@rm -f checkpoints/*.pt
+	@rm -f backend/checkpoints/*.pth
+	@rm -f backend/checkpoints/*.pt
 	@echo "Checkpoints removed."
 
 .PHONY: help

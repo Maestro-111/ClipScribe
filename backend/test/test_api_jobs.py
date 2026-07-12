@@ -170,6 +170,92 @@ def test_create_job_records_failure(ctx):
     assert row["finished_at"]
 
 
+def test_canceled_job_does_not_start_if_task_later_runs(ctx):
+    _, state = ctx
+    from app.job_execution import build_task_payload, run_job_core
+    from app.models import JobCreateRequest
+    from src.utils.ids import new_ulid
+
+    req = JobCreateRequest.model_validate(_full_body())
+    job_id = new_ulid()
+    run_id = new_ulid()
+    state.writer.create_job(
+        job_id=job_id,
+        mode=req.mode.value,
+        status="canceled",
+        run_id=run_id,
+        video_name=req.video_name,
+        video_path=req.video_path,
+        platform=req.platform.value,
+        params_json=req.model_dump(mode="json"),
+    )
+
+    run_job_core(
+        state.builder,
+        build_task_payload(
+            job_id=job_id,
+            run_id=run_id,
+            req=req,
+            video_name=req.video_name,
+            video_path=req.video_path,
+            video_type=req.video_type,
+        ),
+    )
+
+    assert state.reader.get_job(job_id)["status"] == "canceled"
+    assert state.builder.built == []
+    assert state.engine.ran_with is None
+
+
+def test_canceled_running_job_is_not_marked_completed(ctx):
+    _, state = ctx
+    from app.job_execution import build_task_payload, run_job_core
+    from app.models import JobCreateRequest
+    from src.utils.ids import new_ulid
+
+    req = JobCreateRequest.model_validate(_full_body())
+    job_id = new_ulid()
+    run_id = new_ulid()
+
+    class CancelingEngine(FakeEngine):
+        def run(self, run_id: str = "") -> None:
+            self.ran_with = run_id
+            state.writer.update_job(
+                job_id,
+                status="canceled",
+                finished_at="2026-07-03T10:01:00",
+            )
+
+    state.install_service(fake_engine=CancelingEngine(), run=False)
+    state.writer.create_job(
+        job_id=job_id,
+        mode=req.mode.value,
+        status="queued",
+        run_id=run_id,
+        video_name=req.video_name,
+        video_path=req.video_path,
+        platform=req.platform.value,
+        params_json=req.model_dump(mode="json"),
+    )
+
+    run_job_core(
+        state.builder,
+        build_task_payload(
+            job_id=job_id,
+            run_id=run_id,
+            req=req,
+            video_name=req.video_name,
+            video_path=req.video_path,
+            video_type=req.video_type,
+        ),
+    )
+
+    row = state.reader.get_job(job_id)
+    assert row["status"] == "canceled"
+    assert row["finished_at"] == "2026-07-03T10:01:00"
+    assert state.engine.ran_with == run_id
+
+
 def test_create_job_missing_video_is_404(ctx):
     client, state = ctx
     resp = client.post("/jobs", json=_full_body(video_path="nope.mp4"))

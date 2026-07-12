@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, Mapping
 
 from sqlalchemy import Engine
@@ -322,6 +323,42 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 .where(jobs_table.c.job_id == job_id)
                 .values(**values)
             )
+
+    def update_job_if_status(
+        self,
+        job_id: str,
+        *,
+        allowed_statuses: Sequence[str],
+        status: str | None = None,
+        run_id: str | None = None,
+        celery_task_id: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        error_text: str | None = None,
+    ) -> bool:
+        values = {
+            key: value
+            for key, value in {
+                "status": status,
+                "run_id": run_id,
+                "celery_task_id": celery_task_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "error_text": error_text,
+            }.items()
+            if value is not None
+        }
+        if not values:
+            return False
+
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                jobs_table.update()
+                .where(jobs_table.c.job_id == job_id)
+                .where(jobs_table.c.status.in_(allowed_statuses))
+                .values(**values)
+            )
+            return result.rowcount > 0
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a job row. Returns True if a row was deleted, False if not found."""
