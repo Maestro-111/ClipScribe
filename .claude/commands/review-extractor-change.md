@@ -9,7 +9,7 @@ Use this workflow for changes touching extraction, scene description, taxonomy, 
 
 Review priorities:
 
-1. Do not inspect or modify `src/dino/groundingdino/**` or `src/sam2/**`.
+1. Do not inspect or modify `backend/src/dino/groundingdino/**` or `backend/src/sam2/**`.
 2. Confirm changes reuse existing extractor, taxonomy, OCR, and wrapper APIs.
 3. Check for hardcoded absolute paths, model names, thresholds, run ids, video names, and artifact paths.
 4. Check Python typing quality and avoid broad `dict` or `Any` where a local model or typed structure already exists.

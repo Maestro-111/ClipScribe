@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.env
+
+# Generated at build/dev time — do not hand-edit, do not commit.
+# TanStack Router writes this from src/routes/**; it appears after `pnpm dev`.
+src/routeTree.gen.ts

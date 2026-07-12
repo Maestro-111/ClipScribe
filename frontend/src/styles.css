@@ -1,0 +1,23 @@
+/* Tailwind v4: a single import pulls in the whole framework. There is no
+   tailwind.config.js in v4 — you configure theme tokens here with @theme if
+   needed. The @tailwindcss/vite plugin scans our .tsx files for class names
+   (e.g. "flex", "p-4") and generates only the CSS actually used. */
+@import "tailwindcss";
+
+/* Run-inspector video: fullscreen the wrapper (video + SVG overlay) as one
+   element so the detection boxes stay visible. When fullscreen, center the
+   video and letterbox it with object-contain; the overlay SVG (absolute
+   inset-0 with preserveAspectRatio="xMidYMid meet") letterboxes the same way
+   against the same rect, so boxes stay aligned. */
+.video-stage:fullscreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+}
+.video-stage:fullscreen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

@@ -1,0 +1,191 @@
+# ============================================================================
+# ClipScribe Configuration
+# ============================================================================
+
+paths:
+  # Directory where model checkpoint files are stored (DINO, SAM2, etc.)
+  checkpoints: checkpoints
+
+# ============================================================================
+# ClipScribe Core Settings
+# ============================================================================
+clip_scribe:
+  # --------------------------------------------------------------------------
+  # Extractor Settings
+  # --------------------------------------------------------------------------
+
+  # Execution device for all heavy models: "mps" | "cuda" | "cpu".
+  # One device for the whole pipeline (single-GPU/worker model). backend/main.py
+  # can pass a hardcoded override for local runs; the web API/worker use
+  # CLIPSCRIBE_DEVICE. MTCNN is always CPU internally. Falls back to cpu with a
+  # warning if the requested device is unavailable.
+  device: "mps"
+
+  extractor:
+    # SBERT cosine similarity threshold for mapping raw DINO labels to canonical taxonomy targets
+    # Lower = more lenient matching (e.g., "sedan" matches "car")
+    # Range: 0.0-1.0. Default: 0.4
+    word_similarity_threshold: 0.35
+
+    # DINOv2 visual similarity threshold for merging objects with SAME labels across shots
+    # Higher = stricter identity matching (reduces false merges of similar-looking objects)
+    # Range: 0.0-1.0. Default: 0.6
+    label_match_merge_threshold: 0.6
+
+    # DINOv2 visual similarity threshold for merging objects with DIFFERENT labels across shots
+    # Very high threshold acts as "visual override" when labels disagree but appearance is identical
+    # Range: 0.0-1.0. Default: 0.85
+    label_no_match_merge_threshold: 0.85
+
+    # Number of frames to track detected objects before running detection again
+    # Higher = faster processing but may miss new objects appearing mid-shot
+    # Range: 1-30 frames. Default: 10
+    detection_interval: 8
+
+    # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
+    # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
+    # Range: 10-50 frames. Default: 20
+    reid_model_frame_check_freq: 7
+
+    # DINOv2 viewpoint-novelty gate for accumulating re-ID embeddings within a shot
+    # A new embedding is folded into an object's running mean only when its cosine
+    # similarity to the current mean is BELOW this value (i.e. a sufficiently new angle).
+    # Lower = stricter (keep only very different views); higher = accumulate more readily.
+    # Range: 0.0-1.0. Default: 0.8
+    reid_similarity_difference: 0.8
+
+
+    # model to guess the closes video type
+    video_matcher:
+      llm: "gpt-5.4"
+
+  # --------------------------------------------------------------------------
+  # Parser Settings
+  # --------------------------------------------------------------------------
+  parser:
+    # LLM model for agentic feature evaluation
+    agent:
+      llm: "gpt-5.4"
+      temperature: 0.2
+      max_tokens: 1000
+      max_retries: 10
+
+    # Output directory for parser reports (relative to project root)
+    output_dir: "parser_artifacts"
+
+    # Maximum number of parallel LangGraph agents to run concurrently
+    max_parallel_agents: 5
+
+    # agent max reasoning steps
+    recursion_limit: 50
+
+# ============================================================================
+# GroundingDINO Object Detection
+# ============================================================================
+dino:
+  # Text-to-image grounding confidence threshold (how well text prompt matches image regions)
+  # Lower = more detections but noisier. Higher = fewer false positives
+  # Range: 0.0-1.0. Default: 0.45
+  dino_text_conf: 0.3
+
+  # Bounding box confidence threshold for object proposals
+  # Lower = more detections. Higher = only high-confidence boxes
+  # Range: 0.0-1.0. Default: 0.4
+  dino_box_conf: 0.3
+
+  # GroundingDINO model size: 'tiny', 'base'
+  # Larger model is more accurate but slower and requires more VRAM
+  dino_size: base
+
+# ============================================================================
+# Face Detection (MTCNN)
+# ============================================================================
+face_detection:
+  # MTCNN face detection confidence threshold
+  # Higher = only very clear faces detected (reduces false positives from profiles/occlusions)
+  # Range: 0.0-1.0. Default: 0.95
+  torch_face_cong: 0.95
+
+# ============================================================================
+# Dynamic Taxonomy Generation (LLM)
+# ============================================================================
+taxonomy:
+  # Maximum number of canonical object targets the LLM generates per scene
+  # Higher = more granular taxonomy but slower LLM calls and more complex matching
+  # Range: 50-500. Default: 300
+  taxonomy_objects_num: 300
+
+  hint_generation:
+    # LLM model used to infer fallback hints from the video filename when enabled
+    model: "gpt-5.4"
+
+  target_generation:
+    # LLM model used to generate scene-specific taxonomy targets
+    model: "gpt-5.4"
+
+# ============================================================================
+# Audio Transcription (Whisper)
+# ============================================================================
+audio:
+  # Minimum confidence threshold for Whisper transcription segments
+  # Derived from exp(avg_logprob). Lower = keeps more segments but may include hallucinations
+  # Range: 0.0-1.0. Default: 0.4
+  audio_confidence: 0.4
+
+# ============================================================================
+# SAM2 Segmentation & Tracking
+# ============================================================================
+sam2:
+  # SAM2 model size: 'tiny', 'small', 'base_plus', 'large'
+  # Larger models produce better masks but are slower and require more VRAM
+  # 'tiny' is recommended for real-time or resource-constrained environments
+  size: tiny
+
+# ============================================================================
+# Scene Analysis (GPT Vision)
+# ============================================================================
+scene_analysis:
+  # GPT model for vision-based scene description
+  model: "gpt-5.4"
+
+  # Minimum number of frames to sample per shot (ensures at least some coverage)
+  min_samples: 1
+
+  # Maximum number of frames to sample per shot (caps processing cost)
+  max_samples: 12
+
+  # Sampling rate multiplier for sqrt-based adaptive sampling
+  # Formula: num_samples = max(min_samples, min(max_samples, ceil(sampling_rate * sqrt(duration_sec))))
+  # Higher = more frames sampled for longer shots
+  # Default: 2.0 gives: 0.5s→2, 1s→2, 2s→3, 5s→5, 10s→7, 20s→9, 30s→11, 60s→12
+  sampling_rate: 2.0
+
+  # Maximum frame dimension (width or height) for resizing before sending to GPT
+  # Smaller = lower token cost but less detail. Recommended: 512-1024
+  max_frame_dim: 512
+
+  # OpenAI image detail mode: "low" (85 tokens/image) or "high" (variable, higher cost)
+  image_detail: "low"
+
+# ============================================================================
+# Artifacts
+# ============================================================================
+artifacts:
+  # Cap on per-frame visualization PNGs written per run (DINO/OCR/face viz).
+  # null = unlimited. The tracked mp4 and extraction_summary.json are always
+  # kept. Keeps the per-run artifact directory bounded for long videos.
+  max_artifact_files: 350
+
+  # When true, the finished run's artifact directory is bundled and uploaded to
+  # remote storage (GCS) at the end of the pipeline. Currently SIMULATED (logs
+  # the upload it would perform); flip to true to exercise the call site.
+  remote_artifact_write: false
+
+# ============================================================================
+# Database Storage
+# ============================================================================
+database:
+  # Which database backend to use: "sqlite" or "postgresql"
+  backend: "sqlite"
+  pool_size: 5
+  max_overflow: 10

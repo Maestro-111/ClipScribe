@@ -9,35 +9,46 @@ Use this workflow to prepare or inspect the local development environment.
 
 1. Read `CLAUDE.md` or `AGENTS.md` before making changes.
 2. Confirm the requested setup scope from the user input: `$ARGUMENTS`.
-3. Prefer lightweight checks first:
+3. Run Python project commands from `backend/` unless explicitly using the root `Makefile`.
+4. Prefer lightweight checks first:
 
 ```bash
 uv --version
 uv run python --version
 ```
 
-4. Install project dependencies when requested:
+5. Install project dependencies when requested:
 
 ```bash
 uv sync
 ```
 
-5. Install development tools when requested:
+6. Install development tools when requested:
 
 ```bash
 uv sync --extra dev
 ```
 
-6. Do not run heavyweight setup without explicit user approval:
+7. Install frontend dependencies when the setup scope includes the dashboard:
 
 ```bash
-make setup
-make checkpoints
+(cd ../frontend && pnpm install && pnpm gen:api)
 ```
 
-7. Check environment variables only at the level needed for the task:
+`pnpm gen:api` requires the FastAPI app to be running on `localhost:8000`.
+
+8. Apply database migrations when preparing a fresh database:
+
+```bash
+uv run alembic upgrade head
+```
+
+9. Do not run heavyweight setup without explicit user approval. `make setup`, `make prewarm`, and `make checkpoints` are valid root-level helpers, but they can download several GB into `backend/checkpoints/`.
+
+10. Check environment variables only at the level needed for the task:
    - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work.
-   - `POSTGRESQL_URL` when `database.backend` is `postgresql`.
+   - `CLIPSCRIBE_DB_BACKEND` when overriding the configured database backend.
+   - `POSTGRESQL_URL` when the resolved database backend is `postgresql`.
    - `SQLITE_URL` only when using SQLite.
 
 Report what was verified, what changed, and any missing setup.

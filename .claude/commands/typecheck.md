@@ -5,7 +5,7 @@ argument-hint: "[optional module or file]"
 
 # Typecheck
 
-Use this workflow for mypy and typing cleanup.
+Use this workflow for mypy and typing cleanup. Run the commands below from the `backend/` directory (the Python project lives in `backend/` in this monorepo).
 
 1. Keep changes inside existing modules whenever practical. Do not create new abstraction layers just to satisfy mypy.
 2. Prefer precise annotations over `Any`; use `TypedDict`, dataclasses, Pydantic models, protocols, or concrete generics when they match existing code.
