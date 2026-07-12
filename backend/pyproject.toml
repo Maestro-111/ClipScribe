@@ -3,7 +3,7 @@ name = "clip_scribe"
 version = "1.0.0"
 requires-python = ">=3.12"
 
-# main project dependencies are for the dev to run the core locally. each part has its own dependency-group
+# main project dependencies are for the developer to run the core pipeline locally. each part has its own dependency-group
 dependencies = [
     "colorlog>=6.10.1",
     "hydra-core>=1.3.2",
@@ -55,13 +55,63 @@ dev = [
     "fakeredis>=2.20.0"
 ]
 
-# Slim dependency set for the eventual API-only container image (web-app-plan
-# §8). Install with `uv sync --only-group api` — unlike an extra, --only-group
-# EXCLUDES the heavy main dependencies (torch/whisper/paddleocr), so the API
-# image never pulls the ML stack. Before using it for the full API surface, add
-# the advisory-chat LLM dependencies (`langgraph`, `langchain-openai`) or keep
-# chat disabled in that image.
+# Dependency set for the slim API container image (docker/api, web-app-plan §8).
+# Install with `uv sync --only-group api` — unlike an extra, --only-group
+# EXCLUDES the heavy main dependencies (paddleocr/whisper/sam2/dino/opencv), so
+# the API image never pulls the pipeline ML stack. It DOES include the
+# advisory-chat LLM libraries (`langgraph`, `langchain-openai`) so the API can
+# serve `/runs/{id}/chat`.
 [dependency-groups]
+# Runtime dependency set for the heavy Celery worker container image
+# (docker/core). It is a dependency-group (not an extra) for the same reason as
+# `api`: groups install in ISOLATION via `uv pip install --group worker`, so the
+# image gets exactly this curated set and NOT the base `[project.dependencies]`
+# superset. It is the full pipeline ML stack plus `psycopg2-binary` for Postgres
+# writes. The only base dep intentionally omitted is `types-PyYAML` (a mypy stub,
+# not needed at runtime). NOTE: `yapf` IS required at runtime — the vendored
+# GroundingDINO code imports it (src/dino/groundingdino/util/slconfig.py) — so it
+# stays here despite looking like formatter-only tooling. The worker Dockerfile
+# installs this with `--extra-index-url https://download.pytorch.org/whl/cpu` for
+# CPU torch; the GPU variant swaps the base image + a CUDA torch index.
+worker = [
+    "colorlog>=6.10.1",
+    "hydra-core>=1.3.2",
+    "iopath>=0.1.10",
+    "opencv-python>=4.13.0.90",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "transformers",
+    "supervision>=0.22.0",
+    "paddleocr>=2.0.1",
+    "scikit-learn>=1.8.0",
+    "spacy>=3.8.11",
+    "scenedetect>=0.6.7.1",
+    "python-dotenv>=1.2.1",
+    "openai-agents>=0.7.0",
+    "pydantic>=2.12.5",
+    "nltk>=3.9.2",
+    "sentence-transformers>=5.2.2",
+    "facenet-pytorch>=2.5.3",
+    "openai-whisper>=20250625",
+    "paddlepaddle",
+    "addict",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "yapf",
+    "pycocotools",
+    "timm",
+    "PyYAML==6.0.3",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.18.5",
+    "python-ulid>=3.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "celery>=5.3.0",
+    "redis>=5.0.0",
+    "psycopg2-binary>=2.9.0",
+]
+
 api = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
@@ -75,6 +125,8 @@ api = [
     "psycopg2-binary>=2.9.0",
     "celery>=5.3.0",
     "redis>=5.0.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
 ]
 
 [build-system]

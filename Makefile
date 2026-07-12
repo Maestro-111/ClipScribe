@@ -23,7 +23,7 @@ revision:
 	@cd backend && uv run alembic revision --autogenerate -m "$(m)"
 	@echo "Review the new file in backend/alembic/versions/ (delete it if empty)."
 
-setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
+setup: fix_mac_ssl checkpoints spacy dinov2 sentence_transformers download_wordnet
 	@echo "\nProject Setup Complete! You can now run the extractor."
 
 # -------------------------------------------------------------------------
@@ -31,10 +31,9 @@ setup: checkpoints spacy blip dinov2 sentence_transformers fix_mac_ssl
 # -------------------------------------------------------------------------
 checkpoints:
 	@echo "\n--- 1. Downloading Checkpoints ---"
-	@cd backend
-	@$(PYTHON) checkpoints/download_dino.py
-	@chmod +x checkpoints/download_sam_ckpts.sh
-	@cd checkpoints && ./download_sam_ckpts.sh
+	@cd backend && $(PYTHON) scripts/download_dino.py
+	@chmod +x backend/scripts/download_sam_ckpts.sh
+	@bash backend/scripts/download_sam_ckpts.sh
 	@echo "Checkpoints downloaded."
 
 # -------------------------------------------------------------------------

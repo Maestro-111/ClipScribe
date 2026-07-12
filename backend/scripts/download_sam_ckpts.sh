@@ -6,6 +6,13 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+# Download into backend/checkpoints/ (one level up from this scripts/ dir),
+# created if missing, regardless of the current working directory.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CKPT_DIR="$SCRIPT_DIR/../checkpoints"
+mkdir -p "$CKPT_DIR"
+cd "$CKPT_DIR"
+
 # Use either wget or curl to download the checkpoints
 if command -v wget &> /dev/null; then
     CMD="wget"
@@ -43,17 +50,17 @@ sam2p1_hiera_s_url="${SAM2p1_BASE_URL}/sam2.1_hiera_small.pt"
 sam2p1_hiera_b_plus_url="${SAM2p1_BASE_URL}/sam2.1_hiera_base_plus.pt"
 sam2p1_hiera_l_url="${SAM2p1_BASE_URL}/sam2.1_hiera_large.pt"
 
- SAM 2.1 checkpoints
+# SAM 2.1 checkpoints
 echo "Downloading sam2.1_hiera_tiny.pt checkpoint..."
 $CMD $sam2p1_hiera_t_url || { echo "Failed to download checkpoint from $sam2p1_hiera_t_url"; exit 1; }
 
 echo "Downloading sam2.1_hiera_small.pt checkpoint..."
 $CMD $sam2p1_hiera_s_url || { echo "Failed to download checkpoint from $sam2p1_hiera_s_url"; exit 1; }
 
-echo "Downloading sam2.1_hiera_base_plus.pt checkpoint..."
-$CMD $sam2p1_hiera_b_plus_url || { echo "Failed to download checkpoint from $sam2p1_hiera_b_plus_url"; exit 1; }
-
-echo "Downloading sam2.1_hiera_large.pt checkpoint..."
-$CMD $sam2p1_hiera_l_url || { echo "Failed to download checkpoint from $sam2p1_hiera_l_url"; exit 1; }
+#echo "Downloading sam2.1_hiera_base_plus.pt checkpoint..."
+#$CMD $sam2p1_hiera_b_plus_url || { echo "Failed to download checkpoint from $sam2p1_hiera_b_plus_url"; exit 1; }
+#
+#echo "Downloading sam2.1_hiera_large.pt checkpoint..."
+#$CMD $sam2p1_hiera_l_url || { echo "Failed to download checkpoint from $sam2p1_hiera_l_url"; exit 1; }
 
 echo "All checkpoints are downloaded successfully."

@@ -115,6 +115,9 @@ dmypy.json
 cython_debug/
 
 # --- ClipScribe pipeline outputs & weights ---
+# The whole model-weights dir is generated (downloaded by scripts/prewarm.py or
+# the scripts/download_*.py helpers); containers/code mkdir it as needed.
+checkpoints/
 *.pt
 *.pth
 *.faiss

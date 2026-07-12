@@ -21,8 +21,10 @@ def resolve_database_url() -> str:
     """Resolve the active database URL from config + environment.
 
     Single source of truth shared by the builder's ``_assemble_db`` and the
-    Alembic ``env.py`` so the two never drift. Mirrors the original inline
-    logic: read ``database.backend`` from ``clip_scribe.yaml``; for sqlite use
+    Alembic ``env.py`` so the two never drift. Resolution order for the backend:
+    ``CLIPSCRIBE_DB_BACKEND`` env var (so the Docker/compose stack and prod can
+    force ``postgresql`` without editing yaml), else ``database.backend`` from
+    ``clip_scribe.yaml`` (default ``sqlite`` for local CLI dev). For sqlite use
     ``SQLITE_URL`` (default ``sqlite:///data/clip_scribe.db``) resolved against
     the project root; for postgresql require ``POSTGRESQL_URL``.
     """
@@ -33,6 +35,10 @@ def resolve_database_url() -> str:
         backend = cfg.get("database", {}).get("backend", "sqlite")
     except FileNotFoundError:
         pass
+
+    # Env override wins over yaml so a containerized/prod deployment can select
+    # Postgres via CLIPSCRIBE_DB_BACKEND while local CLI runs keep the yaml default.
+    backend = os.environ.get("CLIPSCRIBE_DB_BACKEND", backend)
 
     if backend == "sqlite":
         db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")

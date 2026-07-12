@@ -1,3 +1,19 @@
+# Local ClipScribe stack. Two ways to use it:
+#
+#   Full stack (CPU worker):
+#     docker compose build
+#     docker compose up      # the one-shot `prewarm` service fetches model weights first
+#
+#   Hybrid dev (native MPS worker, fast on Mac): run only the infra here and run
+#   the API + worker + frontend natively — `docker compose up postgres redis`.
+#   See README "Running with Docker".
+#
+# Every build uses the repository root as context so the Dockerfiles can COPY
+# both backend/ and frontend/. Secrets + non-network knobs come from the
+# repo-root .env via `env_file`; the network-sensitive vars (POSTGRESQL_URL,
+# REDIS_URL) and CLIPSCRIBE_DEVICE are overridden per service with in-container
+# service names, since .env holds the native-host values (web-app-plan §8).
+
 services:
   postgres:
     image: postgres:16
@@ -9,16 +25,127 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipscribe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # Celery broker + result backend, and the live-progress Redis Streams store.
-  # In local dev the worker can run natively on the Mac for MPS, so it reaches
-  # Redis at localhost:6379 via this host port mapping (web-app-plan §12).
+  # In hybrid dev the native worker reaches Redis at localhost:6379 via this host
+  # port mapping (web-app-plan §12).
   redis:
     image: redis:7
     ports:
       - "6379:6379"
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot schema migration. Runs `alembic upgrade head` once from the slim API
+  # image (has src/db + alembic, no ML deps) — not per api/worker replica, since
+  # all replicas share one DB (web-app-plan §4). api/worker wait for it to finish.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/docker/api/Dockerfile
+    env_file: .env
+    environment:
+      CLIPSCRIBE_DB_BACKEND: postgresql
+      POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/docker/api/Dockerfile
+    env_file: .env
+    environment:
+      CLIPSCRIBE_JOB_BACKEND: celery
+      CLIPSCRIBE_DB_BACKEND: postgresql
+      POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
+      REDIS_URL: redis://redis:6379/0
+      CLIPSCRIBE_CORS_ORIGINS: http://localhost:5173
+    # Share the artifact + input directories with the worker so the API can serve
+    # run videos/artifacts the worker wrote (local-disk coupling; deployment.md
+    # replaces this with GCS).
+    volumes:
+      - ./backend/artifacts:/app/backend/artifacts
+      - ./backend/input:/app/backend/input
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # One-shot model prefetch, mirroring `migrate`. Runs prewarm.py in the worker
+  # image, populating the shared checkpoints volume before the worker starts, so
+  # `docker compose up` self-provisions weights with no manual step. First run
+  # downloads several GB; later runs short-circuit on the .prewarm_complete
+  # marker (delete it or run `... python scripts/prewarm.py --force` to refetch).
+  prewarm:
+    build:
+      context: .
+      dockerfile: backend/docker/core/cpu/Dockerfile
+    # paddlepaddle publishes no linux/arm64 wheel, so the worker image is x86_64
+    # (also the GKE deploy target). On Apple Silicon this runs under emulation —
+    # fine for the CPU worker, which is smoke-test-only (fast path is Mode 2).
+    platform: linux/amd64
+    env_file: .env
+    command: ["python", "scripts/prewarm.py"]
+    volumes:
+      - ./backend/checkpoints:/app/backend/checkpoints
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/docker/core/cpu/Dockerfile
+    platform: linux/amd64
+    env_file: .env
+    environment:
+      CLIPSCRIBE_JOB_BACKEND: celery
+      CLIPSCRIBE_DB_BACKEND: postgresql
+      # CPU inside the Linux container (no MPS). Run the worker NATIVELY for MPS.
+      CLIPSCRIBE_DEVICE: cpu
+      POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Persist model weights across restarts (populated by the prewarm service);
+      # the dino/sam .pth already on the host appear here immediately.
+      - ./backend/checkpoints:/app/backend/checkpoints
+      - ./backend/artifacts:/app/backend/artifacts
+      - ./backend/input:/app/backend/input
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      prewarm:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
 
 volumes:
   pgdata:

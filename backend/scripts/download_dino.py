@@ -1,6 +1,11 @@
 import os
 import requests
 import sys
+from pathlib import Path
+
+# GroundingDINO weights are written to backend/checkpoints/ (one level up from
+# this scripts/ dir), created if missing, regardless of the current directory.
+CHECKPOINTS_DIR = Path(__file__).resolve().parents[1] / "checkpoints"
 
 # Configuration: List of models to download
 # We use Hugging Face mirrors for both as they are more stable/accessible than GitHub
@@ -60,10 +65,10 @@ def download_file(url, dest_path, min_size_mb):
 
 
 if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Checking {len(MODELS)} GroundingDINO models...")
 
     for model_config in MODELS:
-        target_path = os.path.join(script_dir, model_config["filename"])
+        target_path = os.path.join(CHECKPOINTS_DIR, model_config["filename"])
         download_file(model_config["url"], target_path, model_config["min_size_mb"])

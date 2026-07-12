@@ -29,7 +29,7 @@ class DinoDetector:
         else:
             raise ValueError("dino_type must be 'tiny' or 'base'")
 
-        logger.info(f"configured paths for {dino_type} dino")
+        logger.info(f"configured paths for {dino_type} Grounding DINO")
         logger.info(f"config_path {config_path}; weights_path {weights_path}")
 
         self.model = load_model(

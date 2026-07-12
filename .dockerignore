@@ -1,0 +1,34 @@
+# Build context is the repository root for every image (backend api/core,
+# frontend), so this single ignore file keeps caches, local artifacts, and
+# secrets out of all build contexts.
+
+# VCS / tooling
+.git
+.gitignore
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+
+# Backend local state (mounted at runtime, never baked)
+backend/artifacts/
+backend/parser_artifacts/
+backend/logs/
+backend/data/
+backend/input/
+# Model weights are large and never baked into an image; the worker container
+# creates checkpoints/ (bind-mounted in dev) and prewarm.py populates it.
+backend/checkpoints/
+
+# Node / frontend build output (reinstalled/rebuilt inside the image)
+**/node_modules/
+frontend/dist/
+frontend/.tanstack/
+
+# Secrets — provided at runtime via env_file / Secret Manager, not build args
+.env
+**/*.env
