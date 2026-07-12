@@ -106,7 +106,7 @@ the next section turns into per-frame decisions.
 ## 4. `_save_metadata`: turning masks into records
 
 Called once per propagated frame. It records OCR text, appends raw detection
-rows for the future UI overlay, and, per object, stores a bounding box +
+rows for the run-inspector overlay, and, per object, stores a bounding box +
 optional embedding.
 
 ### 4.1 Text (the easy half)

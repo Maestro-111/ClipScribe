@@ -43,11 +43,12 @@ uv sync --extra dev
 uv run alembic upgrade head
 ```
 
-9. Do not run heavyweight setup without explicit user approval. The root `Makefile` setup/checkpoint/clean targets are stale after the backend move, so verify or fix them before relying on them.
+9. Do not run heavyweight setup without explicit user approval. `make setup`, `make prewarm`, and `make checkpoints` are valid root-level helpers, but they can download several GB into `backend/checkpoints/`.
 
 10. Check environment variables only at the level needed for the task:
    - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work.
-   - `POSTGRESQL_URL` when `database.backend` is `postgresql`.
+   - `CLIPSCRIBE_DB_BACKEND` when overriding the configured database backend.
+   - `POSTGRESQL_URL` when the resolved database backend is `postgresql`.
    - `SQLITE_URL` only when using SQLite.
 
 Report what was verified, what changed, and any missing setup.

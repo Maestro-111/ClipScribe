@@ -16,7 +16,7 @@ Rules:
 - Prefer existing SQLAlchemy schema, reader, and writer APIs over direct SQL.
 - Keep database work typed and explicit about returned shapes.
 - Avoid destructive data operations unless the user explicitly requests them.
-- Do not hardcode database URLs. Use `POSTGRESQL_URL`, `SQLITE_URL`, or configured defaults.
+- Do not hardcode database URLs. Use `CLIPSCRIBE_DB_BACKEND`, `POSTGRESQL_URL`, `SQLITE_URL`, or configured defaults.
 - Preserve compatibility between SQLite and PostgreSQL where the code already supports both.
 - Schema changes must update `backend/src/db/schema.py` and an Alembic revision; runtime `create_all` is not used.
 

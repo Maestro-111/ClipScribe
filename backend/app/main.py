@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.job_backend == "celery":
         # The API enqueues to a worker (web-app-plan §10.8); it needs DB access
         # but NEVER the ML models. Build a standalone reader/writer only — this
-        # is also the shape the step-11 slim API image ships with.
+        # is also the shape the slim API image ships with.
         from src.db import (
             ClipScribeReaderDB,
             ClipScribeWriterDB,

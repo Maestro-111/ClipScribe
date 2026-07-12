@@ -66,7 +66,7 @@ class YouTubePlatformParams(BasePlatformParams):
 
 
 # platform -> its params model. The single registry the request validator, the
-# job service, and (future) the /platforms spec all key off of.
+# job service, and the /platforms metadata spec all key off of.
 PLATFORM_PARAMS_MODELS: dict[PlatformName, type[BasePlatformParams]] = {
     PlatformName.YOUTUBE: YouTubePlatformParams,
 }

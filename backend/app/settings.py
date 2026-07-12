@@ -1,10 +1,10 @@
 """Runtime configuration for the web API process.
 
-Read from the environment so the same code runs as a native dev process, a
-docker-compose service, or (later) a slim API container. Paths resolve against
+Read from the environment so the same code runs as a native dev process,
+docker-compose service, or slim API container. Paths resolve against
 the backend root the same way ``build_clip_scribe.PROJECT_ROOT`` does, so the
 API, the CLI, and the worker all agree on where ``input/`` and ``artifacts/``
-live even when the container split lands (web-app-plan §2, §8, §9).
+live in both native and containerized runs (web-app-plan §2, §8, §9).
 """
 
 from __future__ import annotations

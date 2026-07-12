@@ -8,12 +8,12 @@
 # (CUDA base + CUDA torch index).
 #
 # Model WEIGHTS are NOT baked here. In dev they arrive via the mounted
-# ./backend/checkpoints volume and are fetched once with `scripts/prewarm.py`
-# (`docker compose run --rm worker python scripts/prewarm.py`). A prod image can
-# add a `RUN python scripts/prewarm.py` step to bake them into a layer.
+# ./backend/checkpoints volume and are fetched once by the compose `prewarm`
+# service (`docker compose run --rm prewarm python scripts/prewarm.py --force`
+# to refetch). The GPU Dockerfile bakes them into a layer for deployment.
 #
 # Build context is the REPOSITORY ROOT:
-#   docker build -f backend/docker/core/Dockerfile -t clipscribe-worker .
+#   docker build -f backend/docker/core/cpu/Dockerfile -t clipscribe-worker .
 
 FROM python:3.12-slim
 

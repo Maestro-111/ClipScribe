@@ -40,7 +40,7 @@ carries over unchanged:
 - **Load-once builder** (`web-app-plan` §3). Model loading is amortized across
   every job a worker process handles. This is what makes a *warm* worker pool
   (below) worth it.
-- **Artifact-upload seam already exists** (`web-app-plan` §9.2). `src/utils/artifacts.py`
+- **Artifact-upload seam already exists** (`web-app-plan` §9.2). `backend/src/utils/artifacts.py`
   has an `ArtifactUploader` with a `SimulatedGCSArtifactUploader` that currently
   logs the `gs://…/<run_id>/artifacts.tar.gz` it *would* push. Swapping in a real
   GCS client is a drop-in, no call-site change.
@@ -164,7 +164,7 @@ per artifact.
 A standard CPU `Deployment` behind a GKE Ingress/Gateway with a managed
 certificate. Stateless — scale on CPU/RPS with the HPA. In `celery` mode it
 loads only the DB reader/writer and a Redis client, so pods start in seconds and
-the image is the slim `docker/api` one (`web-app-plan` §8).
+the image is the slim `backend/docker/api` one (`web-app-plan` §8).
 
 One caveat carried from `web-app-plan` §12: **SSE + timeouts.** `GET
 /jobs/{id}/events` is a long-lived stream. Configure the load balancer /
@@ -356,8 +356,9 @@ Each step is independently shippable and de-risks the next.
    status aggregation + UI batch view.
 3. **Cooperative cancel** (`web-app-plan` §10.10) — needed before batches are
    exposed, so cancel actually frees GPUs.
-4. **Containerize for GKE** — finish the `docker/api` (slim) and `docker/core`
-   (heavy, baked weights) images (`web-app-plan` §8, §10.11).
+4. **Adapt the existing containers for GKE** — publish the slim API image and
+   the baked-weight CUDA worker image, then add deployment manifests/release jobs
+   around them (`web-app-plan` §8, §10.11).
 5. **GKE cluster + managed services** — GPU node pool (tainted, driver DaemonSet),
    Memorystore, Cloud SQL, GCS buckets, Artifact Registry, Secret Manager,
    Ingress. Alembic release Job.

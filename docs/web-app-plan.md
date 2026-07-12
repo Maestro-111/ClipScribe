@@ -22,14 +22,14 @@ to make before that piece is built.
 
 Current checked-in state: the backend relocation, Alembic migrations,
 load-once builder, progress seam, raw detection persistence, the FastAPI app,
-and **Celery/Redis job dispatch** have landed. `POST /jobs` runs either
+**Celery/Redis job dispatch**, and the Docker split have landed. `POST /jobs` runs either
 in-process (single-slot executor) or via a Redis-backed Celery worker, selected
 by `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, job
 polling/progress, read-only run views, advisory chat, artifact serving, health,
 and metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
 /jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
-Cooperative mid-run interruption and the final Docker split are still planned.
+Cooperative mid-run interruption is still planned.
 
 ---
 
@@ -81,14 +81,14 @@ Cooperative mid-run interruption and the final Docker split are still planned.
 
 ## 2. Repo restructure (monorepo)
 
-**Status: PARTIAL.** The Python project, FastAPI app, frontend bootstrap,
-Celery/Redis dispatch, and SSE progress pieces now live in the monorepo. The
-final Docker image contents remain planned.
+**Status: DONE for the current local/container split.** The Python project,
+FastAPI app, frontend bootstrap, Celery/Redis dispatch, SSE progress pieces,
+and Docker image split now live in the monorepo.
 
 ```
 clipscribe/
   backend/                        # Python project
-    pyproject.toml                # root of the uv project; readme line removed
+    pyproject.toml                # root of the uv project
     uv.lock
     main.py                       # CLI entry — instantiates ClipScribeBuilder and runs one job
     src/                          # existing core, paths unchanged
@@ -106,11 +106,15 @@ clipscribe/
       events.py                   # Redis Streams progress helpers + log bridge
     docker/
       api/
-        Dockerfile                # existing placeholder for slim API image
+        Dockerfile                # slim API image; also runs migrate
         deploy.sh
       core/
-        Dockerfile                # existing placeholder for heavy worker image
-        deploy.sh
+        cpu/
+          Dockerfile              # heavy CPU worker/prewarm image
+          deploy.sh
+        gpu/
+          Dockerfile              # heavy CUDA worker image; weights baked
+          deploy.sh
     checkpoints/                  # all model weights live here (see §8)
     data/                         # SQLite db lives here
     input/                        # video inputs for CLI / picker
@@ -123,7 +127,7 @@ clipscribe/
       components/                 # ChatPanel and reusable UI pieces
     package.json
     vite.config.ts
-  docker-compose.yml              # Postgres + Redis scaffolding (worker/api still native)
+  docker-compose.yml              # full local stack: postgres, redis, migrate, prewarm, api, worker, frontend
   Makefile
   docs/web-app-plan.md            # this file
 ```
@@ -139,10 +143,11 @@ Notes on the layout as it stands:
   without code changes.
 - Pre-commit must be invoked from `backend/` because the config lives at
   `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
-- The root `Makefile` is still partially broken (setup/checkpoint/clean targets
-  reference paths that moved and `setup` still depends on removed `blip`).
-  `make migrate` is the reliable target because it delegates to
-  `cd backend && uv run alembic upgrade head`.
+- The root `Makefile` delegates into `backend/`: `make migrate` applies
+  Alembic migrations, while `make setup`, `make prewarm`, and
+  `make checkpoints` fetch or verify model assets under `backend/checkpoints/`.
+  The model setup targets are intentionally heavyweight and can download several
+  GB.
 
 ---
 
@@ -202,11 +207,11 @@ Key consequences:
 - **`taxonomy_user_hints` is still a constructor arg of
   `VideoInformationExtractor`** — that's fine because the extractor is
   recreated per job.
-- **CLI is unchanged.** `main.py` still does
-  `builder = ClipScribeBuilder()` then
-  `builder.build_clip_scribe(...).run(run_id=...)` — same two lines as
-  before. Wall-clock for a single video is identical to pre-refactor; the
-  win shows up the moment a second job runs in the same process.
+- **CLI entry remains hardcoded.** `backend/main.py` still instantiates one
+  `ClipScribeBuilder`, builds one `ClipScribeEngine`, and runs it; the video,
+  mode, platform params, run id, and optional device override are edited in the
+  file. Wall-clock for a single video is identical to pre-refactor; the win
+  shows up the moment a second job runs in the same process.
 
 ### Boot vs per-job, current state
 
@@ -227,8 +232,8 @@ Key consequences:
   arrive as call args.
 - Device is no longer a per-job argument. `ClipScribeBuilder(device=...)`
   resolves one process-wide pipeline device at boot: the web API and Celery
-  worker pass `CLIPSCRIBE_DEVICE`, while `main.py` falls back to
-  `clip_scribe.device` from yaml.
+  worker pass `CLIPSCRIBE_DEVICE`, while `backend/main.py` passes its hardcoded
+  local override or can omit it to fall back to `clip_scribe.device` from yaml.
 - `combined_hints` derivation (only OpenAI-roundtrip if
   `generate_hint_from_name=True`).
 - Fresh `GPTSceneDescriber` (cheap — OpenAI client wrapper, not a model).
@@ -247,11 +252,8 @@ by task name, the worker loads one long-lived `ClipScribeBuilder` per process
 (`worker_process_init` or lazy first task for `--pool=solo`), and both inline
 and celery paths call the same `run_job_core(...)` lifecycle.
 
-### What still needs to happen in this area later (tracked elsewhere)
+### Remaining cleanup in this area
 
-- Pass `download_root` to `whisper.load_model` and the equivalent dirs to
-  `OCRSystem` so all weight downloads land under
-  `backend/checkpoints/` instead of `~/.cache/...` (§8).
 - Optional cleanup: move `hint_generation_model` and `scene_detection_model`
   string resolution into `__init__` for consistency with
   `target_generation_model`. Cost-neutral.
@@ -536,50 +538,47 @@ and advisory chat.
 - TanStack Router (file-based; cleaner than React Router for app-shell apps).
 - TanStack Query for REST data + `EventSource` for SSE.
 - Zustand (or just `useReducer`) for the per-job live state.
-- Tailwind + shadcn/ui for components.
-- visx or d3-scale for the timeline (don't bring full d3 unless needed).
+- Tailwind v4 utilities for components; shadcn/ui remains deferred.
+- Lightweight custom timeline rendering; no charting library is currently needed.
 - Type-safe API client from OpenAPI (`openapi-typescript` + `openapi-fetch`).
 
 ### Pages
 
 1. **Jobs list** (`/`)
-   - Table of jobs (status, video_name, created_at, duration, ABCD pass rate
-     when available).
-   - Filters: status, platform, date range, brand.
+   - Table of jobs (video, status/progress, platform, mode, created time,
+     duration, and lifecycle actions).
+   - Status filter.
    - "New job" button.
 
 2. **New job** (`/jobs/new`)
-   - Form mirroring `main.py:26–57` (`platform_params`, `user_hints`,
-     `video_type`, `mode`, `platform`). Device is shown from `/defaults` as
-     read-only app configuration, not submitted in the job request.
+   - Form for user-facing `full` jobs: `platform_params`, `user_hints`,
+     `video_type`, and `platform`. `extract` and parser-only `parse` remain
+     API/developer paths. Device is process configuration, not submitted in the
+     job request.
    - Video field: upload via `POST /uploads` OR pick from server-side
      `input/` directory via `GET /inputs`.
-   - Defaults pre-populated from `GET /defaults` so the form shows the yaml
-     values and the user only overrides what they care about.
+   - `GET /defaults` is available for config-driven form expansion; the current
+     first-pass form only renders the fields it submits.
   - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and watch the SSE
     progress stream until the response contains a completed `run_id`.
 
 3. **Live job** (`/jobs/{id}`)
-   - Layout from prior chat sketch:
-     - Top: progress bar + estimated time + "Cancel" button.
-     - Left: phase tree (scene detection ✓, audio ✓, shots N/M, finalize, parse).
-     - Right: current-shot panel (description, dino prompt, taxonomy
-       targets, frames processed).
-     - Bottom: live log tail (ring buffer ~500 lines, level filter).
+   - Top progress bar + cancel action.
+   - Phase tree (scene detection, audio, shots N/M, finalize, parse).
+   - Current-shot panel (description, dino prompt, taxonomy targets, frames
+     processed).
+   - Live log tail.
    - Implemented live state is driven by SSE with a reducer keyed off
      `event.type`, while `GET /jobs/{job_id}` remains the canonical status row.
    - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
-   - Top: video player with SVG overlay (see §8).
-   - Right rail: layer toggles (DINO / OCR / faces / SAM bbox), confidence
-     slider, "active detections at t=..." list.
-   - Center-bottom: stacked timeline tracks (shots, audio, per-object lifespans,
-     OCR seconds).
+   - Top: video player with SVG overlay.
+   - Layer toggles for tracked objects and OCR text, plus active detection count.
+   - Timeline tracks for shots and audio.
    - Bottom: ABCD criteria table from `parser_results`, each row expandable to
      show `llm_prompt` + `llm_explanation` + LangSmith trace link.
-   - Download menu: tracked_output.mp4, abcd_report.csv,
-     extraction_summary.json.
+   - Tracked video download and advisory chat panel.
 
 ### Live progress state shape
 
@@ -611,34 +610,37 @@ sketch.
 
 ## 8. Docker & checkpoint strategy
 
-Two images, two roles, one shared volume for weights. Placeholder Dockerfiles
-already live under `backend/docker/`; the actual image contents still need to
-be filled in. The checked-in API can already run in celery mode without loading
-pipeline models, but the final slim/heavy container contents below still need
-to be built.
+The current local stack uses three runtime images plus two one-shot compose
+services. All Docker builds use the repository root as context so the images can
+copy both `backend/` and `frontend/` without moving files around.
 
 ```
 backend/docker/
   api/
-    Dockerfile          # slim — fastapi/pydantic/redis/sqlalchemy only
+    Dockerfile          # slim — FastAPI, DB, Redis/Celery client, advisory chat
     deploy.sh
   core/
-    Dockerfile          # heavy — full torch + CV stack + weights story
-    deploy.sh
+    cpu/
+      Dockerfile        # heavy CPU Celery worker + prewarm image
+      deploy.sh
+    gpu/
+      Dockerfile        # CUDA worker image; prewarms weights at build time
+      deploy.sh
+frontend/
+  Dockerfile            # Vite build stage + nginx static/proxy stage
 ```
 
 ### Image responsibilities
 
-| | API image (`docker/api/`) | Core image (`docker/core/`) |
-|---|---|---|
-| Role | FastAPI; never executes ML | Celery worker; runs the pipeline |
-| Heavy deps | none (no `torch`, no `whisper`, no `paddleocr`) | full stack |
-| Imports `src/clip_scribe/build_clip_scribe.py`? | **no** | yes |
-| Imports `app/tasks.py`? | **no** — sends tasks by name | yes |
-| Talks to Redis | yes (broker client + stream reader) | yes (broker consumer + stream publisher) |
-| Talks to Postgres | yes (read-mostly + jobs writes) | yes (writer + reader) |
-| Mounts `backend/checkpoints/`? | no | yes in dev, baked in prod |
-| Approx size | ~300 MB | 8–15 GB |
+| | API image (`backend/docker/api/`) | Worker image (`backend/docker/core/{cpu,gpu}/`) | Frontend image (`frontend/Dockerfile`) |
+|---|---|---|---|
+| Role | FastAPI, REST/SSE, artifact serving, Celery dispatch, Alembic migrate | Celery worker; runs the full pipeline | Static SPA + `/api/*` nginx reverse proxy |
+| Heavy deps | none (no `torch`, `whisper`, `paddleocr`) | full CV/ML stack | Node build deps only in build stage |
+| Imports `src/clip_scribe/build_clip_scribe.py`? | no | yes | no |
+| Imports `app/tasks.py`? | no — sends tasks by name | yes | no |
+| Talks to Redis | yes (broker client + stream reader) | yes (broker consumer + stream publisher) | no |
+| Talks to Postgres | yes (reader/writer + jobs) | yes (writer + reader) | no |
+| Uses `backend/checkpoints/`? | no | CPU: compose volume; GPU: baked layer | no |
 
 ### The import-boundary trick (avoids dragging torch into the API)
 
@@ -665,14 +667,16 @@ too). It is the source of vars for local runs. Two consumers read it:
   `REDIS_URL` / `CLIPSCRIBE_JOB_BACKEND` before reading `os.environ`) and
   `build_clip_scribe.py` (for the core). `load_dotenv(..., override=False)`, so a
   var already set in the real environment wins over the file.
-- **Compose** passes it into containers with `env_file: ../.env` (path is
-  relative to the compose file at the repo root).
+- **Compose** passes it into containers with `env_file: .env` (path is relative
+  to the compose file at the repo root), then overrides network-sensitive vars
+  and device settings in each service's `environment:` block.
 
 Backend vars (current):
 
 | Var | Purpose | Local (native) | Container |
 |---|---|---|---|
 | `CLIPSCRIBE_JOB_BACKEND` | `inline` \| `celery` dispatch | `celery` | `celery` |
+| `CLIPSCRIBE_DB_BACKEND` | overrides `database.backend` | unset (yaml `sqlite`) or `postgresql` | `postgresql` |
 | `REDIS_URL` | broker + Redis Streams | `redis://localhost:6379/0` | `redis://redis:6379/0` |
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
@@ -683,11 +687,12 @@ Backend vars (current):
 (default `cpu`) and is passed into `ClipScribeBuilder(device=...)` by **both** the
 inline API (`main.lifespan`) and the worker (`tasks.get_builder`). The builder's
 own signature is `device: str | None = None`, and the arg overrides the yaml
-value — so the web app is env-driven while the **CLI** (`main.py`, which calls
-`ClipScribeBuilder()` with no arg) still falls back to the yaml `device`. The
-builder then guards the choice: `mps`/`cuda` requested but unavailable → CPU. So
-to run the native Mac worker on MPS, set `CLIPSCRIBE_DEVICE=mps` in the host env;
-the default `cpu` keeps a Linux container safe with no config.
+value — so the web app is env-driven while the **CLI** (`backend/main.py`) can
+use a hardcoded local override or omit the arg to fall back to the yaml
+`device`. The builder then guards the choice: `mps`/`cuda` requested but
+unavailable → CPU. So to run the native Mac worker on MPS, set
+`CLIPSCRIBE_DEVICE=mps` in the host env; the default `cpu` keeps a Linux
+container safe with no config.
 
 **The one gotcha — host vs. service names (§12).** `.env` holds the *native-host*
 values (localhost + compose-mapped ports), which is what the native worker and a
@@ -708,12 +713,14 @@ All model weights live under `backend/checkpoints/`, organized by source:
 
 ```
 backend/checkpoints/
-  dino/         GroundingDINO .pth   (explicit path; loaded today)
-  sam2/         SAM2 .pt             (explicit path; loaded today)
-  torch_hub/    ← TORCH_HOME         (DINOv2 + MTCNN auto-download)
+  groundingdino_swinb_cogcoor.pth    GroundingDINO base checkpoint
+  groundingdino_swint_ogc.pth        GroundingDINO tiny checkpoint
+  sam2.1_hiera_tiny.pt               SAM2 tiny checkpoint
+  sam2.1_hiera_small.pt              SAM2 small checkpoint
+  torch_hub/    ← TORCH_HOME         (DINOv2 auto-download)
   huggingface/  ← HF_HOME            (SBERT inside TaxonomyResolver)
   whisper/      ← download_root arg  (Whisper auto-download)
-  paddleocr/    ← model_dir arg      (PaddleOCR auto-download)
+  paddleocr/    ← PADDLE_OCR_BASE_DIR (PaddleOCR auto-download)
   nltk/         ← NLTK_DATA          (WordNet)
 ```
 
@@ -725,64 +732,79 @@ in prod) redirect every auto-downloader into a subdir of
 TORCH_HOME=$REPO/backend/checkpoints/torch_hub
 HF_HOME=$REPO/backend/checkpoints/huggingface
 NLTK_DATA=$REPO/backend/checkpoints/nltk
+PADDLE_OCR_BASE_DIR=$REPO/backend/checkpoints/paddleocr
 ```
 
-The builder reads them implicitly — the underlying libraries
-(`torch.hub.load`, `sentence-transformers`, `facenet_pytorch`, `nltk`)
-honor those env vars and write into the right place.
+The builder and prewarm script read those settings before importing the
+libraries that use them. Whisper does not honor the cache env vars, so
+`build_clip_scribe.py` and `prewarm.py` pass
+`download_root=str(checkpoints / "whisper")` explicitly. MTCNN weights ship in
+the `facenet-pytorch` wheel; spaCy's `en_core_web_sm` is installed as a wheel by
+`make spacy` or baked into the worker images.
 
-Two libraries don't honor env vars and need explicit args from the
-builder:
+`backend/scripts/prewarm.py` is the single prefetch entry point. It downloads
+the GroundingDINO and SAM2 checkpoint files, loads DINOv2 through `torch.hub`,
+loads SBERT, downloads NLTK WordNet into `checkpoints/nltk`, loads Whisper into
+`checkpoints/whisper`, constructs PaddleOCR so it populates
+`PADDLE_OCR_BASE_DIR`, verifies spaCy, and writes `.prewarm_complete` after a
+successful run.
 
-- **Whisper**:
-  `whisper.load_model("base", device=..., download_root=str(self.models_weights_dir / "whisper"))`
-- **PaddleOCR**: pass `det_model_dir` / `rec_model_dir` / `cls_model_dir`
-  through `OCRSystem` to the PaddleOCR constructor.
+### Local compose stack
 
-A `backend/scripts/prewarm.py` one-liner triggers every download by
-constructing the builder:
-
-```python
-# backend/scripts/prewarm.py
-from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
-ClipScribeBuilder()
-print("prewarm complete")
-```
-
-### Dev image — mount strategy
-
-`backend/docker/core/Dockerfile` (dev variant) is slim: install deps, copy
-code, no weight downloads. The `docker-compose.yml` does the work:
+`docker-compose.yml` has Postgres, Redis, one-shot `migrate`, slim `api`,
+one-shot `prewarm`, heavy CPU `worker`, and the nginx-served `frontend`. The CPU
+worker and prewarm services are pinned to `linux/amd64` because PaddlePaddle has
+no Linux arm64 wheel and amd64 is the deploy target.
 
 ```yaml
+prewarm:
+  build:
+    dockerfile: backend/docker/core/cpu/Dockerfile
+  platform: linux/amd64
+  command: ["python", "scripts/prewarm.py"]
+  volumes:
+    - ./backend/checkpoints:/app/backend/checkpoints
+
 worker:
   build:
     context: .
-    dockerfile: backend/docker/core/Dockerfile
-  env_file: backend/.env                       # TORCH_HOME, HF_HOME, NLTK_DATA
+    dockerfile: backend/docker/core/cpu/Dockerfile
+  platform: linux/amd64
+  env_file: .env
+  environment:
+    CLIPSCRIBE_JOB_BACKEND: celery
+    CLIPSCRIBE_DB_BACKEND: postgresql
+    CLIPSCRIBE_DEVICE: cpu
+    POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
+    REDIS_URL: redis://redis:6379/0
   volumes:
     - ./backend/checkpoints:/app/backend/checkpoints   # persist weights
-    - ./backend/src:/app/backend/src                   # hot-reload code
-    - ./backend/app:/app/backend/app
+    - ./backend/artifacts:/app/backend/artifacts
+    - ./backend/input:/app/backend/input
 ```
 
-- First worker boot ever to use the volume: downloads ~5–10 GB (~5 min).
-- Every subsequent boot: instant, cache is reused.
-- Optional manual prewarm to avoid lazy first-job downloads:
-  `docker compose run --rm worker uv run python scripts/prewarm.py`.
+- First `docker compose up`: the `prewarm` service downloads several GB, then
+  the worker starts.
+- Every subsequent `up`: `prewarm.py` short-circuits on
+  `backend/checkpoints/.prewarm_complete`.
+- Force a refetch with
+  `docker compose run --rm prewarm python scripts/prewarm.py --force`.
 
-### Prod image — bake strategy
+### GPU image — bake strategy
 
-A separate Dockerfile path (could be a multi-stage with build args, or a
-distinct `Dockerfile.prod`; choice deferred) sets the env vars at build
-time and runs `prewarm.py` as a `RUN` step so weights are baked into an
-image layer:
+`backend/docker/core/gpu/Dockerfile` is the CUDA worker image for Linux +
+NVIDIA hosts. It uses a CUDA runtime base, installs torch/torchvision from the
+CUDA wheel index, exports the locked `worker` group from `uv.lock`, strips the
+torch and `nvidia-*` lines from that export, installs the rest pinned, bakes
+spaCy, and runs `python scripts/prewarm.py` before copying app/source code so
+the large weights layer stays cacheable:
 
 ```dockerfile
 ENV TORCH_HOME=/app/backend/checkpoints/torch_hub \
     HF_HOME=/app/backend/checkpoints/huggingface \
-    NLTK_DATA=/app/backend/checkpoints/nltk
-RUN cd /app/backend && uv run python scripts/prewarm.py
+    NLTK_DATA=/app/backend/checkpoints/nltk \
+    PADDLE_OCR_BASE_DIR=/app/backend/checkpoints/paddleocr
+RUN python scripts/prewarm.py
 ```
 
 No volume mount needed at runtime. Image is 8–15 GB and starts instantly.
@@ -798,31 +820,34 @@ MPS is not available inside Linux containers. Two consequences:
 - **Prod on Linux + NVIDIA**: everything in Docker, worker container gets
   `--gpus all`. No special handling beyond that.
 
-The same `core` image *can* run on Mac if you accept CPU fallback — useful
-for verifying the worker integration end-to-end, but ~10× slower than
-native MPS. Treat it as smoke-test only.
+The CPU worker image can run on Mac under amd64 emulation if you accept CPU
+fallback — useful for verifying the worker integration end-to-end, but ~10×
+slower than native MPS. Treat it as smoke-test only.
 
 ### API image — always slim
 
-The `docker/api/Dockerfile` only installs the lean dependency set,
-copies `backend/app/`, `backend/src/db/`, and
-`backend/src/clip_scribe/platform_configs/`. It never copies the rest of
-`src/` and never installs torch. Rebuilds in seconds.
+The API Dockerfile installs only the locked `api` dependency group using
+`uv export --frozen --only-group api`, then copies the API package and only the
+source trees it imports at module load: `src/db`, `src/parser`, `src/utils`, and
+`src/clip_scribe`. It deliberately omits extractor/OCR/DINO/SAM2 and never
+installs torch.
 
 ```dockerfile
 FROM python:3.12-slim
-WORKDIR /app
-COPY backend/pyproject.toml backend/uv.lock /app/backend/
-COPY backend/app /app/backend/app
-COPY backend/src/db /app/backend/src/db
-COPY backend/src/clip_scribe/platform_configs /app/backend/src/clip_scribe/platform_configs
-RUN cd /app/backend && uv sync --only-group api
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0"]
+WORKDIR /app/backend
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv export --frozen --no-emit-project --no-hashes --only-group api \
+  -o /tmp/api-reqs.txt && uv pip install --no-cache -r /tmp/api-reqs.txt
+COPY backend/app ./app
+COPY backend/src/db ./src/db
+COPY backend/src/parser ./src/parser
+COPY backend/src/utils ./src/utils
+COPY backend/src/clip_scribe ./src/clip_scribe
 ```
 
 `backend/pyproject.toml` already has a slim `[dependency-groups].api` group for
-this image. Use `uv sync --only-group api`; unlike an optional extra, it
-excludes the heavy main dependencies (torch / whisper / paddleocr).
+local API-container work. Use `uv sync --only-group api`; unlike an optional
+extra, it excludes the heavy main dependencies (torch / whisper / paddleocr).
 
 ---
 
@@ -906,7 +931,7 @@ These are decisions to make before the corresponding implementation step.
     front does the same thing.
 
 14. **Disk retention.** **Partially mitigated.**
-    A `max_artifact_files` config cap (default 200) now bounds the per-frame
+    A `max_artifact_files` config cap (default 350) now bounds the per-frame
     visualization PNGs written per run (the unbounded growth source); the
     tracked mp4 and `extraction_summary.json` are always kept. Still open: a
     run-level retention policy (delete after N days / keep last K) and a
@@ -1026,27 +1051,29 @@ Strictly ordered; each step is shippable on its own.
     "should_cancel" flag honored by the shot loop + parser, plus partial result
     handling.
 
-11. **Docker split.** Fill in the currently empty
-    `backend/docker/api/Dockerfile` (slim) and `backend/docker/core/Dockerfile`
-    (heavy). Expand `docker-compose.yml` for the full stack and document
-    Mac-MPS caveat.
+11. **Docker split.** **DONE.** `backend/docker/api/Dockerfile` builds the
+    slim torch-free API/migrate image; `backend/docker/core/cpu/Dockerfile`
+    builds the heavy CPU worker/prewarm image; `backend/docker/core/gpu/Dockerfile`
+    builds the CUDA worker image with weights baked during build; `frontend/Dockerfile`
+    builds the SPA with Vite and serves it through nginx. `docker-compose.yml`
+    wires the full local CPU stack plus the hybrid native-MPS workflow.
 
 12. **Polish:** retention policy, auth (if/when needed), cost tracking,
     OpenAPI codegen in CI, expand tests.
 
 13. **Advisory chat agent — backend (§13).** **DONE.** `query_parser_results`
-    tool + `"advisory"` tool group in `src/parser/tools.py`;
-    `build_advisory_agent(model, reader_db, run_id)` in `src/parser/advisory.py`;
+    tool + `"advisory"` tool group in `backend/src/parser/tools.py`;
+    `build_advisory_agent(model, reader_db, run_id)` in `backend/src/parser/advisory.py`;
     `app/chat.py` `ChatService` (SSE streaming, DB-as-memory) + `chat_messages`
     table (migration `c1a2d3e4f5a6`) + reader/writer methods; routes in
     `app/routes/chat.py` (`POST /runs/{id}/chat` streamed, session
     list/history/delete). **No models, no worker, no GPU.** One caveat vs the
     original "no torch" claim: the LLM client (`langchain_openai`/`langgraph`)
-    transitively imports torch in this env, so the route lazy-imports the service
-    to keep `import app.main` torch-free; torch loads on the first chat request.
-    For the step-11 slim API image, add `langgraph` + `langchain-openai` + the
-    `src/parser` tree to the `api` group and verify it runs without torch
-    installed. Tested in `test/test_api_chat.py`.
+    may transitively import torch in a full local environment, so the route
+    lazy-imports the service to keep `import app.main` torch-free. The slim API
+    image includes `langgraph`, `langchain-openai`, and `backend/src/parser`
+    through the `api` dependency group/source copy while still resolving without torch.
+    Tested in `test/test_api_chat.py`.
 
 14. **Advisory chat agent — frontend (§13).** **DONE.** `ChatPanel`
     (`frontend/src/components/ChatPanel.tsx`) mounted in the run inspector:
@@ -1176,9 +1203,9 @@ as steps 13–14 in §10.
 
 ### Why it's a clean fit (not a new subsystem)
 
-The evaluation agents already do the hard part. `src/parser/agent.py` builds a
+The evaluation agents already do the hard part. `backend/src/parser/agent.py` builds a
 LangGraph ReAct agent via `create_react_agent(model, tools)`, and
-`src/parser/tools.py` exposes read-only, run-scoped query tools
+`backend/src/parser/tools.py` exposes read-only, run-scoped query tools
 (`query_audio_segments`, `query_text_events`, `query_visual_objects`,
 `query_scene_descriptions`, `query_global_stats`, `query_field_descriptions`),
 grouped by feature type in `tool_map`. The advisory chat agent is the same
@@ -1203,8 +1230,8 @@ torch in this environment. Consequences:
 
 - It ships independently of the Celery worker path.
 - It reuses the API's existing `reader_db` and `OPENAI_API_KEY`; no worker
-  round-trip. The future slim API image needs the LLM dependencies added before
-  it can serve this route.
+  round-trip. The slim API image includes the LLM dependencies needed for this
+  route while avoiding the pipeline model stack.
 
 ### Security model — read-only and run-scoped
 
@@ -1217,7 +1244,7 @@ accepts a cross-run argument. That closure is the entire isolation story.
 ### Components
 
 - **`query_parser_results(feature_category=None, only_failed=False)`** — new
-  read tool in `src/parser/tools.py`; requires a matching
+  read tool in `backend/src/parser/tools.py`; requires a matching
   `reader_db.get_parser_results(run_id, ...)` reader method.
 - **`"advisory"` tool group** — registered in `tool_map` with all query tools
   plus `query_parser_results`.
