@@ -67,8 +67,14 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     the log bridge tags this job's log records. Both degrade to no-ops when Redis
     is down, so a job still runs — it just has no live tail.
     """
-    from app.events import current_job_id, install_job_log_bridge, make_reporter
+    from app.events import (
+        current_job_id,
+        install_job_log_bridge,
+        make_canceller,
+        make_reporter,
+    )
     from app.settings import get_settings
+    from src.utils.cancel import JobCanceled
 
     writer = builder.writer_db
     job_id = payload["job_id"]
@@ -77,6 +83,7 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
 
     redis_url = get_settings().redis_url
     reporter = make_reporter(redis_url, job_id)
+    canceller = make_canceller(redis_url, job_id)
     install_job_log_bridge(redis_url)
     token = current_job_id.set(job_id)
 
@@ -107,8 +114,22 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
             user_hints=req.user_hints,
             generate_hint_from_name=req.generate_hint_from_name,
             progress_reporter=reporter,
+            cancel_token=canceller,
         )
         engine.run(run_id=run_id)
+    except JobCanceled:
+        # Cooperative cancel: the engine stopped at a checkpoint. cancel_job has
+        # already flipped the row to 'canceled', so this guarded write is
+        # normally a no-op; it also covers the defensive case where the flag was
+        # set without the DB update. Either way the row stays 'canceled', not
+        # 'failed', and no error_text is recorded.
+        logger.info("Job %s canceled; pipeline stopped cooperatively", job_id)
+        writer.update_job_if_status(
+            job_id,
+            allowed_statuses=(JobStatus.RUNNING.value,),
+            status=JobStatus.CANCELED.value,
+            finished_at=now_iso(),
+        )
     except Exception as exc:  # noqa: BLE001 - recorded on the job row
         logger.exception("Job %s failed", job_id)
         writer.update_job_if_status(

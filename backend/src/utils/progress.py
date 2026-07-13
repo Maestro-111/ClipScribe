@@ -27,6 +27,7 @@ class ProgressEvent:
     JOB_STARTED = "job.started"
     JOB_COMPLETED = "job.completed"
     JOB_FAILED = "job.failed"
+    JOB_CANCELED = "job.canceled"
 
     PHASE_STARTED = "phase.started"
     PHASE_COMPLETED = "phase.completed"

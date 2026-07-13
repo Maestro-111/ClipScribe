@@ -160,7 +160,7 @@ The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has 
 
 ### Mode 2 — Hybrid local dev (native MPS worker)
 
-Run only Postgres + Redis in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
+Run only Postgres + Redis (note, you can spin just Redis and specify sqlite as db in backend/src/clip_scribe/configs/clip_scribe.yaml) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
 
 ```bash
 # shell 0 — infra only
@@ -178,6 +178,10 @@ cd backend && uv run celery -A app.celery_app worker --pool=solo --concurrency=1
 # shell 4 — frontend (native, Vite dev proxy)
 cd frontend && pnpm install && pnpm dev
 ```
+
+### Mode 3 — backend/main.py
+
+Run the pipeline from the script directly. Note, this will not use Reddis and it may use Postgres or Sqlite db. May use MPS. 
 
 Mode 2 uses the Vite dev-server `/api` proxy; Mode 1 serves the built SPA behind nginx doing the same proxy — same mental model in both.
 

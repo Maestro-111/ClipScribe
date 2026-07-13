@@ -4,7 +4,6 @@ import logging
 import os
 from pathlib import Path
 
-import yaml  # type: ignore
 from sqlalchemy import Engine, Table, create_engine, event
 from sqlalchemy.engine import make_url
 
@@ -12,33 +11,21 @@ logger = logging.getLogger("clip_scribe")
 
 # backend/ — matches PROJECT_ROOT in build_clip_scribe.py (parents[2] there too).
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CONFIG_PATH = (
-    Path(__file__).resolve().parents[1] / "clip_scribe" / "configs" / "clip_scribe.yaml"
-)
 
 
 def resolve_database_url() -> str:
-    """Resolve the active database URL from config + environment.
+    """Resolve the active database URL from the environment.
 
     Single source of truth shared by the builder's ``_assemble_db`` and the
-    Alembic ``env.py`` so the two never drift. Resolution order for the backend:
-    ``CLIPSCRIBE_DB_BACKEND`` env var (so the Docker/compose stack and prod can
-    force ``postgresql`` without editing yaml), else ``database.backend`` from
-    ``clip_scribe.yaml`` (default ``sqlite`` for local CLI dev). For sqlite use
-    ``SQLITE_URL`` (default ``sqlite:///data/clip_scribe.db``) resolved against
-    the project root; for postgresql require ``POSTGRESQL_URL``.
+    Alembic ``env.py`` so the two never drift. The backend is selected solely by
+    the ``CLIPSCRIBE_DB_BACKEND`` env var (default ``sqlite`` for local CLI dev);
+    the Docker/compose stack and prod set it to ``postgresql``. ``clip_scribe.yaml``
+    intentionally carries no backend key — only the driver-agnostic pool knobs —
+    so there is one selection mechanism, not two. For sqlite use ``SQLITE_URL``
+    (default ``sqlite:///data/clip_scribe.db``) resolved against the project
+    root; for postgresql require ``POSTGRESQL_URL``.
     """
-    backend = "sqlite"
-    try:
-        with open(_CONFIG_PATH) as f:
-            cfg = yaml.safe_load(f) or {}
-        backend = cfg.get("database", {}).get("backend", "sqlite")
-    except FileNotFoundError:
-        pass
-
-    # Env override wins over yaml so a containerized/prod deployment can select
-    # Postgres via CLIPSCRIBE_DB_BACKEND while local CLI runs keep the yaml default.
-    backend = os.environ.get("CLIPSCRIBE_DB_BACKEND", backend)
+    backend = os.environ.get("CLIPSCRIBE_DB_BACKEND", "sqlite")
 
     if backend == "sqlite":
         db_url = os.environ.get("SQLITE_URL", "sqlite:///data/clip_scribe.db")

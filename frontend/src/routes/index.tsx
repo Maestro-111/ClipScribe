@@ -144,13 +144,20 @@ function JobsList() {
                           ■ Stop
                         </button>
                       )}
-                      {(job.status === "failed" || job.status === "canceled") && (
+                      {(job.status === "failed" ||
+                        job.status === "canceled" ||
+                        job.status === "completed") && (
                         <button
                           onClick={() => retry.mutate(job.job_id)}
                           disabled={retry.isPending}
                           className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-50"
+                          title={
+                            job.status === "completed"
+                              ? "Re-run this job as a new run"
+                              : "Retry this job"
+                          }
                         >
-                          ↺ Retry
+                          ↺ {job.status === "completed" ? "Re-run" : "Retry"}
                         </button>
                       )}
                       {(job.status === "completed" ||

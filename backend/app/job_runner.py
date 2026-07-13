@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("clip_scribe")
 
+_TERMINAL_JOB_STATUSES = frozenset(
+    {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELED.value}
+)
+
 
 class JobService:
     def __init__(
@@ -173,19 +177,32 @@ class JobService:
                 ),
             )
 
+        # Signal a running engine to stop at its next checkpoint (cooperative
+        # cancel). Set before the backend-specific handling below so the flag is
+        # already visible by the time the running pipeline next polls it. This is
+        # a no-op for a queued job (which the backend handling stops outright),
+        # but harmless — the flag self-expires and a retry gets a fresh job_id.
+        from app.events import signal_cancel
+
+        signal_cancel(self.settings.redis_url, job_id)
+
         if self.settings.job_backend == "celery":
             task_id = job.get("celery_task_id")
             if task_id:
                 from app.celery_app import celery_app
 
-                # No terminate=True: hard-kill would leak files + GPU state.
-                # Revoke stops a still-queued task; a running one finishes and
-                # its terminal write is suppressed by is_canceled().
+                # No terminate=True: hard-kill would leak files + GPU state and,
+                # under the solo pool, take down the worker. Revoke stops a
+                # still-queued task; a running one stops cooperatively at its
+                # next check (the cancel flag above) and its terminal write is
+                # suppressed because the row is already 'canceled'.
                 celery_app.control.revoke(task_id)
         else:
             future = self.futures.get(job_id)
             if future is not None:
-                future.cancel()  # no-op if already running, succeeds if queued
+                # Succeeds only if still queued in the executor; a running job
+                # can't be thread-killed, so it stops via the cancel flag above.
+                future.cancel()
 
         canceled = self.writer.update_job_if_status(
             job_id,
@@ -205,6 +222,27 @@ class JobService:
                 ),
             )
 
+    def delete_job(self, job_id: str) -> None:
+        """Delete a job, canceling it first if it is still queued or running.
+
+        Terminal jobs are removed outright. A queued/running job is canceled
+        (via :meth:`cancel_job`, so the queued task is revoked / de-queued and
+        the DB is marked canceled) before its row is deleted. Note that under
+        the current best-effort cancel, a *running* engine keeps executing until
+        it returns — but its terminal write targets a row that no longer exists,
+        so the delete is safe; the in-flight run simply finishes unrecorded.
+        """
+        job = self.reader.get_job(job_id)
+        if job is None:
+            raise ProblemException(
+                status=404, title="Not Found", detail=f"job '{job_id}' not found"
+            )
+        if job["status"] not in _TERMINAL_JOB_STATUSES:
+            # Non-terminal ⇒ queued or running, both cancellable. Stop it first
+            # so we don't orphan a live future / queued celery task.
+            self.cancel_job(job_id)
+        self.writer.delete_job(job_id)
+
     def retry_job(self, job_id: str) -> JobCreatedResponse:
         """Create a fresh job from the stored params of a failed/canceled job."""
         job = self.reader.get_job(job_id)
@@ -212,14 +250,18 @@ class JobService:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
-        retryable = {JobStatus.FAILED.value, JobStatus.CANCELED.value}
+        retryable = {
+            JobStatus.FAILED.value,
+            JobStatus.CANCELED.value,
+            JobStatus.COMPLETED.value,
+        }
         if job["status"] not in retryable:
             raise ProblemException(
                 status=409,
                 title="Conflict",
                 detail=(
                     f"job '{job_id}' is '{job['status']}' — "
-                    "only failed or canceled jobs can be retried"
+                    "only completed, failed, or canceled jobs can be retried"
                 ),
             )
         params = job.get("params_json")

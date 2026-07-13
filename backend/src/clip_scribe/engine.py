@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from src.utils.ids import new_ulid
 from src.utils.artifacts import ArtifactUploader, run_artifact_dir
+from src.utils.cancel import CancellationToken, JobCanceled
 from src.utils.progress import Phase, ProgressEvent, ProgressReporter
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ class ClipScribeEngine:
         writer_db: ClipScribeWriterDB,
         progress_reporter: ProgressReporter,
         artifact_uploader: ArtifactUploader,
+        cancel_token: CancellationToken,
     ):
         self.mode = mode
 
@@ -49,6 +51,9 @@ class ClipScribeEngine:
         self.reader_db = reader_db
         self.progress = progress_reporter
         self.artifact_uploader = artifact_uploader
+        # Cooperative-cancel token, shared with the extractor/parser. Null (never
+        # canceled) for CLI/tests; a Redis-backed token in the web paths.
+        self._cancel = cancel_token
 
         # Populated when the extractor's run is persisted; surfaced on
         # job.completed so live subscribers can navigate to the finished run.
@@ -91,19 +96,39 @@ class ClipScribeEngine:
             },
         )
         try:
+            # Bail before doing any heavy work if a cancel already landed (e.g.
+            # the job sat queued and was canceled just as it dequeued).
+            self._cancel.check()
             if self.mode == "full":
-                # run the whole pipeline
+                # run the whole pipeline, usual UI run
                 self.parse_extract()
             elif self.mode == "extract":
                 # only the extraction engine, i.e. it won't save run to db
+                logger.warning(
+                    "ClipScribe is running in extraction mode only"
+                    "This mode will only process the video and save the artifacts"
+                    "Its meant to run locally only"
+                )
                 self.extract()
             elif self.mode == "parse":
                 # only parse engine, i.e. we expect to have an existing run_id data in db
+
+                logger.warning(
+                    "ClipScribe is running in parse mode only"
+                    "This mode will only process existing artifacts of run_id"
+                    "Its meant to run locally only for agent debugging"
+                )
                 self.parse(run_id)
             else:
                 raise ValueError(
                     f"Invalid mode: {self.mode}. Supported modes: 'full', 'extract', 'parse'"
                 )
+        except JobCanceled:
+            # A cancel is not a failure: emit a distinct terminal event (ends the
+            # SSE stream) and re-raise so run_job_core records 'canceled'.
+            logger.info("Job canceled; stopping pipeline for run %s", self.run_id)
+            self.progress.emit(ProgressEvent.JOB_CANCELED, {"run_id": self.run_id})
+            raise
         except Exception as e:
             self.progress.emit(ProgressEvent.JOB_FAILED, {"error": str(e)})
             raise
@@ -150,10 +175,19 @@ class ClipScribeEngine:
 
         assert self.extractor is not None
 
+        if not getattr(self, "run_id", None):
+            raise ValueError(
+                "No run_id defined, hence parse_extract was called outside of run!"
+            )
+
         video_metadata = self.extract()
 
         metadata_descriptions = self.extractor.get_schema_descriptions()
         self._save_metadata_to_db(video_metadata, metadata_descriptions)
+
+        # Extraction is persisted; bail here rather than starting the parser's
+        # ~30 LLM criteria if a cancel arrived during extraction.
+        self._cancel.check()
         self.parse(self.run_id)
 
         return
@@ -174,6 +208,11 @@ class ClipScribeEngine:
             return metadata
         except KeyboardInterrupt:
             logger.error("\n!!! Interrupted by User. Saving video... !!!")
+            raise
+        except JobCanceled:
+            # Expected cooperative stop, not an error; cleanup() still runs in
+            # the finally below, releasing the capture + video writer.
+            logger.info("Extraction canceled; releasing resources.")
             raise
         except Exception as e:
             logger.error(f"_extract_information error occurred: {e}", exc_info=True)

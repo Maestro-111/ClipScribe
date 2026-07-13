@@ -10,6 +10,7 @@ from src.parser.agent import build_agent, run_agent
 from src.parser.models import BaseFeatureResult, BaseAgentEvaluation
 
 from src.clip_scribe.platform_configs import BasePlatformConf
+from src.utils.cancel import CancellationToken, JobCanceled, NullCancellationToken
 
 logger = logging.getLogger("clip_scribe")
 
@@ -25,6 +26,7 @@ class BaseEvaluator(ABC):
         agentic_eval: type[BaseAgentEvaluation],
         max_parallel_agents: int = 5,
         recursion_limit: int = 25,
+        cancel_token: CancellationToken | None = None,
     ):
         self.reader_db = reader_db
         self.model = model
@@ -32,6 +34,8 @@ class BaseEvaluator(ABC):
         self.agentic_eval = agentic_eval
         self.max_parallel_agents = max_parallel_agents
         self.recursion_limit = recursion_limit
+        # Cooperative-cancel token, polled between criteria in evaluate_all.
+        self._cancel = cancel_token or NullCancellationToken()
 
     @property
     @abstractmethod
@@ -204,6 +208,7 @@ class BaseEvaluator(ABC):
         logger.info(f"Evaluating {len(baseline_features)} baseline features...")
 
         for feature in baseline_features:
+            self._cancel.check()
             result = self._evaluate_baseline_feature(feature, run_id, video_name)
             results.append(result)
 
@@ -238,6 +243,17 @@ class BaseEvaluator(ABC):
             }
 
             for future in as_completed(future_to_feature):
+                # If a cancel arrived, stop collecting and prevent queued agents
+                # from starting. In-flight agents (<= max_parallel_agents) run to
+                # completion when the executor's context manager waits on exit —
+                # they can't be thread-killed — but no new LLM work is dispatched.
+                try:
+                    self._cancel.check()
+                except JobCanceled:
+                    for pending in future_to_feature:
+                        pending.cancel()
+                    raise
+
                 feature = future_to_feature[future]
                 try:
                     result = future.result()

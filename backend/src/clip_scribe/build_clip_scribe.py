@@ -27,6 +27,7 @@ from src.db import (
     create_db_engine,
     resolve_database_url,
 )
+from src.utils.cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, ProgressReporter
 from src.utils.artifacts import NullArtifactUploader, SimulatedGCSArtifactUploader
 
@@ -140,6 +141,7 @@ class ClipScribeBuilder:
         clib_scribe_parser_params: dict,
         parser_agent_params: dict,
         progress_reporter: ProgressReporter | None = None,
+        cancel_token: CancellationToken | None = None,
     ) -> VideoInformationParser:
         parser_output_dir = PROJECT_ROOT / clib_scribe_parser_params.get(
             "output_dir", "parser_artifacts"
@@ -162,6 +164,7 @@ class ClipScribeBuilder:
             max_parallel_agents=parser_max_parallel,
             recursion_limit=recursion_limit,
             progress_reporter=progress_reporter,
+            cancel_token=cancel_token,
         )
 
         return info_parser
@@ -178,6 +181,7 @@ class ClipScribeBuilder:
         taxonomy_params: dict,
         audio_params: dict,
         progress_reporter: ProgressReporter | None = None,
+        cancel_token: CancellationToken | None = None,
     ):
         hint_generation_model = self.resolve_model(
             "taxonomy.hint_generation.model",
@@ -269,6 +273,7 @@ class ClipScribeBuilder:
             max_samples,
             sampling_rate,
             progress_reporter=progress_reporter,
+            cancel_token=cancel_token,
             max_artifact_files=self.artifacts_params.get("max_artifact_files"),
         )
 
@@ -397,6 +402,7 @@ class ClipScribeBuilder:
         user_hints: list[str] | None = None,
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
+        cancel_token: CancellationToken | None = None,
     ) -> ClipScribeEngine:
         """Build a per-job engine using the builder's long-lived dependencies.
 
@@ -410,6 +416,10 @@ class ClipScribeBuilder:
             # CLI leaves this None (Null = no-op); web execution paths pass a
             # RedisProgressReporter bound to the job id.
             reporter = progress_reporter or NullProgressReporter()
+            # Same shape as the reporter: one token per job, shared by engine +
+            # extractor + parser. CLI/tests leave this None (Null = never
+            # canceled); web paths pass a RedisCancellationToken for the job id.
+            canceller = cancel_token or NullCancellationToken()
 
             info_extractor = None
             info_parser = None
@@ -426,6 +436,7 @@ class ClipScribeBuilder:
                     self.taxonomy_params,
                     self.audio_params,
                     progress_reporter=reporter,
+                    cancel_token=canceller,
                 )
 
             if clib_scribe_mode in ["full", "parse"]:
@@ -435,6 +446,7 @@ class ClipScribeBuilder:
                     self.clib_scribe_parser_params,
                     self.parser_agent_params,
                     progress_reporter=reporter,
+                    cancel_token=canceller,
                 )
 
             # Same shape as the reporter default above: the builder resolves the
@@ -455,6 +467,7 @@ class ClipScribeBuilder:
                 reader_db=self.reader_db,
                 writer_db=self.writer_db,
                 progress_reporter=reporter,
+                cancel_token=canceller,
                 artifact_uploader=artifact_uploader,
             )
 

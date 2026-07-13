@@ -24,22 +24,11 @@ from typing import Any, Mapping
 
 import redis
 
+from src.utils.cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, ProgressReporter
+from .settings import get_settings
 
 logger = logging.getLogger("clip_scribe")
-
-# Bound the stream length so a run's events don't grow without limit. A run emits
-# a handful of events per shot plus one entry per INFO log record, so 2000 covers
-# even long videos; approximate trimming (``~``) is cheaper for Redis.
-STREAM_MAXLEN = 2000
-# TTL applied once a terminal event is written, so finished jobs' streams expire
-# instead of lingering forever — long enough for a late page-load to still replay.
-STREAM_TTL_SECONDS = 24 * 3600
-
-# Terminal events end the SSE stream. The engine emits completed/failed; a
-# canceled job may never reach the engine, so the SSE endpoint also watches the
-# job row (see routes/jobs.py) as a backstop.
-TERMINAL_EVENTS = frozenset({"job.completed", "job.failed"})
 
 # Set by run_job_core for the duration of a job so the log bridge can tag records
 # with their job id without threading it through every logging call site (§9.10).
@@ -48,6 +37,10 @@ current_job_id: ContextVar[str | None] = ContextVar("current_job_id", default=No
 
 def stream_key(job_id: str) -> str:
     return f"job:{job_id}:stream"
+
+
+def cancel_key(job_id: str) -> str:
+    return f"job:{job_id}:cancel"
 
 
 # Per-phase share of overall progress, mirroring the frontend live page's
@@ -70,6 +63,9 @@ def summarize_progress(events: list[tuple[str, dict[str, Any]]]) -> dict[str, An
     ignored). Returns ``percent`` (0-100) plus the running phase and shot counts
     so the jobs list can render a bar without reconstructing full live state.
     """
+
+    settings = get_settings()
+
     phase_order: list[str] = []
     phase_status: dict[str, str] = {}
     total_shots: int | None = None
@@ -96,7 +92,7 @@ def summarize_progress(events: list[tuple[str, dict[str, Any]]]) -> dict[str, An
                 total_shots = int(data["total_shots"])
         elif event_type == "shot.completed":
             shots_done += 1
-        elif event_type in TERMINAL_EVENTS:
+        elif event_type in settings.TERMINAL_EVENTS:
             terminal = True
 
     if terminal:
@@ -146,17 +142,18 @@ class RedisProgressReporter(ProgressReporter):
         self._job_id = job_id
         self._key = stream_key(job_id)
         self._client = client
+        self._settings = get_settings()
 
     def emit(self, event_type: str, data: Mapping[str, Any] | None = None) -> None:
         try:
             self._client.xadd(
                 self._key,
                 _entry(event_type, data),
-                maxlen=STREAM_MAXLEN,
+                maxlen=self._settings.STREAM_MAXLEN,
                 approximate=True,
             )
-            if event_type in TERMINAL_EVENTS:
-                self._client.expire(self._key, STREAM_TTL_SECONDS)
+            if event_type in self._settings.TERMINAL_EVENTS:
+                self._client.expire(self._key, self._settings.STREAM_TTL_SECONDS)
         except Exception:  # noqa: BLE001 - reporting must never break the job
             logger.warning(
                 "Failed to publish %s for job %s",
@@ -186,6 +183,74 @@ def make_reporter(redis_url: str, job_id: str) -> ProgressReporter:
     return RedisProgressReporter(job_id, client)
 
 
+class RedisCancellationToken(CancellationToken):
+    """Reads a job's cancel signal from the ``job:{job_id}:cancel`` Redis key.
+
+    The counterpart to :class:`RedisProgressReporter`: bound to a single job and
+    injected down the same builder seam. Per the :class:`CancellationToken`
+    contract, :meth:`is_canceled` never raises — a Redis hiccup degrades to "not
+    canceled" so a transport blip can't crash a running job (worst case, a cancel
+    is missed until the next check succeeds).
+    """
+
+    def __init__(self, job_id: str, client: "redis.Redis") -> None:
+        self._job_id = job_id
+        self._key = cancel_key(job_id)
+        self._client = client
+
+    def is_canceled(self) -> bool:
+        try:
+            return self._client.exists(self._key) > 0
+        except Exception:  # noqa: BLE001 - a check must never break the job
+            logger.warning(
+                "Failed to read cancel flag for job %s", self._job_id, exc_info=True
+            )
+            return False
+
+
+def make_canceller(redis_url: str, job_id: str) -> CancellationToken:
+    """Return a Redis-backed cancel token for ``job_id``, or Null if Redis is down.
+
+    Mirrors :func:`make_reporter`: both execution paths call it, and the
+    never-canceled :class:`NullCancellationToken` fallback lets the job still run
+    when Redis is unreachable (only cooperative cancel of a *running* job is
+    lost — a queued job is still stopped via its DB status). Called by
+    :func:`run_job_core`.
+    """
+    try:
+        client = redis.Redis.from_url(redis_url)
+        client.ping()
+    except Exception:  # noqa: BLE001 - degrade to no-op; the job still runs
+        logger.warning(
+            "Redis unavailable at %s; cooperative cancel disabled for job %s",
+            redis_url,
+            job_id,
+        )
+        return NullCancellationToken()
+    return RedisCancellationToken(job_id, client)
+
+
+def signal_cancel(redis_url: str, job_id: str) -> None:
+    """Set the per-job cancel flag so a running pipeline stops at its next check.
+
+    Best-effort, mirroring the reporter's swallow-and-log contract: if Redis is
+    unreachable the flag is not set (a running job won't cooperatively stop), but
+    the caller still records the DB status, so the API contract is unaffected.
+    """
+
+    settings = get_settings()
+
+    try:
+        client = redis.Redis.from_url(redis_url)
+        client.set(cancel_key(job_id), "1", ex=settings.CANCEL_FLAG_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 - cancel signalling must never 500 the request
+        logger.warning(
+            "Redis unavailable at %s; could not set cancel flag for job %s",
+            redis_url,
+            job_id,
+        )
+
+
 class JobLogStreamHandler(logging.Handler):
     """Mirrors ``clip_scribe`` log records into the current job's stream (§9.10).
 
@@ -197,6 +262,7 @@ class JobLogStreamHandler(logging.Handler):
     def __init__(self, client: "redis.Redis", level: int = logging.INFO) -> None:
         super().__init__(level=level)
         self._client = client
+        self._settings = get_settings()
 
     def emit(self, record: logging.LogRecord) -> None:
         job_id = current_job_id.get()
@@ -208,7 +274,7 @@ class JobLogStreamHandler(logging.Handler):
                 _entry(
                     "log", {"level": record.levelname, "message": record.getMessage()}
                 ),
-                maxlen=STREAM_MAXLEN,
+                maxlen=self._settings.STREAM_MAXLEN,
                 approximate=True,
             )
         except Exception:  # noqa: BLE001 - logging must never break the job

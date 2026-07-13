@@ -185,7 +185,8 @@ artifacts:
 # Database Storage
 # ============================================================================
 database:
-  # Which database backend to use: "sqlite" or "postgresql"
-  backend: "sqlite"
+  # Backend ("sqlite" / "postgresql") is selected by the CLIPSCRIBE_DB_BACKEND
+  # env var (default "sqlite" for local CLI dev); set it in .env / compose /
+  # prod config. Only the driver-agnostic pool knobs live here.
   pool_size: 5
   max_overflow: 10

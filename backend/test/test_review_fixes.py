@@ -49,6 +49,9 @@ def patched_heavy(monkeypatch, tmp_path):
     without loading torch hub / whisper / SAM2 / DINO weights, and route the
     sqlite DB to a throwaway file under pytest's tmp_path (absolute URL so the
     builder's relative-path rewrite leaves it alone)."""
+    # Force the backend so the test exercises sqlite regardless of the ambient
+    # clip_scribe.yaml / .env config (which may select postgresql locally).
+    monkeypatch.setenv("CLIPSCRIBE_DB_BACKEND", "sqlite")
     monkeypatch.setenv("SQLITE_URL", f"sqlite:////{tmp_path / 'test.db'}")
     import src.clip_scribe.build_clip_scribe as bcs
 
@@ -134,6 +137,7 @@ def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
 
 def test_parser_report_path_stays_under_output_dir(tmp_path):
     from src.parser.parser_core import VideoInformationParser
+    from src.utils.cancel import NullCancellationToken
     from src.utils.progress import NullProgressReporter
 
     class DummyEvaluator:
@@ -159,6 +163,7 @@ def test_parser_report_path_stays_under_output_dir(tmp_path):
             self.recursion_limit = 1
             self.model = mock.MagicMock()
             self.progress = NullProgressReporter()
+            self._cancel = NullCancellationToken()
 
         def create_report_name(self):
             return "abcd"
@@ -210,6 +215,9 @@ def test_alembic_baseline_accepts_existing_runs_table(tmp_path, monkeypatch):
             """
         )
 
+    # Force sqlite so the migration runs against the throwaway file below, not
+    # whatever backend the ambient config selects.
+    monkeypatch.setenv("CLIPSCRIBE_DB_BACKEND", "sqlite")
     monkeypatch.setenv("SQLITE_URL", f"sqlite:////{db_path}")
     monkeypatch.chdir(BACKEND)
     config = Config(str(BACKEND / "alembic.ini"))

@@ -18,7 +18,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app.deps import get_reader, get_writer
 from app.errors import ProblemException
-from app.events import TERMINAL_EVENTS, stream_key, summarize_progress
+from app.events import stream_key, summarize_progress
+from app.settings import get_settings
 from app.job_runner import JobService
 from app.models import (
     JobCreatedResponse,
@@ -29,7 +30,7 @@ from app.models import (
 )
 
 if TYPE_CHECKING:
-    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from src.db import ClipScribeReaderDB
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -100,26 +101,13 @@ def get_job(
 @router.delete(
     "/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a completed, failed, or canceled job",
+    summary="Delete a job (canceling it first if still queued or running)",
 )
 def delete_job(
     job_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
-    writer: "ClipScribeWriterDB" = Depends(get_writer),
+    service: JobService = Depends(get_job_service),
 ) -> None:
-    job = reader.get_job(job_id)
-    if job is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
-        )
-    terminal = {"completed", "failed", "canceled"}
-    if job["status"] not in terminal:
-        raise ProblemException(
-            status=409,
-            title="Conflict",
-            detail=f"job '{job_id}' is '{job['status']}' — stop the job before deleting it",
-        )
-    writer.delete_job(job_id)
+    service.delete_job(job_id)
 
 
 def _sse_frame(fields: dict[str, str]) -> str:
@@ -157,6 +145,8 @@ async def _job_event_stream(
     key = stream_key(job_id)
     last_id = "0"
 
+    settings = get_settings()
+
     async def _job_is_terminal() -> bool:
         job = await run_in_threadpool(reader.get_job, job_id)
         return job is not None and job.get("status") in _TERMINAL_JOB_STATUSES
@@ -166,7 +156,7 @@ async def _job_event_stream(
         for entry_id, fields in await client.xrange(key):
             last_id = entry_id
             yield _sse_frame(fields)
-            if fields["type"] in TERMINAL_EVENTS:
+            if fields["type"] in settings.TERMINAL_EVENTS:
                 return
 
         # If the job is already terminal, the replay above is the whole story.
@@ -195,7 +185,7 @@ async def _job_event_stream(
                 for entry_id, fields in entries:
                     last_id = entry_id
                     yield _sse_frame(fields)
-                    if fields["type"] in TERMINAL_EVENTS:
+                    if fields["type"] in settings.TERMINAL_EVENTS:
                         return
     except asyncio.CancelledError:  # client disconnected — let it propagate
         raise

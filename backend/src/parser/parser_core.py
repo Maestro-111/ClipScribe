@@ -8,6 +8,7 @@ from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
+from src.utils.cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 
@@ -32,6 +33,7 @@ class VideoInformationParser:
         max_parallel_agents: int = 5,
         recursion_limit: int = 20,
         progress_reporter: ProgressReporter | None = None,
+        cancel_token: CancellationToken | None = None,
     ):
         """
         Initialize the video information parser.
@@ -53,6 +55,9 @@ class VideoInformationParser:
         self.recursion_limit = recursion_limit
         self.model = self.create_agent_model(agent)
         self.progress = progress_reporter or NullProgressReporter()
+        # Cooperative-cancel token, passed on to the evaluator so it can stop
+        # between criteria. Null (never canceled) for CLI/tests.
+        self._cancel = cancel_token or NullCancellationToken()
 
     def __repr__(self) -> str:
         return f"VideoInformationParser(model={self.model.model_name}, output_dir={self.output_dir})"
@@ -91,6 +96,7 @@ class VideoInformationParser:
                 agentic_eval=YouTubeAgentEvaluation,  # noqa ignore
                 max_parallel_agents=self.max_parallel_agents,
                 recursion_limit=self.recursion_limit,
+                cancel_token=self._cancel,
             )
 
         return evaluator
@@ -137,6 +143,8 @@ class VideoInformationParser:
             report_output_path, scores_output_path
         )
 
+        # Last cheap bail before the LLM-heavy evaluation begins.
+        self._cancel.check()
         self.progress.phase_started(Phase.PARSE)
 
         if evaluator is not None:

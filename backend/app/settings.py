@@ -36,7 +36,27 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 class Settings:
+
     """Process-wide API settings, resolved once from the environment."""
+
+    # Bound the stream length so a run's events don't grow without limit. A run emits
+    # a handful of events per shot plus one entry per INFO log record, so 2000 covers
+    # even long videos; approximate trimming (``~``) is cheaper for Redis.
+    STREAM_MAXLEN = 2000
+    # TTL applied once a terminal event is written, so finished jobs' streams expire
+    # instead of lingering forever — long enough for a late page-load to still replay.
+    STREAM_TTL_SECONDS = 24 * 3600
+
+    # Terminal events end the SSE stream. The engine emits completed/failed, and
+    # canceled once cooperative cancel stops a running pipeline; a job canceled
+    # before it reaches the engine may emit none of these, so the SSE endpoint also
+    # watches the job row (see routes/jobs.py) as a backstop.
+    TERMINAL_EVENTS = frozenset({"job.completed", "job.failed", "job.canceled"})
+
+    # TTL on the per-job cancel flag. Longer than any realistic single run so a
+    # long-running job still sees a late cancel, after which the key self-expires
+    # (a retried job gets a fresh job_id / key, so no stale flag can leak across).
+    CANCEL_FLAG_TTL_SECONDS = 24 * 3600
 
     def __init__(self) -> None:
         # Directory the uploader writes to and jobs reference video paths under.

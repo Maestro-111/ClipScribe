@@ -27,6 +27,7 @@ from scenedetect import detect, ContentDetector
 from collections import defaultdict
 from nltk.corpus import wordnet as wn
 
+from src.utils.cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import (
     NullProgressReporter,
     Phase,
@@ -421,6 +422,7 @@ class VideoInformationExtractor:
         max_samples: int = 12,
         sampling_rate: float = 2.0,
         progress_reporter: "ProgressReporter | None" = None,
+        cancel_token: "CancellationToken | None" = None,
         max_artifact_files: int | None = None,
     ) -> None:
         # helper models
@@ -477,6 +479,9 @@ class VideoInformationExtractor:
         self.sampling_rate = sampling_rate
 
         self.progress = progress_reporter or NullProgressReporter()
+        # Cooperative-cancel token, polled at checkpoints in extract(). Null
+        # (never canceled) for CLI/tests; Redis-backed in the web paths.
+        self._cancel = cancel_token or NullCancellationToken()
 
         # Raw per-(frame, box) detections for the UI overlay; persisted to the
         # frame_detections table by the writer. Per-shot boundaries (seconds)
@@ -1272,6 +1277,7 @@ class VideoInformationExtractor:
         artifact_path = run_artifact_dir(run_id)
         self._state_init(artifact_path, video_path)
 
+        self._cancel.check()
         self.progress.phase_started(Phase.SCENE_DETECTION)
         self._digest_video(video_path)
         self.progress.phase_completed(
@@ -1282,6 +1288,9 @@ class VideoInformationExtractor:
             },
         )
 
+        # Whisper transcription is a single, minutes-long, uninterruptible call;
+        # check right before it so a cancel during scene detection skips it.
+        self._cancel.check()
         self.progress.phase_started(Phase.AUDIO)
         self._analyze_audio(video_path)
         self.progress.phase_completed(
@@ -1295,6 +1304,7 @@ class VideoInformationExtractor:
         )
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
+            self._cancel.check()
             self.progress.emit(
                 ProgressEvent.SHOT_STARTED,
                 {
@@ -1405,6 +1415,10 @@ class VideoInformationExtractor:
             logger.info(f"Dino Shot Prompt: {combined_final_context}")
 
             while self.current_frame < end_f:
+                # Finest checkpoint: each iteration is a detection batch (DINO +
+                # OCR + MTCNN + SAM) worth seconds of GPU work, so a per-batch
+                # Redis check is negligible overhead and bounds cancel latency.
+                self._cancel.check()
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
                 ret, frame_bgr = self.cap.read()
 
