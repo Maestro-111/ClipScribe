@@ -20,6 +20,7 @@ from app.models import (
     GlobalStatsResponse,
     ParserResult,
     RunResponse,
+    RunSibling,
     ShotBoundary,
     TextEvent,
 )
@@ -44,6 +45,22 @@ def get_run(
     run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
 ) -> RunResponse:
     return RunResponse.model_validate(_require_run(reader, run_id))
+
+
+@router.get("/{run_id}/siblings", summary="Runs sharing the same batch job")
+def get_run_siblings(
+    run_id: str, reader: "ClipScribeReaderDB" = Depends(get_reader)
+) -> list[RunSibling]:
+    """Runs in the same batch job (including this one), in submission order.
+
+    Derived from the jobs graph, not the ``runs`` table, so it resolves even
+    while a sibling is still processing (its run row isn't written yet). This is
+    deliberately *not* guarded by ``_require_run``: the switcher must keep
+    working when the current run hasn't been persisted yet, otherwise the user
+    lands on an in-progress run and loses the way back. Empty when the run has no
+    batch job (e.g. a CLI-produced run), read as "no siblings to switch between".
+    """
+    return [RunSibling.model_validate(r) for r in reader.get_run_siblings(run_id)]
 
 
 @router.get("/{run_id}/global-stats", summary="Global stats + shot boundaries")

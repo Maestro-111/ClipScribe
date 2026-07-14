@@ -20,7 +20,7 @@ from app.deps import get_reader, get_writer
 from app.errors import ProblemException
 from app.events import stream_key, summarize_progress
 from app.settings import get_settings
-from app.job_runner import JobService
+from app.job_runner import JobService, build_job_response
 from app.models import (
     JobCreatedResponse,
     JobCreateRequest,
@@ -79,10 +79,14 @@ def list_jobs(
     offset: int = Query(default=0, ge=0),
     reader: "ClipScribeReaderDB" = Depends(get_reader),
 ) -> JobListResponse:
-    jobs = reader.list_jobs(status=job_status, limit=limit, offset=offset)
-    return JobListResponse(
-        jobs=[JobResponse(**job) for job in jobs], limit=limit, offset=offset
-    )
+    # Only top-level (parent/standalone) jobs are listed; each carries its
+    # children and an aggregated status. The status filter is applied after
+    # aggregation (a parent's own row status is inert), not in SQL.
+    parents = reader.list_parent_jobs(limit=limit, offset=offset)
+    jobs = [build_job_response(reader, p) for p in parents]
+    if job_status:
+        jobs = [j for j in jobs if j.status == job_status]
+    return JobListResponse(jobs=jobs, limit=limit, offset=offset)
 
 
 @router.get("/{job_id}", response_model=JobResponse, summary="Get a job")
@@ -95,7 +99,7 @@ def get_job(
         raise ProblemException(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
-    return JobResponse(**job)
+    return build_job_response(reader, job)
 
 
 @router.delete(

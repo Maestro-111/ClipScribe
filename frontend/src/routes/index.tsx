@@ -3,9 +3,9 @@ import { useState } from "react";
 import {
   useCancelJob,
   useDeleteJob,
-  useJobProgress,
   useJobs,
   useRetryJob,
+  type JobResponse,
 } from "../api/hooks";
 import { formatDateTime, formatDuration, statusColor } from "../lib/format";
 
@@ -16,23 +16,22 @@ export const Route = createFileRoute("/")({
 
 const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
 
-// Inline progress bar for a running job. Polls GET /jobs/{id}/progress (mounted
-// only for running rows), so the list shows live progress without an SSE
-// connection per row.
-function RunningBar({ jobId }: { jobId: string }) {
-  const { data } = useJobProgress(jobId, true);
-  const pct = Math.round(data?.percent ?? 0);
-  return (
-    <div className="mt-1 w-28">
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
-        <div
-          className="h-full rounded-full bg-blue-500 transition-all"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="text-[10px] text-neutral-400">{pct}%</span>
-    </div>
+// A job is a batch parent with one run per video. The list row shows how many
+// of those runs have finished; a single completed run links straight to its
+// inspector, otherwise the job name opens the per-run batch view.
+function runCounts(job: JobResponse) {
+  const children = job.children ?? [];
+  const total = children.length;
+  const done = children.filter((c) => c.status === "completed").length;
+  return { total, done };
+}
+
+// The lone completed run of a single-video job, for the direct "inspect" link.
+function soleCompletedRun(job: JobResponse): string | null {
+  const completed = (job.children ?? []).filter(
+    (c) => c.status === "completed" && c.run_id,
   );
+  return completed.length === 1 ? completed[0]!.run_id! : null;
 }
 
 function JobsList() {
@@ -110,9 +109,19 @@ function JobsList() {
                     >
                       {job.status}
                     </span>
-                    {job.status === "running" && (
-                      <RunningBar jobId={job.job_id} />
-                    )}
+                    {(() => {
+                      const { total, done } = runCounts(job);
+                      // Show run progress once there's more than one run, or
+                      // while a batch is still working through them.
+                      if (total > 1 || (total >= 1 && job.status === "running")) {
+                        return (
+                          <span className="ml-2 text-[10px] text-neutral-400">
+                            {done}/{total} runs
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </td>
                   <td className="px-3 py-2 text-neutral-600">
                     {job.platform ?? "—"}
@@ -126,15 +135,24 @@ function JobsList() {
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      {job.run_id && job.status === "completed" && (
-                        <Link
-                          to="/runs/$runId"
-                          params={{ runId: job.run_id }}
-                          className="text-blue-600 hover:underline"
-                        >
-                          inspect →
-                        </Link>
-                      )}
+                      {job.status === "completed" &&
+                        (soleCompletedRun(job) ? (
+                          <Link
+                            to="/runs/$runId"
+                            params={{ runId: soleCompletedRun(job)! }}
+                            className="text-blue-600 hover:underline"
+                          >
+                            inspect →
+                          </Link>
+                        ) : (
+                          <Link
+                            to="/jobs/$jobId"
+                            params={{ jobId: job.job_id }}
+                            className="text-blue-600 hover:underline"
+                          >
+                            runs →
+                          </Link>
+                        ))}
                       {job.status === "queued" && (
                         <button
                           onClick={() => cancel.mutate(job.job_id)}
@@ -165,7 +183,7 @@ function JobsList() {
                         job.status === "canceled") && (
                         <button
                           onClick={() => {
-                            if (confirm(`Delete job for "${job.video_name ?? job.job_id}"?`)) {
+                            if (confirm(`Delete job "${job.video_name ?? job.job_id}" and all its run results?`)) {
                               del.mutate(job.job_id);
                             }
                           }}

@@ -86,12 +86,12 @@ dino:
   # Text-to-image grounding confidence threshold (how well text prompt matches image regions)
   # Lower = more detections but noisier. Higher = fewer false positives
   # Range: 0.0-1.0. Default: 0.45
-  dino_text_conf: 0.3
+  dino_text_conf: 0.35
 
   # Bounding box confidence threshold for object proposals
   # Lower = more detections. Higher = only high-confidence boxes
   # Range: 0.0-1.0. Default: 0.4
-  dino_box_conf: 0.3
+  dino_box_conf: 0.35
 
   # GroundingDINO model size: 'tiny', 'base'
   # Larger model is more accurate but slower and requires more VRAM

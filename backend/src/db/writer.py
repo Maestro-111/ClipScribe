@@ -251,6 +251,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         job_id: str,
         mode: str,
         status: str = "queued",
+        parent_job_id: str | None = None,
         run_id: str | None = None,
         video_name: str | None = None,
         video_path: str | None = None,
@@ -264,13 +265,15 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
 
         Orchestration state, kept separate from ``runs`` (extractor output).
         ``run_id`` may be minted up front so the row links to a run before the
-        extractor writes it (web-app-plan §4).
+        extractor writes it (web-app-plan §4). ``parent_job_id`` links a child
+        run to its batch parent; NULL marks a parent/standalone job.
         """
         with self._engine.begin() as conn:
             conn.execute(
                 jobs_table.insert(),
                 {
                     "job_id": job_id,
+                    "parent_job_id": parent_job_id,
                     "run_id": run_id,
                     "status": status,
                     "mode": mode,
@@ -365,6 +368,56 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         with self._engine.begin() as conn:
             result = conn.execute(
                 jobs_table.delete().where(jobs_table.c.job_id == job_id)
+            )
+            return result.rowcount > 0
+
+    def delete_run(self, run_id: str) -> None:
+        """Delete all persisted data for a run across every run-keyed table.
+
+        Used when a run is superseded (e.g. an in-place retry mints a new
+        ``run_id`` and the old run's rows must not linger). One transaction; no
+        FK constraints are declared, so table order is immaterial. The ``jobs``
+        table is intentionally untouched — orchestration rows are managed
+        separately.
+        """
+        run_keyed = (
+            runs_table,
+            global_stats_table,
+            visual_object_occurrences_table,
+            text_events_table,
+            audio_segments_table,
+            scene_descriptions_table,
+            frame_detections_table,
+            shot_boundaries_table,
+            parser_results_table,
+            chat_messages_table,
+        )
+        with self._engine.begin() as conn:
+            for table in run_keyed:
+                conn.execute(table.delete().where(table.c.run_id == run_id))
+
+    def reset_job_for_retry(self, job_id: str, *, run_id: str) -> bool:
+        """Reset a terminal job back to ``queued`` for an in-place retry.
+
+        Assigns a fresh ``run_id`` and clears the terminal fields so a re-run
+        starts clean. Guarded to terminal statuses so a concurrent transition
+        can't clobber a live job. Returns True if the row was reset. Unlike
+        :meth:`update_job`, this writes explicit NULLs (that method skips
+        ``None`` values, so it can't clear a field).
+        """
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                jobs_table.update()
+                .where(jobs_table.c.job_id == job_id)
+                .where(jobs_table.c.status.in_(("completed", "failed", "canceled")))
+                .values(
+                    status="queued",
+                    run_id=run_id,
+                    started_at=None,
+                    finished_at=None,
+                    error_text=None,
+                    celery_task_id=None,
+                )
             )
             return result.rowcount > 0
 

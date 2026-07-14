@@ -230,6 +230,26 @@ def make_canceller(redis_url: str, job_id: str) -> CancellationToken:
     return RedisCancellationToken(job_id, client)
 
 
+def reset_stream(redis_url: str, job_id: str) -> None:
+    """Delete a job's progress stream + cancel flag so a retry replays clean.
+
+    An in-place retry reuses the same ``job_id`` (and thus the same stream key),
+    so the old run's events — including its terminal event — must be cleared;
+    otherwise the SSE replay would hand a reconnecting client the *previous*
+    run's ``job.completed``/``job.failed`` and close immediately. Best-effort:
+    if Redis is down the retry still runs, just without a clean live tail.
+    """
+    try:
+        client = redis.Redis.from_url(redis_url)
+        client.delete(stream_key(job_id), cancel_key(job_id))
+    except Exception:  # noqa: BLE001 - retry must not 500 on a transport blip
+        logger.warning(
+            "Redis unavailable at %s; could not reset stream for job %s",
+            redis_url,
+            job_id,
+        )
+
+
 def signal_cancel(redis_url: str, job_id: str) -> None:
     """Set the per-job cancel flag so a running pipeline stops at its next check.
 

@@ -1,19 +1,35 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useReducer, useRef } from "react";
-import { useCancelJob, useJob } from "../api/hooks";
+import {
+  useCancelJob,
+  useJob,
+  useJobProgress,
+  useRetryJob,
+  type JobChild,
+} from "../api/hooks";
 import { statusColor } from "../lib/format";
 
-// "/jobs/{id}" — the live job page (web-app-plan §7 page 3, step 9).
+// "/jobs/{id}" — the job page (web-app-plan §7 page 3, step 9).
 //
-// Two data sources feed this page:
-//   - useJob(id): the canonical `jobs` row (status, run_id), polled until
-//     terminal. It's the source of truth for navigation + final status.
-//   - EventSource → GET /api/jobs/{id}/events: the live progress stream. The
-//     API replays the whole stream on connect, so a late-loaded page still
-//     fills in, then tails. Events drive the reducer below.
+// A job is either a batch parent (has children) or a leaf run. The route
+// dispatches: parents render a per-run batch panel; leaf runs render the live
+// SSE view below.
 export const Route = createFileRoute("/jobs/$jobId")({
-  component: LiveJob,
+  component: JobPage,
 });
+
+function JobPage() {
+  const { jobId } = Route.useParams();
+  const job = useJob(jobId);
+  // Wait for the first fetch before choosing a view: rendering the leaf SSE
+  // view for what turns out to be a parent would open a needless stream to the
+  // parent's (empty) progress channel.
+  if (!job.data) {
+    return <p className="text-neutral-500">Loading…</p>;
+  }
+  // A parent (batch) job carries children; a leaf run does not.
+  return (job.data.children?.length ?? 0) > 0 ? <BatchJob /> : <LeafJob />;
+}
 
 // ── Live progress state ────────────────────────────────────────────────────
 type PhaseName =
@@ -211,10 +227,11 @@ function overallProgress(state: LiveState): number {
   return total ? done / total : 0;
 }
 
-// ── Component ───────────────────────────────────────────────────────────────
-function LiveJob() {
+// ── Leaf run (live SSE view) ────────────────────────────────────────────────
+function LeafJob() {
   const { jobId } = Route.useParams();
   const job = useJob(jobId);
+  const parentJobId = job.data?.parent_job_id ?? null;
   const cancel = useCancelJob();
   const [state, dispatch] = useReducer(reducer, initialState);
   const logRef = useRef<HTMLDivElement>(null);
@@ -254,9 +271,19 @@ function LiveJob() {
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/" className="text-sm text-blue-600 hover:underline">
-            ← Jobs
-          </Link>
+          {parentJobId ? (
+            <Link
+              to="/jobs/$jobId"
+              params={{ jobId: parentJobId }}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              ← Batch
+            </Link>
+          ) : (
+            <Link to="/" className="text-sm text-blue-600 hover:underline">
+              ← Jobs
+            </Link>
+          )}
           <h1 className="mt-1 text-2xl font-semibold">
             {state.videoName ?? job.data?.video_name ?? "Job"}
           </h1>
@@ -348,7 +375,7 @@ function LiveJob() {
         <section className="rounded border bg-white p-4">
           <h2 className="mb-3 font-medium">Current shot</h2>
           {state.currentShot ? (
-            <div className="space-y-2 text-sm">
+            <div className="space-y-3 text-sm">
               <p className="font-medium">
                 Shot {state.currentShot.idx}
                 <span className="ml-2 font-normal text-neutral-500">
@@ -356,23 +383,40 @@ function LiveJob() {
                 </span>
               </p>
               {state.currentShot.description && (
-                <p className="text-neutral-700">{state.currentShot.description}</p>
+                <div>
+                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Scene description
+                  </h3>
+                  <p className="text-neutral-700">
+                    {state.currentShot.description}
+                  </p>
+                </div>
               )}
               {state.currentShot.dinoPrompt && (
-                <p className="text-xs text-neutral-500">
-                  DINO: {state.currentShot.dinoPrompt}
-                </p>
+                <div>
+                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Scene visual targets
+                  </h3>
+                  <p className="text-xs text-neutral-600">
+                    {state.currentShot.dinoPrompt}
+                  </p>
+                </div>
               )}
-              {state.currentShot.targets && (
-                <div className="flex flex-wrap gap-1">
-                  {state.currentShot.targets.map((t) => (
-                    <span
-                      key={t}
-                      className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600"
-                    >
-                      {t}
-                    </span>
-                  ))}
+              {state.currentShot.targets && state.currentShot.targets.length > 0 && (
+                <div>
+                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Scene vocabulary
+                  </h3>
+                  <div className="flex flex-wrap gap-1">
+                    {state.currentShot.targets.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -419,5 +463,173 @@ function LiveJob() {
         </div>
       </section>
     </div>
+  );
+}
+
+// ── Batch job (per-run panel) ───────────────────────────────────────────────
+// A parent job fans out to one child run per video. This lists the children
+// with per-run status/progress and links into each run's live view + inspector.
+function BatchJob() {
+  const { jobId } = Route.useParams();
+  const job = useJob(jobId);
+  const cancel = useCancelJob();
+
+  const children = job.data?.children ?? [];
+  const status = job.data?.status ?? "queued";
+  const total = children.length;
+  const done = children.filter((c) => c.status === "completed").length;
+  const failed = children.filter((c) => c.status === "failed").length;
+  const canceled = children.filter((c) => c.status === "canceled").length;
+  const isActive = status === "queued" || status === "running";
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <Link to="/" className="text-sm text-blue-600 hover:underline">
+            ← Jobs
+          </Link>
+          <h1 className="mt-1 text-2xl font-semibold">
+            {job.data?.video_name ?? "Batch job"}
+          </h1>
+          <p className="text-sm text-neutral-500">
+            {total} run{total === 1 ? "" : "s"}
+          </p>
+        </div>
+        <span className={`rounded px-2 py-0.5 text-sm ${statusColor(status)}`}>
+          {status}
+        </span>
+      </div>
+
+      {/* batch progress + actions */}
+      <section className="space-y-3 rounded border bg-white p-4">
+        <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-100">
+          <div
+            className={`h-full rounded-full transition-all ${
+              failed ? "bg-amber-500" : "bg-blue-500"
+            }`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-neutral-500">
+            {done}/{total} complete
+            {failed ? ` · ${failed} failed` : ""}
+            {canceled ? ` · ${canceled} canceled` : ""}
+          </span>
+          {isActive && (
+            <button
+              onClick={() => cancel.mutate(jobId)}
+              disabled={cancel.isPending}
+              className="rounded border border-red-200 bg-white px-3 py-1 font-medium text-red-600 hover:border-red-400 hover:bg-red-50 disabled:opacity-50"
+            >
+              ■ Cancel all
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* per-run table */}
+      <section className="overflow-hidden rounded border bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-neutral-100 text-left text-neutral-600">
+            <tr>
+              <th className="px-3 py-2">Video</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {children.map((child) => (
+              <ChildRow key={child.job_id} child={child} />
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+// One child-run row: status, a live progress bar while running, and links into
+// the run's live view and (once complete) its inspector.
+const CHILD_TERMINAL = new Set(["completed", "failed", "canceled"]);
+
+function ChildRow({ child }: { child: JobChild }) {
+  const running = child.status === "running";
+  const progress = useJobProgress(child.job_id, running);
+  const pct = Math.round(progress.data?.percent ?? 0);
+  const retry = useRetryJob();
+  const cancel = useCancelJob();
+  const isTerminal = CHILD_TERMINAL.has(child.status);
+  const isCancellable = child.status === "queued" || running;
+
+  return (
+    <tr className="border-t">
+      <td className="px-3 py-2 font-medium">
+        <Link
+          to="/jobs/$jobId"
+          params={{ jobId: child.job_id }}
+          className="hover:underline"
+        >
+          {child.video_name ?? "—"}
+        </Link>
+        {child.error_text && (
+          <p className="text-xs text-red-500">{child.error_text}</p>
+        )}
+      </td>
+      <td className="px-3 py-2">
+        <span className={`rounded px-2 py-0.5 text-xs ${statusColor(child.status)}`}>
+          {child.status}
+        </span>
+        {running && (
+          <div className="mt-1 w-28">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+              <div
+                className="h-full rounded-full bg-blue-500 transition-all"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex items-center justify-end gap-3">
+          {child.status === "completed" && child.run_id && (
+            <Link
+              to="/runs/$runId"
+              params={{ runId: child.run_id }}
+              className="text-blue-600 hover:underline"
+            >
+              inspect →
+            </Link>
+          )}
+          {isCancellable && (
+            <button
+              onClick={() => cancel.mutate(child.job_id)}
+              disabled={cancel.isPending}
+              className="rounded border border-red-200 bg-white px-2 py-0.5 text-xs font-medium text-red-600 hover:border-red-400 hover:bg-red-50 disabled:opacity-50"
+              title="Cancel this run"
+            >
+              ■ Cancel
+            </button>
+          )}
+          {isTerminal && (
+            <button
+              onClick={() => retry.mutate(child.job_id)}
+              disabled={retry.isPending}
+              className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-50"
+              title={
+                child.status === "completed"
+                  ? "Re-run this video as a fresh run"
+                  : "Retry this run"
+              }
+            >
+              ↺ {child.status === "completed" ? "Re-run" : "Retry"}
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }

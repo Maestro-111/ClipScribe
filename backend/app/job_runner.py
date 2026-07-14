@@ -21,12 +21,21 @@ from typing import TYPE_CHECKING
 
 from app.errors import ProblemException
 from app.job_execution import build_task_payload, now_iso
-from app.models import JobCreatedResponse, JobCreateRequest, JobMode, JobStatus
+from app.models import (
+    JobChild,
+    JobCreatedResponse,
+    JobCreateRequest,
+    JobMode,
+    JobResponse,
+    JobStatus,
+)
 from src.utils.ids import new_ulid
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from concurrent.futures import Future, ThreadPoolExecutor
 
+    from app.models import VideoInput
     from app.settings import Settings
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
@@ -36,6 +45,59 @@ logger = logging.getLogger("clip_scribe")
 _TERMINAL_JOB_STATUSES = frozenset(
     {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELED.value}
 )
+_CANCELLABLE_JOB_STATUSES = frozenset({JobStatus.QUEUED.value, JobStatus.RUNNING.value})
+
+
+def aggregate_status(child_statuses: "Sequence[str]") -> str:
+    """Derive a batch parent's status from its children (read-time, §2.1).
+
+    - all children completed → ``completed``
+    - all terminal, at least one failure → ``failed`` (else ``canceled``)
+    - any child still queued/running → ``running`` if any progress or a running
+      child, else ``queued`` (nothing started yet)
+    """
+    if not child_statuses:
+        return JobStatus.QUEUED.value
+
+    statuses = set(child_statuses)
+    completed = JobStatus.COMPLETED.value
+    if statuses == {completed}:
+        return completed
+    if statuses <= _TERMINAL_JOB_STATUSES:
+        if JobStatus.FAILED.value in statuses:
+            return JobStatus.FAILED.value
+        if JobStatus.CANCELED.value in statuses:
+            return JobStatus.CANCELED.value
+        return completed
+    # At least one child is still queued or running.
+    if JobStatus.RUNNING.value in statuses or (statuses & _TERMINAL_JOB_STATUSES):
+        return JobStatus.RUNNING.value
+    return JobStatus.QUEUED.value
+
+
+def _batch_label(videos: "Sequence[VideoInput]") -> str | None:
+    """A human label for the parent row: the first video, plus a count if batched."""
+    if not videos:
+        return None
+    if len(videos) == 1:
+        return videos[0].video_name
+    return f"{videos[0].video_name} (+{len(videos) - 1} more)"
+
+
+def build_job_response(reader: "ClipScribeReaderDB", row: dict) -> JobResponse:
+    """Assemble a :class:`JobResponse`, aggregating parent status from children.
+
+    A parent row (``parent_job_id`` NULL) carries its children and an aggregated
+    status; a child/leaf row is returned with its own status and no children.
+    """
+    children: list[JobChild] = []
+    status = row.get("status", JobStatus.QUEUED.value)
+    if row.get("parent_job_id") is None:
+        child_rows = reader.get_child_jobs(row["job_id"])
+        if child_rows:
+            children = [JobChild(**cr) for cr in child_rows]
+            status = aggregate_status([c.status for c in children])
+    return JobResponse(**{**row, "status": status, "children": children})
 
 
 class JobService:
@@ -59,70 +121,101 @@ class JobService:
         self.futures = futures if futures is not None else {}
 
     def create_job(self, req: JobCreateRequest) -> JobCreatedResponse:
-        """Validate, persist a queued job, and dispatch it to the backend."""
-        video_name = req.video_name
-        video_path = req.video_path
-        video_type = req.video_type
-        video_path_abs: Path | None = None
+        """Fan a batch request out to a parent job + one child run per video.
 
-        if req.mode == JobMode.PARSE:
-            # run_id presence is enforced by the request model; existence is a
-            # DB check (the API's contract: an enqueued parse job is valid).
-            assert req.run_id is not None
-            run = self.reader.get_run(req.run_id)
-            if run is None:
-                raise ProblemException(
-                    status=404,
-                    title="Not Found",
-                    detail=f"run_id '{req.run_id}' not found",
-                )
-            run_id = req.run_id
-            # Fall back to the existing run's video metadata for the parser.
-            video_name = video_name or run.get("video_name")
-            video_path = video_path or run.get("video_path")
-            video_type = video_type or run.get("video_type")
-        else:
-            video_path_abs = self._resolve_input(req.video_path)
-            run_id = new_ulid()
+        Every request writes one parent row (a container, never executed) and
+        one child row + ``run_id`` per video, each dispatched to the backend
+        exactly like a solo job (docs/deployment.md §2.1). The parent's status
+        is derived from its children at read time, so the parent is never
+        dispatched. Returns the parent job id (``run_id`` is null — children own
+        the runs).
+        """
+        if req.mode == JobMode.PARSE or not req.videos:
+            # The web API always sends full/extract with >=1 video; parse is
+            # dev-only and runs via main.py, not here. Fail loud rather than
+            # persist an empty parent.
+            raise ProblemException(
+                status=400,
+                title="Bad Request",
+                detail="a job requires at least one video "
+                "(parse mode is not supported via the job API)",
+            )
+        # Surface an unavailable backend once, before any rows are written, so a
+        # failed request never leaves a half-created parent behind.
+        self._ensure_dispatchable()
+        # Resolve every input up front: a bad path 404s/400s before we persist.
+        resolved = [(v, self._resolve_input(v.video_path)) for v in req.videos]
 
-        job_id = new_ulid()
-
+        device = getattr(self.builder, "device", None)
+        parent_id = new_ulid()
         self.writer.create_job(
-            job_id=job_id,
+            job_id=parent_id,
             mode=req.mode.value,
             status=JobStatus.QUEUED.value,
-            run_id=run_id,
-            video_name=video_name,
-            video_path=video_path,
-            video_type=video_type,
-            device=getattr(self.builder, "device", None),
+            parent_job_id=None,
+            run_id=None,
+            video_name=_batch_label(req.videos),
+            device=device,
             platform=req.platform.value,
             params_json=req.model_dump(mode="json"),
         )
 
-        payload = build_task_payload(
-            job_id=job_id,
-            run_id=run_id,
-            req=req,
-            video_name=video_name,
-            # Inline runs on this machine, so pass the resolved absolute path;
-            # parse jobs (no local file) fall back to the request path.
-            video_path=str(video_path_abs) if video_path_abs else req.video_path,
-            video_type=video_type,
-        )
-        try:
-            self._dispatch(job_id, payload)
-        except Exception as exc:
-            self.writer.update_job_if_status(
-                job_id,
-                allowed_statuses=(JobStatus.QUEUED.value,),
-                status=JobStatus.FAILED.value,
-                finished_at=now_iso(),
-                error_text=str(exc),
+        for video, video_path_abs in resolved:
+            child_id = new_ulid()
+            run_id = new_ulid()
+            # The child stores a single-video request so retrying it re-runs just
+            # this video (retrying the parent re-fans the whole batch).
+            child_req = req.model_copy(update={"videos": [video]})
+            self.writer.create_job(
+                job_id=child_id,
+                mode=req.mode.value,
+                status=JobStatus.QUEUED.value,
+                parent_job_id=parent_id,
+                run_id=run_id,
+                video_name=video.video_name,
+                video_path=video.video_path,
+                video_type=video.video_type,
+                device=device,
+                platform=req.platform.value,
+                params_json=child_req.model_dump(mode="json"),
             )
-            raise
+            payload = build_task_payload(
+                job_id=child_id,
+                run_id=run_id,
+                req=child_req,
+                video_name=video.video_name,
+                # Inline runs on this machine, so pass the resolved absolute path.
+                video_path=str(video_path_abs),
+                video_type=video.video_type,
+            )
+            try:
+                self._dispatch(child_id, payload)
+            except Exception as exc:  # noqa: BLE001 - recorded on the child row
+                # Best-effort: one child failing to dispatch doesn't abort the
+                # batch; the parent's aggregate status reflects the failure.
+                logger.exception("Failed to dispatch child job %s", child_id)
+                self.writer.update_job_if_status(
+                    child_id,
+                    allowed_statuses=(JobStatus.QUEUED.value,),
+                    status=JobStatus.FAILED.value,
+                    finished_at=now_iso(),
+                    error_text=str(exc),
+                )
 
-        return JobCreatedResponse(job_id=job_id, run_id=run_id, status=JobStatus.QUEUED)
+        return JobCreatedResponse(
+            job_id=parent_id, run_id=None, status=JobStatus.QUEUED
+        )
+
+    def _ensure_dispatchable(self) -> None:
+        """Fail fast (503) if the inline backend cannot run a job right now."""
+        if self.settings.job_backend != "celery" and (
+            self.executor is None or self.builder is None
+        ):
+            raise ProblemException(
+                status=503,
+                title="Service Unavailable",
+                detail="Inline job execution is unavailable (models not loaded).",
+            )
 
     def _dispatch(self, job_id: str, payload: dict) -> None:
         """Hand the job off to the configured backend."""
@@ -152,30 +245,36 @@ class JobService:
         finally:
             self.futures.pop(payload["job_id"], None)
 
-    def cancel_job(self, job_id: str) -> None:
-        """Cancel a queued or running job.
+    def _effective_status(self, job: dict) -> str:
+        """A job's user-facing status: aggregated from children for a parent."""
+        if job.get("parent_job_id") is None:
+            children = self.reader.get_child_jobs(job["job_id"])
+            if children:
+                return aggregate_status([c["status"] for c in children])
+        return job.get("status", JobStatus.QUEUED.value)
+
+    def _cancel_one(self, job: dict, *, strict: bool = True) -> None:
+        """Cancel a single (leaf) job. ``strict`` raises 409 when not cancellable.
 
         Queued jobs are prevented from starting (``Future.cancel()`` inline, or
         ``revoke`` for celery). Running jobs cannot be interrupted mid-engine yet
         (cooperative cancel is web-app-plan §10.10); the DB is marked canceled
         immediately and :func:`run_job_core` respects it when the engine returns
-        so the status is never overwritten to completed.
+        so the status is never overwritten to completed. With ``strict=False``
+        (batch children) an already-terminal job is skipped silently.
         """
-        job = self.reader.get_job(job_id)
-        if job is None:
-            raise ProblemException(
-                status=404, title="Not Found", detail=f"job '{job_id}' not found"
-            )
-        cancellable = {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
-        if job["status"] not in cancellable:
-            raise ProblemException(
-                status=409,
-                title="Conflict",
-                detail=(
-                    f"job '{job_id}' is '{job['status']}' — "
-                    "only queued or running jobs can be canceled"
-                ),
-            )
+        job_id = job["job_id"]
+        if job["status"] not in _CANCELLABLE_JOB_STATUSES:
+            if strict:
+                raise ProblemException(
+                    status=409,
+                    title="Conflict",
+                    detail=(
+                        f"job '{job_id}' is '{job['status']}' — "
+                        "only queued or running jobs can be canceled"
+                    ),
+                )
+            return
 
         # Signal a running engine to stop at its next checkpoint (cooperative
         # cancel). Set before the backend-specific handling below so the flag is
@@ -206,11 +305,11 @@ class JobService:
 
         canceled = self.writer.update_job_if_status(
             job_id,
-            allowed_statuses=tuple(cancellable),
+            allowed_statuses=tuple(_CANCELLABLE_JOB_STATUSES),
             status=JobStatus.CANCELED.value,
             finished_at=now_iso(),
         )
-        if not canceled:
+        if not canceled and strict:
             latest = self.reader.get_job(job_id)
             latest_status = latest["status"] if latest else "missing"
             raise ProblemException(
@@ -222,45 +321,103 @@ class JobService:
                 ),
             )
 
-    def delete_job(self, job_id: str) -> None:
-        """Delete a job, canceling it first if it is still queued or running.
+    def cancel_job(self, job_id: str) -> None:
+        """Cancel a queued or running job.
 
-        Terminal jobs are removed outright. A queued/running job is canceled
-        (via :meth:`cancel_job`, so the queued task is revoked / de-queued and
-        the DB is marked canceled) before its row is deleted. Note that under
-        the current best-effort cancel, a *running* engine keeps executing until
-        it returns — but its terminal write targets a row that no longer exists,
-        so the delete is safe; the in-flight run simply finishes unrecorded.
+        For a batch parent, cancels every still-cancellable child best-effort
+        (the parent status is derived, so no parent row is written). For a leaf
+        job, cancels it and 409s if it is already terminal.
         """
         job = self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
-        if job["status"] not in _TERMINAL_JOB_STATUSES:
-            # Non-terminal ⇒ queued or running, both cancellable. Stop it first
-            # so we don't orphan a live future / queued celery task.
-            self.cancel_job(job_id)
-        self.writer.delete_job(job_id)
+        if job.get("parent_job_id") is None:
+            children = self.reader.get_child_jobs(job_id)
+            if children:
+                cancellable = [
+                    c for c in children if c["status"] in _CANCELLABLE_JOB_STATUSES
+                ]
+                if not cancellable:
+                    raise ProblemException(
+                        status=409,
+                        title="Conflict",
+                        detail=(
+                            f"job '{job_id}' has no queued or running runs to cancel"
+                        ),
+                    )
+                for child in cancellable:
+                    self._cancel_one(child, strict=False)
+                return
+        self._cancel_one(job, strict=True)
 
-    def retry_job(self, job_id: str) -> JobCreatedResponse:
-        """Create a fresh job from the stored params of a failed/canceled job."""
+    def delete_job(self, job_id: str) -> None:
+        """Delete a job and all its associated run data.
+
+        A parent's children are each torn down — canceled if still active, their
+        run rows + artifacts purged, and their job row removed — before the
+        parent row itself. Deleting a single child does the same for that one
+        run. Under the current best-effort cancel, a *running* engine keeps
+        executing until it returns — but its terminal write then targets a row
+        that no longer exists, so the delete is safe; the in-flight run simply
+        finishes unrecorded.
+        """
         job = self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
+        if job.get("parent_job_id") is None:
+            for child in self.reader.get_child_jobs(job_id):
+                self._delete_child(child)
+            # A pure parent owns no run; a legacy standalone job might.
+            if job["status"] not in _TERMINAL_JOB_STATUSES:
+                self._cancel_one(job, strict=False)
+            if job.get("run_id"):
+                self._purge_run(job["run_id"])
+            self.writer.delete_job(job_id)
+        else:
+            self._delete_child(job)
+
+    def _delete_child(self, job: dict) -> None:
+        """Cancel (if active), purge the run's data + artifacts, and delete the row."""
+        if job["status"] not in _TERMINAL_JOB_STATUSES:
+            self._cancel_one(job, strict=False)
+        run_id = job.get("run_id")
+        if run_id:
+            self._purge_run(run_id)
+        self.writer.delete_job(job["job_id"])
+
+    def retry_job(self, job_id: str) -> JobCreatedResponse:
+        """Retry a terminal job.
+
+        A **child** run (part of a batch) is retried *in place*: the same job row
+        is reset to queued with a fresh ``run_id`` and re-dispatched, so it stays
+        in its parent batch and only that video re-runs. A **parent** (or
+        standalone) job is re-created from its stored params, re-fanning the
+        whole batch as a new job.
+        """
+        job = self.reader.get_job(job_id)
+        if job is None:
+            raise ProblemException(
+                status=404, title="Not Found", detail=f"job '{job_id}' not found"
+            )
+        if job.get("parent_job_id") is not None:
+            return self._retry_child_in_place(job)
+
         retryable = {
             JobStatus.FAILED.value,
             JobStatus.CANCELED.value,
             JobStatus.COMPLETED.value,
         }
-        if job["status"] not in retryable:
+        status = self._effective_status(job)
+        if status not in retryable:
             raise ProblemException(
                 status=409,
                 title="Conflict",
                 detail=(
-                    f"job '{job_id}' is '{job['status']}' — "
+                    f"job '{job_id}' is '{status}' — "
                     "only completed, failed, or canceled jobs can be retried"
                 ),
             )
@@ -273,6 +430,102 @@ class JobService:
             )
         req = JobCreateRequest.model_validate(params)
         return self.create_job(req)
+
+    def _retry_child_in_place(self, job: dict) -> JobCreatedResponse:
+        """Re-run one child run under its existing ``job_id`` and parent batch."""
+        job_id = job["job_id"]
+        if job["status"] not in _TERMINAL_JOB_STATUSES:
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"run '{job_id}' is '{job['status']}' — "
+                    "only completed, failed, or canceled runs can be retried"
+                ),
+            )
+        params = job.get("params_json")
+        if not params:
+            raise ProblemException(
+                status=422,
+                title="Unprocessable Entity",
+                detail=f"run '{job_id}' has no stored params and cannot be retried",
+            )
+        self._ensure_dispatchable()
+        req = JobCreateRequest.model_validate(params)
+        if not req.videos:
+            raise ProblemException(
+                status=422,
+                title="Unprocessable Entity",
+                detail=f"run '{job_id}' has no video to retry",
+            )
+        video = req.videos[0]
+        video_path_abs = self._resolve_input(video.video_path)
+        old_run_id = job.get("run_id")
+        new_run_id = new_ulid()
+
+        # Reset the row (guarded to terminal) before touching Redis/dispatch.
+        if not self.writer.reset_job_for_retry(job_id, run_id=new_run_id):
+            latest = self.reader.get_job(job_id)
+            latest_status = latest["status"] if latest else "missing"
+            raise ProblemException(
+                status=409,
+                title="Conflict",
+                detail=(
+                    f"run '{job_id}' is '{latest_status}' — "
+                    "only completed, failed, or canceled runs can be retried"
+                ),
+            )
+
+        # The retry supersedes the old run: drop its persisted rows + artifacts
+        # so it isn't left orphaned (the row now points at new_run_id).
+        if old_run_id and old_run_id != new_run_id:
+            self._purge_run(old_run_id)
+
+        # Drop the previous run's stream so the SSE replay starts clean (the
+        # job_id — and thus the stream key — is reused).
+        from app.events import reset_stream
+
+        reset_stream(self.settings.redis_url, job_id)
+
+        payload = build_task_payload(
+            job_id=job_id,
+            run_id=new_run_id,
+            req=req,
+            video_name=video.video_name,
+            video_path=str(video_path_abs),
+            video_type=video.video_type,
+        )
+        try:
+            self._dispatch(job_id, payload)
+        except Exception as exc:  # noqa: BLE001 - recorded on the row
+            self.writer.update_job_if_status(
+                job_id,
+                allowed_statuses=(JobStatus.QUEUED.value,),
+                status=JobStatus.FAILED.value,
+                finished_at=now_iso(),
+                error_text=str(exc),
+            )
+            raise
+        return JobCreatedResponse(
+            job_id=job_id, run_id=new_run_id, status=JobStatus.QUEUED
+        )
+
+    def _purge_run(self, run_id: str) -> None:
+        """Delete a superseded run's DB rows and artifact directory (best-effort)."""
+        import shutil
+
+        from app.settings import PROJECT_ROOT
+        from src.utils.artifacts import run_artifact_dir
+
+        self.writer.delete_run(run_id)
+        art_dir = (PROJECT_ROOT / run_artifact_dir(run_id)).resolve()
+        try:
+            if art_dir.is_dir():
+                shutil.rmtree(art_dir)
+        except OSError:
+            logger.warning(
+                "Failed to remove artifact dir for run %s", run_id, exc_info=True
+            )
 
     def _resolve_input(self, rel_path: str | None) -> Path:
         """Resolve a request path under INPUT_DIR, guarding against traversal."""

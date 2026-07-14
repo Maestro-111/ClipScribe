@@ -281,6 +281,63 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             result = conn.execute(text(query), params)
             return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
 
+    def list_parent_jobs(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Top-level (parent/standalone) jobs, most recent first.
+
+        Excludes child runs (``parent_job_id`` set). Status is not filtered here:
+        a parent's own row status is inert — its effective status is aggregated
+        from :meth:`get_child_jobs` in the API layer — so filtering happens after
+        aggregation, not in SQL.
+        """
+        query = (
+            "SELECT * FROM jobs WHERE parent_job_id IS NULL "
+            "ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
+        )
+        with self._engine.connect() as conn:
+            result = conn.execute(text(query), {"limit": limit, "offset": offset})
+            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
+
+    def get_child_jobs(self, parent_job_id: str) -> list[dict]:
+        """Child runs of a batch job, in submission order (oldest first)."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM jobs WHERE parent_job_id = :pid "
+                    "ORDER BY created_at ASC, job_id ASC"
+                ),
+                {"pid": parent_job_id},
+            )
+            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
+
+    def get_run_siblings(self, run_id: str) -> list[dict]:
+        """Sibling runs that share the batch parent of ``run_id``'s child job.
+
+        Returns ``{job_id, run_id, status, video_name}`` in submission order,
+        including the run itself. Empty when the run has no child job row (e.g. a
+        CLI run written outside the job API), which the caller treats as a
+        standalone run with no siblings.
+        """
+        with self._engine.connect() as conn:
+            child = (
+                conn.execute(
+                    text("SELECT parent_job_id FROM jobs WHERE run_id = :rid LIMIT 1"),
+                    {"rid": run_id},
+                )
+                .mappings()
+                .fetchone()
+            )
+            if child is None or child["parent_job_id"] is None:
+                return []
+            result = conn.execute(
+                text(
+                    "SELECT job_id, parent_job_id, run_id, status, video_name "
+                    "FROM jobs WHERE parent_job_id = :pid AND run_id IS NOT NULL "
+                    "ORDER BY created_at ASC, job_id ASC"
+                ),
+                {"pid": child["parent_job_id"]},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
     @staticmethod
     def _decode_job(row: dict) -> dict:
         """Decode ``params_json`` to a dict when the driver returns raw text.

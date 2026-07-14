@@ -136,6 +136,42 @@ def test_list_jobs_orders_recent_first_and_filters_status(db):
     assert len(reader.list_jobs(limit=1)) == 1
 
 
+def test_parent_children_and_siblings(db):
+    writer, reader, _ = db
+    parent = new_ulid()
+    child_a = new_ulid()
+    child_b = new_ulid()
+    writer.create_job(job_id=parent, mode="full", status="queued")
+    writer.create_job(
+        job_id=child_a,
+        mode="full",
+        parent_job_id=parent,
+        run_id="run-a",
+        video_name="a.mp4",
+    )
+    writer.create_job(
+        job_id=child_b,
+        mode="full",
+        parent_job_id=parent,
+        run_id="run-b",
+        video_name="b.mp4",
+    )
+
+    # Only the parent is top-level; children are excluded from the list.
+    parents = reader.list_parent_jobs()
+    assert [p["job_id"] for p in parents] == [parent]
+
+    children = reader.get_child_jobs(parent)
+    assert [c["job_id"] for c in children] == [child_a, child_b]
+    assert children[0]["parent_job_id"] == parent
+
+    # A run resolves to its siblings (both children), including itself.
+    siblings = reader.get_run_siblings("run-a")
+    assert {s["run_id"] for s in siblings} == {"run-a", "run-b"}
+    # A run with no batch job has no siblings.
+    assert reader.get_run_siblings("orphan") == []
+
+
 def test_list_runs_most_recent_first(db):
     writer, reader, engine = db
     with engine.begin() as conn:
@@ -245,3 +281,35 @@ def test_get_parser_results(db):
     rows = reader.get_parser_results("r1")
     assert len(rows) == 1
     assert rows[0]["evaluation"] in (True, 1)
+
+
+def test_delete_run_clears_run_keyed_tables(db):
+    writer, reader, engine = db
+    with engine.begin() as conn:
+        conn.execute(runs_table.insert(), {"run_id": "r1", "video_name": "a"})
+        conn.execute(
+            frame_detections_table.insert(),
+            {
+                "run_id": "r1",
+                "frame_idx": 0,
+                "timestamp_sec": 0.0,
+                "source": "dino",
+                "box_x1": 0,
+                "box_y1": 0,
+                "box_x2": 1,
+                "box_y2": 1,
+            },
+        )
+        conn.execute(
+            parser_results_table.insert(),
+            {"run_id": "r1", "platform": "youtube", "evaluation": True},
+        )
+        # A second run must survive the delete.
+        conn.execute(runs_table.insert(), {"run_id": "r2", "video_name": "b"})
+
+    writer.delete_run("r1")
+
+    assert reader.get_run("r1") is None
+    assert reader.get_frame_detections("r1") == []
+    assert reader.get_parser_results("r1") == []
+    assert reader.get_run("r2") is not None

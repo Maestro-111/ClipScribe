@@ -72,14 +72,33 @@ PLATFORM_PARAMS_MODELS: dict[PlatformName, type[BasePlatformParams]] = {
 }
 
 
+class VideoInput(BaseModel):
+    """One video in a job.
+
+    A job batches one or more videos that share the same brand/product context,
+    so ``platform``, ``platform_params``, and hints live on the job while the
+    per-video path/name/type live here. Keeping the three grouped (rather than
+    three parallel lists) makes it impossible for them to drift out of
+    alignment.
+    """
+
+    # Relative to INPUT_DIR (populated via POST /uploads or already in input/).
+    video_path: str
+    video_name: str
+    video_type: str | None = None
+
+
 class JobCreateRequest(BaseModel):
     """Create + enqueue a job. Mirrors the ``main.py`` params, minus device.
 
     Device is not user-settable: the web app uses process configuration
     (``CLIPSCRIBE_DEVICE``), while ``backend/main.py`` may pass a hardcoded
-    local override. Video is referenced by a server-side path under
-    ``INPUT_DIR`` (populated via ``POST /uploads`` or already present in
-    ``input/``).
+    local override.
+
+    A job fans out to one run per entry in ``videos`` (docs/deployment.md §2.1):
+    the service writes a parent job row plus one child job (and ``run_id``) per
+    video. All videos in a job share ``platform``, ``platform_params``, and
+    hints.
 
     ``platform`` selects the evaluation platform; ``platform_params`` is a raw
     object validated against the selected platform's schema (see
@@ -89,10 +108,9 @@ class JobCreateRequest(BaseModel):
 
     mode: JobMode
     platform: PlatformName = PlatformName.YOUTUBE
-    # Relative to INPUT_DIR. Required for full/extract; ignored for parse.
-    video_path: str | None = None
-    video_name: str | None = None
-    video_type: str | None = None
+    # One run per video. Required (non-empty) for full/extract; ignored for
+    # parse (which re-evaluates an existing run referenced by run_id).
+    videos: list[VideoInput] = Field(default_factory=list)
     # Shape depends on `platform`; parsed into the matching BasePlatformParams
     # subclass in the validator below.
     platform_params: dict[str, Any] = Field(default_factory=dict)
@@ -109,10 +127,9 @@ class JobCreateRequest(BaseModel):
             if not self.run_id:
                 raise ValueError("run_id is required for mode 'parse'")
         else:
-            if not self.video_path or not self.video_name:
+            if not self.videos:
                 raise ValueError(
-                    "video_path and video_name are required for mode "
-                    f"'{self.mode.value}'"
+                    f"at least one video is required for mode '{self.mode.value}'"
                 )
 
         model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
@@ -136,10 +153,29 @@ class JobCreatedResponse(BaseModel):
     status: JobStatus
 
 
-class JobResponse(BaseModel):
-    """Full orchestration state of a job."""
+class JobChild(BaseModel):
+    """One child run within a batch job (summary for the parent's detail view)."""
 
     job_id: str
+    run_id: str | None = None
+    status: str
+    video_name: str | None = None
+    error_text: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class JobResponse(BaseModel):
+    """Full orchestration state of a job.
+
+    A parent (batch) job has ``run_id`` null and ``children`` populated, and its
+    ``status`` is aggregated from those children at read time. A child (or a
+    parse job) has ``parent_job_id`` set and no ``children`` of its own.
+    """
+
+    job_id: str
+    parent_job_id: str | None = None
     run_id: str | None = None
     status: str
     mode: str | None = None
@@ -152,6 +188,8 @@ class JobResponse(BaseModel):
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    # Populated only for a parent job; empty for children/leaf jobs.
+    children: list[JobChild] = Field(default_factory=list)
 
 
 class JobListResponse(BaseModel):
@@ -226,6 +264,16 @@ class RunResponse(BaseModel):
     video_path: str | None = None
     video_type: str | None = None
     created_at: str | None = None
+
+
+class RunSibling(BaseModel):
+    """One run within the same batch job, for the inspector's run switcher."""
+
+    job_id: str
+    parent_job_id: str | None = None
+    run_id: str
+    status: str
+    video_name: str | None = None
 
 
 class FrameDetection(BaseModel):

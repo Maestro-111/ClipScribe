@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import {
   useRun,
@@ -6,6 +6,7 @@ import {
   useRunFrames,
   useRunGlobalStats,
   useRunParser,
+  useRunSiblings,
 } from "../api/hooks";
 import type {
   AudioSegment,
@@ -17,8 +18,15 @@ import type {
 import { ChatPanel } from "../components/ChatPanel";
 
 export const Route = createFileRoute("/runs/$runId")({
-  component: RunInspector,
+  component: RunInspectorRoute,
 });
+
+// Keying the inspector by runId remounts it when switching between sibling runs
+// of a batch job, so per-run state (playhead, video dims) never leaks across.
+function RunInspectorRoute() {
+  const { runId } = Route.useParams();
+  return <RunInspector key={runId} runId={runId} />;
+}
 
 // ── constants ──────────────────────────────────────────────────────────────
 
@@ -110,6 +118,18 @@ function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// The shot index covering `t`, or null if none/unknown. Used to clear boxes at
+// scene cuts: a sampled detection is held only while the playhead is still in
+// the same shot it was sampled in, so old boxes never linger past a hard cut.
+function shotIndexAt(shots: ShotBoundary[], t: number): number | null {
+  for (const s of shots) {
+    const start = s.start_sec ?? 0;
+    const end = s.end_sec ?? Infinity;
+    if (t >= start && t < end) return s.shot_index ?? null;
+  }
+  return null;
 }
 
 function frameWindowFor(currentTime: number, duration: number) {
@@ -416,13 +436,14 @@ function ParserTable({ results }: { results: ParserResult[] }) {
 
 // ── RunInspector ──────────────────────────────────────────────────────────
 
-function RunInspector() {
-  const { runId } = Route.useParams();
+function RunInspector({ runId }: { runId: string }) {
+  const navigate = useNavigate();
 
   const run = useRun(runId);
   const globalStats = useRunGlobalStats(runId);
   const audioSegments = useRunAudioSegments(runId);
   const parser = useRunParser(runId);
+  const siblings = useRunSiblings(runId);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   // Fullscreen the wrapper (video + SVG overlay together), not the <video>:
@@ -471,13 +492,27 @@ function RunInspector() {
   // Per-source hold windows, recomputed only when the grouped data changes.
   const holdWindows = useMemo(() => holdWindowsFor(bySource), [bySource]);
 
-  // Currently-active detections, filtered by the layer toggles only
-  // (confidence is intentionally not filtered — show every detection).
+  // The shot under the playhead — used to evict boxes from a previous shot the
+  // instant the video cuts, instead of holding the last sample across the cut.
+  const currentShotIndex = useMemo(
+    () => shotIndexAt(globalStats.data?.shot_boundaries ?? [], currentTime),
+    [globalStats.data, currentTime],
+  );
+
+  // Currently-active detections, filtered by the layer toggles and constrained
+  // to the current shot (confidence is intentionally not filtered — show every
+  // detection). The shot constraint only applies when both the playhead's shot
+  // and the detection's shot are known.
   const visibleDetections = useMemo(() => {
-    return activeDetections(bySource, holdWindows, currentTime).filter((d) =>
-      enabledSources.has(d.source as DetectionSource),
-    );
-  }, [bySource, holdWindows, currentTime, enabledSources]);
+    return activeDetections(bySource, holdWindows, currentTime)
+      .filter((d) => enabledSources.has(d.source as DetectionSource))
+      .filter(
+        (d) =>
+          currentShotIndex == null ||
+          d.shot_index == null ||
+          d.shot_index === currentShotIndex,
+      );
+  }, [bySource, holdWindows, currentTime, enabledSources, currentShotIndex]);
 
   const handleSeek = useCallback((t: number) => {
     if (videoRef.current) {
@@ -490,11 +525,46 @@ function RunInspector() {
   const audio = audioSegments.data ?? [];
   const parserResults = parser.data ?? [];
 
+  // Sibling runs share this run's batch job; the switcher flips between them.
+  // Only completed runs have inspectable data (the extractor writes the run row
+  // at the end), so navigation is restricted to completed siblings and the
+  // current run shows a "still processing" notice until it finishes.
+  const siblingRuns = siblings.data ?? [];
+  const currentIdx = siblingRuns.findIndex((s) => s.run_id === runId);
+  const currentSibling = currentIdx >= 0 ? siblingRuns[currentIdx] : undefined;
+  const hasSiblings = siblingRuns.length > 1;
+  const runReady = currentSibling
+    ? currentSibling.status === "completed"
+    : !run.error && !!run.data;
+  // All siblings share one parent; use it for the "back to batch" link.
+  const parentJobId = siblingRuns[0]?.parent_job_id ?? null;
+  const prevCompleted =
+    currentIdx > 0
+      ? [...siblingRuns.slice(0, currentIdx)]
+          .reverse()
+          .find((s) => s.status === "completed")
+      : undefined;
+  const nextCompleted =
+    currentIdx >= 0
+      ? siblingRuns.slice(currentIdx + 1).find((s) => s.status === "completed")
+      : undefined;
+  const goToRun = (rid: string) =>
+    void navigate({ to: "/runs/$runId", params: { runId: rid } });
+
   return (
     <div className="space-y-6">
       {/* heading */}
       <div>
-        <h1 className="text-2xl font-semibold">Run inspector</h1>
+        {parentJobId && (
+          <Link
+            to="/jobs/$jobId"
+            params={{ jobId: parentJobId }}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            ← Batch
+          </Link>
+        )}
+        <h1 className="mt-1 text-2xl font-semibold">Run inspector</h1>
         {run.data?.video_name && (
           <p className="text-neutral-500">{run.data.video_name}</p>
         )}
@@ -505,6 +575,64 @@ function RunInspector() {
         )}
       </div>
 
+      {/* ── run switcher (batch jobs only) ── */}
+      {hasSiblings && (
+        <div className="flex items-center gap-3 rounded border bg-white px-3 py-2 text-sm">
+          <span className="text-neutral-500">
+            Run {currentIdx + 1} of {siblingRuns.length} in this job
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!prevCompleted}
+              onClick={() => prevCompleted && goToRun(prevCompleted.run_id)}
+              className="rounded border px-2 py-1 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <select
+              value={runId}
+              onChange={(e) => goToRun(e.target.value)}
+              className="max-w-[16rem] rounded border px-2 py-1"
+            >
+              {siblingRuns.map((s, i) => (
+                <option
+                  key={s.run_id}
+                  value={s.run_id}
+                  // Only completed runs can be inspected; others stay visible
+                  // (so you can see the batch) but aren't selectable.
+                  disabled={s.status !== "completed" && s.run_id !== runId}
+                >
+                  {i + 1}. {s.video_name ?? s.run_id} — {s.status}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!nextCompleted}
+              onClick={() => nextCompleted && goToRun(nextCompleted.run_id)}
+              className="rounded border px-2 py-1 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!runReady ? (
+        <section className="rounded border bg-white p-8 text-center">
+          <p className="text-neutral-600">
+            This run is still {currentSibling?.status ?? "processing"} — nothing
+            to inspect yet.
+          </p>
+          {hasSiblings && (
+            <p className="mt-1 text-sm text-neutral-400">
+              Pick a completed run above, or check back when it finishes.
+            </p>
+          )}
+        </section>
+      ) : (
+        <>
       {/* ── video + SVG overlay ── */}
       <section className="space-y-3 rounded border bg-white p-4">
         <h2 className="font-medium">Video</h2>
@@ -611,6 +739,8 @@ function RunInspector() {
         <h2 className="mb-3 font-medium">Ask about this video</h2>
         <ChatPanel runId={runId} />
       </section>
+        </>
+      )}
     </div>
   );
 }

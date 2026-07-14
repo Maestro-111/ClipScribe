@@ -121,7 +121,7 @@ export interface paths {
         get: operations["get_job_jobs__job_id__get"];
         put?: never;
         post?: never;
-        /** Delete a completed, failed, or canceled job */
+        /** Delete a job (canceling it first if still queued or running) */
         delete: operations["delete_job_jobs__job_id__delete"];
         options?: never;
         head?: never;
@@ -215,6 +215,29 @@ export interface paths {
         };
         /** Get a run */
         get: operations["get_run_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/siblings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Runs sharing the same batch job
+         * @description Runs in the same batch job (including this one), in submission order.
+         *
+         *     Empty when the run has no batch job (e.g. a CLI-produced run), which the
+         *     inspector reads as "no sibling runs to switch between".
+         */
+        get: operations["get_run_siblings_runs__run_id__siblings_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -613,14 +636,39 @@ export interface components {
             videos: components["schemas"]["InputVideo"][];
         };
         /**
+         * JobChild
+         * @description One child run within a batch job (summary for the parent's detail view).
+         */
+        JobChild: {
+            /** Job Id */
+            job_id: string;
+            /** Run Id */
+            run_id?: string | null;
+            /** Status */
+            status: string;
+            /** Video Name */
+            video_name?: string | null;
+            /** Error Text */
+            error_text?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /**
          * JobCreateRequest
          * @description Create + enqueue a job. Mirrors the ``main.py`` params, minus device.
          *
          *     Device is not user-settable: the web app uses process configuration
          *     (``CLIPSCRIBE_DEVICE``), while ``backend/main.py`` may pass a hardcoded
-         *     local override. Video is referenced by a server-side path under
-         *     ``INPUT_DIR`` (populated via ``POST /uploads`` or already present in
-         *     ``input/``).
+         *     local override.
+         *
+         *     A job fans out to one run per entry in ``videos`` (docs/deployment.md §2.1):
+         *     the service writes a parent job row plus one child job (and ``run_id``) per
+         *     video. All videos in a job share ``platform``, ``platform_params``, and
+         *     hints.
          *
          *     ``platform`` selects the evaluation platform; ``platform_params`` is a raw
          *     object validated against the selected platform's schema (see
@@ -631,12 +679,8 @@ export interface components {
             mode: components["schemas"]["JobMode"];
             /** @default youtube */
             platform: components["schemas"]["PlatformName"];
-            /** Video Path */
-            video_path?: string | null;
-            /** Video Name */
-            video_name?: string | null;
-            /** Video Type */
-            video_type?: string | null;
+            /** Videos */
+            videos?: components["schemas"]["VideoInput"][];
             /** Platform Params */
             platform_params?: {
                 [key: string]: unknown;
@@ -700,10 +744,16 @@ export interface components {
         /**
          * JobResponse
          * @description Full orchestration state of a job.
+         *
+         *     A parent (batch) job has ``run_id`` null and ``children`` populated, and its
+         *     ``status`` is aggregated from those children at read time. A child (or a
+         *     parse job) has ``parent_job_id`` set and no ``children`` of its own.
          */
         JobResponse: {
             /** Job Id */
             job_id: string;
+            /** Parent Job Id */
+            parent_job_id?: string | null;
             /** Run Id */
             run_id?: string | null;
             /** Status */
@@ -728,6 +778,8 @@ export interface components {
             started_at?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /** Children */
+            children?: components["schemas"]["JobChild"][];
         };
         /**
          * JobStatus
@@ -812,6 +864,22 @@ export interface components {
             created_at?: string | null;
         };
         /**
+         * RunSibling
+         * @description One run within the same batch job, for the inspector's run switcher.
+         */
+        RunSibling: {
+            /** Job Id */
+            job_id: string;
+            /** Parent Job Id */
+            parent_job_id?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Status */
+            status: string;
+            /** Video Name */
+            video_name?: string | null;
+        };
+        /**
          * ShotBoundary
          * @description Temporal extent of a single shot.
          */
@@ -871,6 +939,24 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * VideoInput
+         * @description One video in a job.
+         *
+         *     A job batches one or more videos that share the same brand/product context,
+         *     so ``platform``, ``platform_params``, and hints live on the job while the
+         *     per-video path/name/type live here. Keeping the three grouped (rather than
+         *     three parallel lists) makes it impossible for them to drift out of
+         *     alignment.
+         */
+        VideoInput: {
+            /** Video Path */
+            video_path: string;
+            /** Video Name */
+            video_name: string;
+            /** Video Type */
+            video_type?: string | null;
         };
     };
     responses: never;
@@ -1253,6 +1339,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_siblings_runs__run_id__siblings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSibling"][];
                 };
             };
             /** @description Validation Error */

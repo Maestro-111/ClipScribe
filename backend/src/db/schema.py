@@ -118,8 +118,13 @@ jobs_table = Table(
     metadata_obj,
     # ULID, also exposed in API URLs.
     Column("job_id", Text, primary_key=True),
+    # Self-FK to the parent batch job. A job is either a parent (this is NULL,
+    # run_id NULL — a pure container fanned out over N videos) or a child (this
+    # points at the parent, run_id set — one video, executed like a solo job).
+    # Every executed run therefore has a parent (docs/deployment.md §2.1).
+    Column("parent_job_id", Text),
     # Populated when the extractor writes the run; null until then (or on
-    # failure before a run exists).
+    # failure before a run exists). Always NULL on a parent row.
     Column("run_id", Text),
     # queued | running | completed | failed | canceled
     Column("status", Text, nullable=False, server_default=text("'queued'")),
@@ -139,6 +144,8 @@ jobs_table = Table(
     Column("finished_at", Text),
     # Nullable until auth lands.
     Column("created_by", Text),
+    # Fetch a parent's children (batch fan-out) in one indexed lookup.
+    Index("ix_jobs_parent_job_id", "parent_job_id"),
 )
 
 frame_detections_table = Table(

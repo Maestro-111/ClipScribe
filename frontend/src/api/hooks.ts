@@ -26,6 +26,8 @@ import type { components } from "./types";
 // satisfy — change the Python model, re-run `pnpm gen:api`, and the form stops
 // compiling until it matches. That's the anti-drift guarantee, made concrete.
 export type JobCreateRequest = components["schemas"]["JobCreateRequest"];
+export type JobResponse = components["schemas"]["JobResponse"];
+export type JobChild = components["schemas"]["JobChild"];
 
 export interface RunFramesWindow {
   fromSec: number;
@@ -308,15 +310,17 @@ export function useRetryJob() {
   });
 }
 
-// Upload a single video file to the server's input/ directory.
-// openapi-fetch can't represent File in the generated schema (it emits
-// string[]), so we fall back to plain fetch + FormData for this one call.
-export function useUploadVideo() {
+export type UploadedVideo = { name: string; path: string; size_bytes: number };
+
+// Upload one or more video files to the server's input/ directory in a single
+// request (POST /uploads accepts a list). openapi-fetch can't represent File in
+// the generated schema (it emits string[]), so we use plain fetch + FormData.
+export function useUploadVideos() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (files: File[]) => {
       const form = new FormData();
-      form.append("files", file);
+      for (const file of files) form.append("files", file);
       const resp = await fetch("/api/uploads", { method: "POST", body: form });
       if (!resp.ok) {
         const p = (await resp.json().catch(() => ({}))) as {
@@ -329,14 +333,37 @@ export function useUploadVideo() {
           p.detail ?? "Server returned an error",
         );
       }
-      const body = (await resp.json()) as {
-        uploaded: { name: string; path: string; size_bytes: number }[];
-      };
-      return body.uploaded[0];
+      const body = (await resp.json()) as { uploaded: UploadedVideo[] };
+      return body.uploaded;
     },
     // Refresh the input picker after a successful upload.
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.inputs() });
+    },
+  });
+}
+
+// Sibling runs of the run belonging to the same batch job (for the run
+// inspector's run switcher). Empty for a standalone run.
+export type RunSibling = components["schemas"]["RunSibling"];
+
+export function useRunSiblings(runId: string) {
+  return useQuery({
+    queryKey: ["runs", runId, "siblings"] as const,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/siblings", {
+          params: { path: { run_id: runId } },
+        }),
+      ) as unknown as RunSibling[],
+    // Poll while any sibling is still working, so the switcher enables runs as
+    // they finish; stop once every run is terminal.
+    refetchInterval: (query) => {
+      const data = query.state.data as RunSibling[] | undefined;
+      const pending = data?.some(
+        (s) => !TERMINAL_JOB_STATUSES.has(s.status),
+      );
+      return pending ? 3000 : false;
     },
   });
 }
