@@ -336,6 +336,4 @@ def test_delete_job_clears_job_scoped_chat_only(db):
     assert [m["content"] for m in reader.get_job_chat_messages("j2", "s1")] == [
         "job two"
     ]
-    assert [m["content"] for m in reader.get_chat_messages("r1", "s1")] == [
-        "run one"
-    ]
+    assert [m["content"] for m in reader.get_chat_messages("r1", "s1")] == ["run one"]

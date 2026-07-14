@@ -184,7 +184,7 @@ cd frontend && pnpm install && pnpm dev
 
 ### Mode 3 — backend/main.py (native MPS worker)
 
-Run the pipeline from the script directly. Note, this will not use Reddis and it may use Postgres or Sqlite db. May use MPS. 
+Run the pipeline from the script directly. Note, this will not use Reddis and it may use Postgres or Sqlite db. May use MPS.
 
 Mode 2 uses the Vite dev-server `/api` proxy; Mode 1 serves the built SPA behind nginx doing the same proxy — same mental model in both.
 
