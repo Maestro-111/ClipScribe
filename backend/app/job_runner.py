@@ -257,11 +257,11 @@ class JobService:
         """Cancel a single (leaf) job. ``strict`` raises 409 when not cancellable.
 
         Queued jobs are prevented from starting (``Future.cancel()`` inline, or
-        ``revoke`` for celery). Running jobs cannot be interrupted mid-engine yet
-        (cooperative cancel is web-app-plan §10.10); the DB is marked canceled
-        immediately and :func:`run_job_core` respects it when the engine returns
-        so the status is never overwritten to completed. With ``strict=False``
-        (batch children) an already-terminal job is skipped silently.
+        ``revoke`` for celery). Running jobs are signaled through the Redis-backed
+        cooperative cancel token and stop at the next safe checkpoint. The DB is
+        marked canceled immediately and :func:`run_job_core` never overwrites it
+        to completed. With ``strict=False`` (batch children) an already-terminal
+        job is skipped silently.
         """
         job_id = job["job_id"]
         if job["status"] not in _CANCELLABLE_JOB_STATUSES:
@@ -358,10 +358,9 @@ class JobService:
         A parent's children are each torn down — canceled if still active, their
         run rows + artifacts purged, and their job row removed — before the
         parent row itself. Deleting a single child does the same for that one
-        run. Under the current best-effort cancel, a *running* engine keeps
-        executing until it returns — but its terminal write then targets a row
-        that no longer exists, so the delete is safe; the in-flight run simply
-        finishes unrecorded.
+        run. A running engine is signaled through the cooperative cancel token;
+        if it still reaches a terminal write after the row is gone, the guarded
+        update is a no-op and the deleted run is not resurrected.
         """
         job = self.reader.get_job(job_id)
         if job is None:

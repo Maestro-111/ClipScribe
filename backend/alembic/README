@@ -1,14 +1,18 @@
 ClipScribe Alembic migrations.
 
-Run from backend/:
+Run one backend from backend/:
 
     uv run alembic upgrade head
 
 The Alembic environment resolves the active database URL through
-src.db.engine.resolve_database_url(), so migrations target the same SQLite or
-PostgreSQL database configured for the application.
+src.db.engine.resolve_database_url(), so migrations target the SQLite or
+PostgreSQL database selected by CLIPSCRIBE_DB_BACKEND.
+
+From the repository root, `make migrate` applies SQLite migrations always and
+then attempts PostgreSQL using repo-root `.env` values, skipping PostgreSQL when
+it is unavailable or POSTGRESQL_URL is unset.
 
 Use `upgrade head` to apply existing migrations. Use `revision --autogenerate`
 only when authoring a new migration after updating `backend/src/db/schema.py`;
-review the generated file before committing it. Production deploys should run
-the same migration step before starting API or worker processes.
+review the generated file before committing it. Production deploys should run a
+separate release migration job before starting API or worker processes.

@@ -1,8 +1,9 @@
 # ClipScribe Frontend
 
 A Vite + React + TypeScript single-page app for the ClipScribe web dashboard.
-This now covers the jobs list, new-job form, SSE live job page, run inspector,
-and post-run advisory chat described in `docs/web-app-plan.md` §10.
+This now covers the jobs list, multi-video new-job form, batch/live job pages,
+run inspector, and post-run advisory chat described in `docs/web-app-plan.md`
+§10.
 
 ## Stack (and why each piece exists)
 
@@ -90,11 +91,11 @@ src/
 
 ## Current UI scope
 
-- Jobs list: status filter, polling, running-job progress bars, inspect links for completed runs, queued-job stop, failed/canceled retry, and terminal-job delete.
-- New job: create `full` or `extract` jobs from an existing input video or upload; parser-only jobs are disabled in the form for now.
-- Live job page: SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
-- Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, shot/audio timeline, parser criteria table, tracked video download, and advisory chat.
-- Not yet built: running-job cooperative cancellation, the fuller inspector layer controls from the plan, and failed-criterion "ask about this" shortcuts.
+- Jobs list: status filter, polling, parent batch rows with child summaries, running-run progress bars, inspect links for completed runs, cancel/retry actions, and job deletion.
+- New job: create user-facing `full` jobs from one or more existing or uploaded videos; `extract` and parser-only `parse` stay developer paths outside the form.
+- Job pages: parent jobs show the batch's child runs; child/leaf jobs show the SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
+- Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, batch sibling navigation, back-to-batch navigation, shot/audio timeline, parser criteria table, tracked video download, and advisory chat.
+- Not yet built: the fuller inspector layer controls from the plan and failed-criterion "ask about this" shortcuts.
 
 ## Scripts
 

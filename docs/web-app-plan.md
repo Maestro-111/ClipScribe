@@ -22,14 +22,14 @@ to make before that piece is built.
 
 Current checked-in state: the backend relocation, Alembic migrations,
 load-once builder, progress seam, raw detection persistence, the FastAPI app,
-**Celery/Redis job dispatch**, and the Docker split have landed. `POST /jobs` runs either
-in-process (single-slot executor) or via a Redis-backed Celery worker, selected
-by `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, job
-polling/progress, read-only run views, advisory chat, artifact serving, health,
-and metadata endpoints.
+**Celery/Redis job dispatch**, batch parent/child jobs, cooperative cancel, and
+the Docker split have landed. `POST /jobs` runs child jobs either in-process
+(single-slot executor) or via a Redis-backed Celery worker, selected by
+`CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, parent/child
+job polling/progress, read-only run views (including batch siblings), advisory
+chat, artifact serving, health, and metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
 /jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
-Cooperative mid-run interruption is still planned.
 
 ---
 
@@ -272,7 +272,8 @@ and celery paths call the same `run_job_core(...)` lifecycle.
 output).
 ```
 job_id          TEXT PK         # ULID, also exposed in API URLs
-run_id          TEXT FK runs    # populated when extractor writes the run
+parent_job_id   TEXT            # NULL for parent/standalone; parent id for child runs
+run_id          TEXT FK runs    # NULL on batch parents; minted before child execution
 status          TEXT            # queued | running | completed | failed | canceled
 celery_task_id  TEXT
 mode            TEXT            # full | extract | parse
@@ -365,11 +366,14 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
   `alembic.ini` placeholder — so migrations always target the app's DB.
 - Current revisions are a baseline migration for the existing schema, a
   migration adding `jobs`, `frame_detections`, `parser_results`, and
-  `shot_boundaries`, and a chat migration adding `chat_messages`.
+  `shot_boundaries`, a chat migration adding `chat_messages`, and a
+  `parent_job_id` migration for batch fan-out.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
-  repository root). Authoring a new migration: `make revision m="..."` then
-  review the generated script (delete it if the diff was empty).
+  repository root). `make migrate` applies SQLite always and then attempts
+  PostgreSQL with repo-root `.env` values, skipping that second pass if it is
+  unavailable. Authoring a new migration: `make revision m="..."` then review
+  the generated script (delete it if the diff was empty).
 - In deployment, `upgrade head` runs **once per release** as a discrete step
   (a compose one-shot service / K8s Job / deploy command), **not** per worker
   or API replica — all replicas share one DB. It can run from the slim API
@@ -377,13 +381,14 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 
 ### run_id is now minted up front
 
-`run_id` is a **ULID** minted by `ClipScribeEngine.run()` at the start of an
-extract/full run (or the provided id for parse), stored on `self.run_id`, and
-threaded into `extractor.extract(run_id=...)` and `writer.save_run(run_id=...)`.
-This lets the extractor key its artifact directory and raw `frame_detections`
-by the same id **before** the `runs` row exists. ULIDs sort lexicographically
-by creation time, which the jobs-list / run-history ordering relies on.
-Generation lives in `backend/src/utils/ids.py` (`new_ulid`).
+For web jobs, `JobService.create_job` mints one **ULID** `run_id` per child job
+before dispatch and passes it through `run_job_core` into
+`ClipScribeEngine.run(run_id=...)`. The engine still mints a fallback id when a
+local extract/full call omits one; parse mode uses the provided existing
+`run_id`. This lets the extractor key its artifact directory and raw
+`frame_detections` by the same id **before** the `runs` row exists. ULIDs sort
+lexicographically by creation time, which job/run ordering relies on. Generation
+lives in `backend/src/utils/ids.py` (`new_ulid`).
 
 ### Default backend
 
@@ -439,13 +444,14 @@ read. Streams (not pub/sub) so a late subscriber can replay history (§16);
 
 {"type":"job.completed",     "ts":..., "run_id":"..."}
 {"type":"job.failed",        "ts":..., "error":"...","phase":"shot_processing"}
+{"type":"job.canceled",      "ts":..., "run_id":"..."}
 ```
 
 ### Publish sites in the engine
 
 | Event | Hook |
 |---|---|
-| `job.started` / `job.failed` / `job.completed` | `ClipScribeEngine.run` outer try/except |
+| `job.started` / `job.failed` / `job.completed` / `job.canceled` | `ClipScribeEngine.run` outer try/except |
 | `phase.started/completed (scene_detection)` | around `_digest_video` in `extractor_core.py` |
 | `phase.started (audio)` + `audio.segment` + `phase.completed` | `_analyze_audio` segment loop in `extractor_core.py` |
 | `phase.started (shot_processing)` | top of shot loop in `extractor_core.py` |
@@ -487,17 +493,18 @@ Stream-backed SSE progress, read-only run views, artifacts, metadata, uploads,
 and advisory chat.
 
 ### Jobs
-- `POST   /jobs`                       — create a queued job and submit it to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors `main.py` params except device is config-owned. `parse` requires an existing `run_id`; `extract` still writes artifacts only and does not create a `runs` row.
-- `GET    /jobs`                       — paginated, filterable by status.
-- `GET    /jobs/{id}`                  — full state.
-- `GET    /jobs/{id}/events`           — SSE live progress. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
+- `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; parser-only `parse` is local/dev-only and rejected by this API.
+- `GET    /jobs`                       — paginated top-level jobs, filterable by effective status; batch parent status is aggregated from children.
+- `GET    /jobs/{id}`                  — full state. Parents include `children`; child/leaf rows return their own status and no children.
+- `GET    /jobs/{id}/events`           — SSE live progress for a leaf/child job. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
-- `POST   /jobs/{id}/cancel`           — cancel a queued job or mark a running job canceled. Cooperative mid-run interruption is still planned (see §10.10).
-- `POST   /jobs/{id}/retry`            — create a fresh job from a failed/canceled job's stored request payload.
-- `DELETE /jobs/{id}`                  — delete a completed, failed, or canceled job row.
+- `POST   /jobs/{id}/cancel`           — cancel a queued/running child job, or every queued/running child under a parent batch. Running pipelines stop cooperatively at safe checkpoints.
+- `POST   /jobs/{id}/retry`            — retry a terminal parent as a fresh batch, or retry a terminal child in place with a fresh `run_id` after purging the superseded run data/artifacts.
+- `DELETE /jobs/{id}`                  — cancel if active, then delete the job row(s), run-keyed DB rows, and local artifact directory.
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
+- `GET /runs/{id}/siblings`            — jobs in the same batch, derived from child job rows so in-progress siblings are visible before their `runs` rows exist.
 - `GET /runs/{id}/global-stats`        — `global_stats` + `shot_boundaries`.
 - `GET /runs/{id}/objects`             — `visual_object_occurrences` grouped by `global_id`.
 - `GET /runs/{id}/text-events`         — `text_events`.
@@ -521,7 +528,7 @@ and advisory chat.
 - `GET /inputs`                        — list videos under `CLIPSCRIBE_INPUT_DIR`.
 
 ### Uploads
-- `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `JobCreateRequest.video_path` values.
+- `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `videos[].video_path` values.
 
 ### Chat (advisory agent — post-run Q&A, see §13)
 - `POST   /runs/{id}/chat`             — ask a question; streamed (SSE) answer. Body: `{session_id?, message}`.
@@ -551,29 +558,30 @@ and advisory chat.
    - "New job" button.
 
 2. **New job** (`/jobs/new`)
-   - Form for user-facing `full` jobs: `platform_params`, `user_hints`,
+   - Form for user-facing `full` batch jobs: `platform_params`, `user_hints`,
      `video_type`, and `platform`. `extract` and parser-only `parse` remain
-     API/developer paths. Device is process configuration, not submitted in the
-     job request.
-   - Video field: upload via `POST /uploads` OR pick from server-side
+     developer paths. Device is process configuration, not submitted in the job
+     request.
+   - Videos field: upload one or more files via `POST /uploads` OR pick from server-side
      `input/` directory via `GET /inputs`.
    - `GET /defaults` is available for config-driven form expansion; the current
      first-pass form only renders the fields it submits.
-  - Submit → `POST /jobs` → redirect to `/jobs/{job_id}` and watch the SSE
-    progress stream until the response contains a completed `run_id`.
+   - Submit → `POST /jobs` → redirect to the parent `/jobs/{job_id}` batch view.
 
 3. **Live job** (`/jobs/{id}`)
-   - Top progress bar + cancel action.
-   - Phase tree (scene detection, audio, shots N/M, finalize, parse).
-   - Current-shot panel (description, dino prompt, taxonomy targets, frames
-     processed).
-   - Live log tail.
+   - Parent jobs render a batch panel with one row per child run, aggregated
+     status, and per-run inspect/cancel/retry/delete actions.
+   - Child/leaf jobs render the SSE live page: top progress bar, cancel action,
+     phase tree, current-shot panel (description, DINO prompt, taxonomy targets,
+     processed frames), and log tail.
    - Implemented live state is driven by SSE with a reducer keyed off
      `event.type`, while `GET /jobs/{job_id}` remains the canonical status row.
-   - On completed status, auto-redirect (or show CTA) to `/runs/{run_id}`.
+   - Completed child rows link to `/runs/{run_id}`.
 
 4. **Run inspector** (`/runs/{id}`)
    - Top: video player with SVG overlay.
+   - Batch sibling switcher and back-to-batch navigation when the run belongs to
+     a parent job.
    - Layer toggles for tracked objects and OCR text, plus active detection count.
    - Timeline tracks for shots and audio.
    - Bottom: ABCD criteria table from `parser_results`, each row expandable to
@@ -676,7 +684,7 @@ Backend vars (current):
 | Var | Purpose | Local (native) | Container |
 |---|---|---|---|
 | `CLIPSCRIBE_JOB_BACKEND` | `inline` \| `celery` dispatch | `celery` | `celery` |
-| `CLIPSCRIBE_DB_BACKEND` | overrides `database.backend` | unset (yaml `sqlite`) or `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DB_BACKEND` | selects `sqlite` or `postgresql` | unset/`sqlite` or `postgresql` | `postgresql` |
 | `REDIS_URL` | broker + Redis Streams | `redis://localhost:6379/0` | `redis://redis:6379/0` |
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
@@ -877,11 +885,11 @@ These are decisions to make before the corresponding implementation step.
    None today. Likely deferred to post-MVP. If we add it, keep `created_by` on
    `jobs` and gate everything on a session.
 
-4. **Job cancellation semantics.**
-   Celery `revoke(terminate=True)` is hard-kill (SIGTERM). The engine holds
-   open files and a CUDA/MPS context — abrupt termination leaks both. Need
-   cooperative cancellation: a "should_cancel" flag the shot loop checks each
-   iteration. Decide if we want partial results saved on cancel.
+4. **Job cancellation semantics.** **Resolved for cooperative stop.**
+   Celery `revoke(terminate=True)` is still avoided because it can leak files and
+   GPU state. Cancel now sets a Redis-backed flag; the engine, extractor, and
+   parser poll it at safe checkpoints and raise `JobCanceled`. Still open:
+   whether canceled partial artifacts should be surfaced or purged.
 
 5. **Resumability after worker crash.**
    Probably out of scope. Worth deciding because today the extractor writes the
@@ -933,9 +941,10 @@ These are decisions to make before the corresponding implementation step.
 14. **Disk retention.** **Partially mitigated.**
     A `max_artifact_files` config cap (default 350) now bounds the per-frame
     visualization PNGs written per run (the unbounded growth source); the
-    tracked mp4 and `extraction_summary.json` are always kept. Still open: a
-    run-level retention policy (delete after N days / keep last K) and a
-    `DELETE /runs/{id}` endpoint that cleans both DB rows and the artifact dir.
+    tracked mp4 and `extraction_summary.json` are always kept. `DELETE
+    /jobs/{id}` now removes the associated run-keyed DB rows and local artifact
+    directories. Still open: an automatic retention policy (delete after N days
+    / keep last K).
 
 15. **Per-job artifact directory keying.** **Resolved.**
     Artifacts are written to `artifacts/<run_id>/` (ULID). The path convention
@@ -994,8 +1003,9 @@ Strictly ordered; each step is shippable on its own.
    in-memory DB; full end-to-end proof is the first real `main.py` run.
 
 5. **FastAPI app, inline path.** **DONE.** `POST /jobs` writes a queued
-   job and submits it to a single-slot in-process executor in `inline` mode, so
-   the HTTP contract is asynchronous from the client's perspective.
+   parent job plus one child run per video and submits each child to a single-slot
+   in-process executor in `inline` mode, so the HTTP contract is asynchronous
+   from the client's perspective.
    Implemented routes include uploads, input listing, job list/get, read-only
    `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
    Request shape intentionally omits device, using process configuration
@@ -1019,8 +1029,8 @@ Strictly ordered; each step is shippable on its own.
    `app/job_execution.py` (`run_job_core`, the single lifecycle both paths
    share). In celery mode the API loads **no models** — lifespan builds only a
    standalone reader/writer, and `get_reader`/`get_writer` read from
-   `app.state`. Cancel `revoke`s the task (no `terminate`; cooperative cancel is
-   step 10). `docker-compose.yml` gains a `redis` service; `celery` + `redis`
+   `app.state`. Cancel `revoke`s queued tasks without `terminate` and running
+   tasks stop via the cooperative cancel token. `docker-compose.yml` gains a `redis` service; `celery` + `redis`
    added to deps + the `api` group. Config: `CLIPSCRIBE_JOB_BACKEND=celery`,
    `REDIS_URL`. Run the worker natively on macOS/MPS with
    `uv run celery -A app.celery_app worker --pool=solo --concurrency=1`.
@@ -1046,10 +1056,11 @@ Strictly ordered; each step is shippable on its own.
    `EventSource`; `POST /jobs` now redirects there and the jobs list links to it.
    Tested with `fakeredis` in `test/test_api_events.py`.
 
-10. **Cooperative cancel.** Queue/running cancel endpoint exists and marks the
-    job canceled, but the engine cannot yet interrupt mid-run. Remaining:
-    "should_cancel" flag honored by the shot loop + parser, plus partial result
-    handling.
+10. **Cooperative cancel.** **DONE.** Queue/running cancel sets the job row to
+    `canceled`, signals a Redis-backed cancel flag, and the engine/extractor/parser
+    stop at safe checkpoints. Running child jobs emit `job.canceled`; queued
+    canceled jobs may rely on the job-row terminal-status SSE backstop. Remaining:
+    product policy for partial artifacts/results after cancel.
 
 11. **Docker split.** **DONE.** `backend/docker/api/Dockerfile` builds the
     slim torch-free API/migrate image; `backend/docker/core/cpu/Dockerfile`
@@ -1105,10 +1116,10 @@ Strictly ordered; each step is shippable on its own.
   are capped, but run-level retention still needs to
   exist before turning the app on for more than one person.
 
-- **Cancellation correctness.** Hard-killing a worker mid-job leaves OpenCV
-  file handles, partial mp4s, and possibly a corrupted SAM2 inference state
-  on the GPU. Cooperative cancel is the only safe path; it requires touching
-  the shot loop.
+- **Cancellation correctness.** Hard-killing a worker mid-job still risks OpenCV
+  file handles, partial mp4s, and GPU state, so the code uses cooperative
+  checkpoints instead. The residual risk is checkpoint granularity and the
+  product policy for partial artifacts.
 
 - **Type drift Python ↔ TS.** Without OpenAPI codegen wired into CI, the
   shapes will drift the moment a Pydantic field is added.

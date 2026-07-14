@@ -102,7 +102,7 @@ export interface paths {
         /** List jobs */
         get: operations["list_jobs_jobs_get"];
         put?: never;
-        /** Create and enqueue a job */
+        /** Create and enqueue a batch job */
         post: operations["create_job_jobs_post"];
         delete?: never;
         options?: never;
@@ -181,7 +181,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel a queued job */
+        /** Cancel a queued/running job or batch */
         post: operations["cancel_job_jobs__job_id__cancel_post"];
         delete?: never;
         options?: never;
@@ -198,7 +198,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Retry a failed or canceled job */
+        /** Retry a completed, failed, or canceled job/run */
         post: operations["retry_job_jobs__job_id__retry_post"];
         delete?: never;
         options?: never;
@@ -234,8 +234,12 @@ export interface paths {
          * Runs sharing the same batch job
          * @description Runs in the same batch job (including this one), in submission order.
          *
-         *     Empty when the run has no batch job (e.g. a CLI-produced run), which the
-         *     inspector reads as "no sibling runs to switch between".
+         *     Derived from the jobs graph, not the ``runs`` table, so it resolves even
+         *     while a sibling is still processing (its run row isn't written yet). This is
+         *     deliberately *not* guarded by ``_require_run``: the switcher must keep
+         *     working when the current run hasn't been persisted yet, otherwise the user
+         *     lands on an in-progress run and loses the way back. Empty when the run has no
+         *     batch job (e.g. a CLI-produced run), read as "no siblings to switch between".
          */
         get: operations["get_run_siblings_runs__run_id__siblings_get"];
         put?: never;
@@ -746,8 +750,8 @@ export interface components {
          * @description Full orchestration state of a job.
          *
          *     A parent (batch) job has ``run_id`` null and ``children`` populated, and its
-         *     ``status`` is aggregated from those children at read time. A child (or a
-         *     parse job) has ``parent_job_id`` set and no ``children`` of its own.
+         *     ``status`` is aggregated from those children at read time. A child job has
+         *     ``parent_job_id`` set and no ``children`` of its own.
          */
         JobResponse: {
             /** Job Id */

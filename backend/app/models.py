@@ -108,8 +108,8 @@ class JobCreateRequest(BaseModel):
 
     mode: JobMode
     platform: PlatformName = PlatformName.YOUTUBE
-    # One run per video. Required (non-empty) for full/extract; ignored for
-    # parse (which re-evaluates an existing run referenced by run_id).
+    # One run per video. Required (non-empty) for full/extract. Parse validates
+    # here for local/dev callers but is rejected by the web job service.
     videos: list[VideoInput] = Field(default_factory=list)
     # Shape depends on `platform`; parsed into the matching BasePlatformParams
     # subclass in the validator below.
@@ -170,8 +170,8 @@ class JobResponse(BaseModel):
     """Full orchestration state of a job.
 
     A parent (batch) job has ``run_id`` null and ``children`` populated, and its
-    ``status`` is aggregated from those children at read time. A child (or a
-    parse job) has ``parent_job_id`` set and no ``children`` of its own.
+    ``status`` is aggregated from those children at read time. A child job has
+    ``parent_job_id`` set and no ``children`` of its own.
     """
 
     job_id: str
@@ -234,7 +234,7 @@ class PlatformsResponse(BaseModel):
 
 class InputVideo(BaseModel):
     name: str
-    # Relative to INPUT_DIR, suitable for JobCreateRequest.video_path.
+    # Relative to INPUT_DIR, suitable for VideoInput.video_path.
     path: str
     size_bytes: int
 

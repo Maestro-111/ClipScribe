@@ -31,7 +31,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 5. **Parallel Tasks:** Whisper extracts audio, PaddleOCR extracts text, and MTCNN extracts faces.
 6. **Persistence:** `backend/src/db/` writes and reads structured run data, including raw frame detections, shot boundaries, and parser results. Alembic migrations in `backend/alembic/` own schema creation.
 7. **Parser:** `backend/src/parser/` evaluates persisted data against platform-specific criteria such as YouTube rules.
-8. **Web API:** `backend/app/` exposes the FastAPI layer for uploads, job creation/polling, inline or Celery dispatch, Redis Stream-backed SSE progress, cancel/retry/delete, run reads, advisory chat, artifacts, health, and metadata. Cooperative mid-run cancellation is still planned.
+8. **Web API:** `backend/app/` exposes the FastAPI layer for uploads, parent/child batch job creation/polling, inline or Celery dispatch, Redis Stream-backed SSE progress, cooperative cancel/retry/delete, run reads, advisory chat, artifacts, health, and metadata.
 9. **Frontend:** `frontend/` contains the Vite/React dashboard for job listing, job creation, live job progress, run inspection, and advisory chat. It uses pnpm, TanStack Router/Query, Tailwind v4, and OpenAPI-generated types.
 
 ## Setup And Environment
@@ -56,12 +56,12 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `uv run pre-commit run --all-files` - run formatting, lint, and type hooks. Must be invoked from `backend/`: the config is `backend/.pre-commit-config.yaml` (pre-commit discovers the config from the current directory), but hooks always execute from the git root with paths relative to it. This is why the `exclude` patterns are prefixed with `backend/` and the mypy hook is a local hook that `cd backend` before running `uv run mypy`. Running from the repo root fails with `.pre-commit-config.yaml is not a file`.
   - Corollary: the third-party `backend/src/sam2/` and `backend/src/dino/groundingdino/` trees are protected only by the `backend/`-prefixed `exclude`. If the layout changes, update that regex or `ruff --fix` will strip side-effect imports from their `__init__.py` files (notably the GroundingDINO model-registry imports) and break model loading.
 - `make setup`, `make prewarm`, and `make checkpoints` - from the repository root, fetch or verify model assets under `backend/checkpoints/`; these are expensive and can download several GB.
-- `make migrate` - from the repository root, delegates to `cd backend && uv run alembic upgrade head`.
+- `make migrate` - from the repository root, applies SQLite migrations always and then attempts PostgreSQL using repo-root `.env` values, skipping PostgreSQL if unavailable or unset.
 - Frontend commands run from `frontend/`: `pnpm install`, `pnpm gen:api`, `pnpm dev`, `pnpm build`, and `pnpm typecheck`.
 
 ## Current Caveats
 - `backend/main.py` is an entry point to run the pipeline for local dev, not a stable CLI.
-- `backend/app/` supports inline and Celery job dispatch plus Redis Stream-backed SSE progress. Running jobs can be marked canceled, but cooperative mid-run interruption is not implemented yet.
+- `backend/app/` supports inline and Celery job dispatch plus Redis Stream-backed SSE progress. Running jobs stop cooperatively at engine/extractor/parser checkpoints after cancellation.
 - Root Makefile model setup/checkpoint targets are working but expensive; avoid running or recommending them unless model downloads are explicitly in scope.
 - The test suite is minimal.
 - Generated media, databases, logs, and parser/extractor artifacts should usually be ignored during code review unless the task is about outputs.
@@ -74,6 +74,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `backend/src/ocr/`: PaddleOCR wrapper and OCR box consolidation.
 - `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer.
 - `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests and Redis fallback.
+- `backend/src/utils/cancel.py`: Cooperative cancellation interface and null token used by CLI/tests and Redis fallback.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
 - `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

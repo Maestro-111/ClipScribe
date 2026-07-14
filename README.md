@@ -70,9 +70,9 @@ make setup
 Common environment variables:
 
 - `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
-- `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
-- `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
-- `CLIPSCRIBE_DB_BACKEND` - optional override for `database.backend` from `clip_scribe.yaml` (`sqlite` | `postgresql`). The env var wins over yaml, so the Docker/compose stack and prod force `postgresql` without editing the config; local CLI runs keep the yaml default.
+- `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite`. This is the only backend selector; `clip_scribe.yaml` carries only driver-agnostic pool knobs.
+- `POSTGRESQL_URL` - required when `CLIPSCRIBE_DB_BACKEND=postgresql`.
+- `SQLITE_URL` - optional when `CLIPSCRIBE_DB_BACKEND=sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
@@ -86,13 +86,15 @@ The main configuration file is:
 backend/src/clip_scribe/configs/clip_scribe.yaml
 ```
 
-The current checked-in config uses SQLite by default. Switch `database.backend` to `postgresql` (and set `POSTGRESQL_URL`) to use PostgreSQL.
+SQLite is the default when `CLIPSCRIBE_DB_BACKEND` is unset. Set `CLIPSCRIBE_DB_BACKEND=postgresql` plus `POSTGRESQL_URL` to use PostgreSQL.
 
 Database schema is managed by Alembic. Apply migrations after creating a fresh database or pulling new migrations:
 
 ```bash
-uv run alembic upgrade head
+make migrate
 ```
+
+`make migrate` runs SQLite migrations always and then tries PostgreSQL with values from the repo-root `.env`; if PostgreSQL is unavailable or `POSTGRESQL_URL` is unset, that second pass is skipped.
 
 ## Running
 
@@ -105,20 +107,20 @@ The stack is a Vite/React dashboard, a FastAPI API, one or more Celery workers, 
 - `inline` — one long-lived `ClipScribeBuilder` and a single-slot in-process executor.
 - `celery` — a model-free API that dispatches jobs to a Redis-backed Celery worker.
 
-Running jobs can be marked canceled, but cooperative mid-run interruption is still planned. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with advisory chat.
+`POST /jobs` creates a parent job and fans its `videos` array out to one child run per video. Running child jobs stop cooperatively at extractor/parser checkpoints when canceled; parent cancellation cancels every queued or running child. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the batch/live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with sibling navigation and advisory chat.
 
 Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 - `POST /uploads` — upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
 - `GET /inputs` — list server-side input videos accepted by the job form.
-- `POST /jobs` — create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` writes artifacts only (no `runs` row).
-- `GET /jobs` and `GET /jobs/{job_id}` — poll job state.
-- `GET /jobs/{job_id}/events` — SSE stream that replays and tails Redis Stream progress/log events.
+- `POST /jobs` — create a batch job from one or more `videos` sharing platform params and hints; the web UI submits user-facing `full` jobs, while parser-only `parse` runs are local/dev-only and rejected by the job API.
+- `GET /jobs` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
+- `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
-- `POST /jobs/{job_id}/cancel` — cancel a queued job or mark a running job canceled.
-- `POST /jobs/{job_id}/retry` — create a fresh job from a failed/canceled job's stored request.
-- `DELETE /jobs/{job_id}` — remove a completed, failed, or canceled job row.
-- `GET /runs/{run_id}/...` — inspect persisted run data, frame detections, parser results, and artifacts.
+- `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
+- `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
+- `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data and artifacts.
+- `GET /runs/{run_id}/...` — inspect persisted run data, sibling runs, frame detections, parser results, and artifacts.
 - `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed run.
 
 ### Local batch entry point (`main.py`)
@@ -141,7 +143,7 @@ Three images back the web app, all built from the repository root as context:
 
 | Image | Dockerfile                           | Role                                                                                                                                                      |
 | --- |--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, Celery dispatch, advisory chat). Also runs the one-shot Alembic migration.              |
+| `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, Celery dispatch, advisory chat). The same image is used by the one-shot Alembic migration service.              |
 | `worker` | `backend/docker/core/cpu/Dockerfile` | Heavy Celery worker running the full pipeline. CPU build here; `backend/docker/core/gpu/Dockerfile` is the CUDA variant for a Linux + NVIDIA host (see `docs/deployment.md`). |
 | `frontend` | `frontend/Dockerfile`                | Vite/React SPA built with pnpm and served by nginx, which reverse-proxies `/api/*` to the `api` service (SSE-safe).                                       |
 
@@ -160,14 +162,14 @@ The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has 
 
 ### Mode 2 — Hybrid local dev (native MPS worker)
 
-Run only Postgres + Redis (note, you can spin just Redis and specify sqlite as db in backend/src/clip_scribe/configs/clip_scribe.yaml) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
+Run only Postgres + Redis (or just Redis with `CLIPSCRIBE_DB_BACKEND=sqlite`) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
 
 ```bash
 # shell 0 — infra only
 docker compose up postgres redis
 
 # shell 1 — migrations (once)
-make migrate                                          # or: cd backend && uv run alembic upgrade head
+make migrate
 
 # shell 2 — API (native)
 cd backend && uv run uvicorn app.main:app --reload
@@ -181,7 +183,7 @@ cd frontend && pnpm install && pnpm dev
 
 ### Mode 3 — backend/main.py
 
-Run the pipeline from the script directly. Note, this will not use Reddis and it may use Postgres or Sqlite db. May use MPS. 
+Run the pipeline from the script directly. This path does not use Redis; it uses the database selected by `CLIPSCRIBE_DB_BACKEND` and can use MPS when configured in `backend/main.py`.
 
 Mode 2 uses the Vite dev-server `/api` proxy; Mode 1 serves the built SPA behind nginx doing the same proxy — same mental model in both.
 
@@ -193,7 +195,7 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | --- | --- | --- | --- |
 | `POSTGRESQL_URL` | `…@localhost:5433/clipscribe` | `…@postgres:5432/clipscribe` | Secret Manager |
 | `REDIS_URL` | `redis://localhost:6379/0` | `redis://redis:6379/0` | Memorystore URL |
-| `CLIPSCRIBE_DB_BACKEND` | unset (yaml `sqlite`) or `postgresql` | `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DB_BACKEND` | unset/`sqlite` or `postgresql` | `postgresql` | `postgresql` |
 | `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |

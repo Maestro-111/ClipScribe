@@ -5,13 +5,13 @@ and works through what it actually takes to run ClipScribe **at scale** on GCP:
 the Kubernetes nuances (especially GPU scheduling), the managed cloud resources
 required, and the decisions we still need to make.
 
-This is the phase where the product outgrows the local MVP. Today one worker
-processes one job = one `run_id` = one video, and a busy worker leaves the
-backlog in Redis. That model already scales *horizontally by adding workers* —
-what it does **not** yet support is (a) one job spanning many videos, (b) video
-and artifacts living in object storage instead of a local disk, and (c) elastic
-GPU capacity. Those three are the gap between "works on my Mac + one GPU box"
-and "a user uploads 20 videos and we process them in parallel."
+This is the phase where the product outgrows the local MVP. A worker task still
+processes one child job = one `run_id` = one video, and a busy worker leaves the
+backlog in Redis. The API now groups many videos under one parent job and fans
+them out to child tasks. What it does **not** yet support is (a) video and
+artifacts living in object storage instead of a local disk and (b) elastic GPU
+capacity. Those gaps separate "works on my Mac + one GPU box" from "a user
+uploads 20 videos and we process them in parallel on managed infrastructure."
 
 Sections marked **Choice** are decisions to make before the corresponding piece
 is built. Where this doc restates something from `web-app-plan.md`, it links the
@@ -50,47 +50,46 @@ changes, not a rewrite.
 
 ---
 
-## 2. The three MVP-breaking application changes
+## 2. The MVP-breaking application changes
 
-These are prerequisites; the cloud topology assumes they exist.
+These are prerequisites; the cloud topology assumes the landed local pieces
+continue to hold under deployment.
 
 ### 2.1 Break the `job = one video` coupling (fan-out)
 
-**Today:** `JobService.create_job` (`app/job_runner.py`) mints one `run_id` and
-calls `_dispatch` once. **Target:** a job is a *batch* of videos that share
-brand/product context, fanned out to one Celery task per video.
+**Status: landed locally.** `JobService.create_job` (`app/job_runner.py`) now
+creates a parent batch row and one child job/run per video. A batch shares
+brand/product context (`platform_params`, hints), while each video is processed
+independently by the same per-video task lifecycle.
 
 ```
 POST /jobs { videos: [v1, v2, … v20], platform, platform_params }
   → write ONE parent job row
-  → write N run rows (one run_id per video)
-  → send N Celery tasks  (celery `group`)
+  → write N child job rows (one run_id per video)
+  → send N child tasks
   → return the parent job_id; client polls parent + per-video children
 ```
 
 The per-video task is exactly today's `run_job` — untouched. What changes:
 
-- **Schema.** A parent/child relationship on `jobs`: add `parent_job_id TEXT
-  NULL` (self-FK) so a batch is a parent row with N child rows, each keyed to its
-  own `run_id`. Alembic migration; schema stays migration-owned (`web-app-plan`
-  §4). Reuse the existing `jobs` columns for children.
-- **`create_job`.** Loop the `build_task_payload` + `_dispatch` over the video
-  list; write the parent row first. Consider Celery `group()` / `chord()` if we
-  want a completion callback that flips the parent to a terminal state; otherwise
-  derive parent status from children on read.
+- **Schema.** `jobs.parent_job_id` links a child to its parent batch; a parent
+  row has `parent_job_id` and `run_id` null, while each child owns one `run_id`.
+  Alembic owns the schema (`web-app-plan` §4).
+- **`create_job`.** Loops `build_task_payload` + `_dispatch` over the video list
+  after writing the parent row. Each child stores a single-video request payload
+  so retrying the child re-runs only that video.
 - **Parent status aggregation.** `completed` when all children terminal;
-  `failed`/`partial` if some fail; `canceled` if canceled before children finish.
+  `failed` if all children are terminal and at least one failed; `canceled` if
+  all are terminal with no failures and at least one canceled; otherwise
+  `running` once any child starts or finishes, and `queued` before then.
 - **API + polling.** `GET /jobs/{id}` returns the parent plus a per-video child
   summary so the UI can show a 20-row progress panel. The per-job Redis progress
   stream (`web-app-plan` §5/§9) is already keyed by `job_id`, so each child gets
   its own stream for free.
 
-**Choice — batch semantics.** Does a batch share one taxonomy/hint context
-across videos, or is each video fully independent (just grouped for UX)? The
-"same brand/products" assumption suggests shared `platform_params`, which we
-already pass per-job; decide whether we also want cross-video identity/taxonomy
-sharing (bigger change, touches `taxonomy_core.py`) or keep videos independent
-(recommended for v1).
+**Batch semantics.** The landed v1 keeps videos independent for taxonomy,
+tracking, and parser execution; they are grouped for UX and share only the
+submitted platform params and hints.
 
 ### 2.2 Move ingest to signed-URL object storage
 
@@ -299,12 +298,12 @@ per-video wall-clock before committing to anything larger.
 These are `web-app-plan` open questions that get sharper once many GPUs are in
 play.
 
-- **Cooperative cancel becomes important** (`web-app-plan` §9.4 / §10.10).
-  Today `cancel_job` avoids `terminate=True` (a hard kill leaks GPU state +
-  half-written files), so canceling a running child only suppresses its terminal
-  write. At batch scale a user canceling 20 videos wants running ones to stop and
-  free their GPUs promptly. Prioritize the `should_cancel` flag in the shot loop
-  before this ships — otherwise a canceled batch keeps burning GPU minutes.
+- **Cooperative cancel is in the local app** (`web-app-plan` §9.4 / §10.10).
+  `cancel_job` still avoids `terminate=True` (a hard kill leaks GPU state +
+  half-written files), but it now sets a Redis cancel flag that the engine,
+  extractor, and parser poll at safe checkpoints. At batch scale, the remaining
+  deployment concern is checkpoint latency and how to present or purge partial
+  artifacts from canceled children.
 - **Worker crash / preemption.** If we use preemptible/Spot GPU nodes to cut
   cost, tasks can die mid-run. `task_acks_late=True` (already set) means an
   un-acked task is redelivered — good — but the engine writes `tracked_output.mp4`
@@ -317,9 +316,9 @@ play.
   A per-user/per-batch budget cap + token accounting should exist *before* this
   is exposed beyond internal use (`web-app-plan` §9.8, §11).
 - **Retention.** GCS lifecycle rules on the artifact bucket (delete after N days
-  / keep last K) plus a `DELETE /runs/{id}` that clears DB rows and GCS objects
-  (`web-app-plan` §9.14). Without this, storage grows unbounded once uploads move
-  to the cloud.
+  / keep last K) plus cloud-backed parity for `DELETE /jobs/{id}`, which already
+  clears local run-keyed DB rows and artifact directories (`web-app-plan` §9.14).
+  Without this, storage grows unbounded once uploads move to the cloud.
 
 ---
 
@@ -327,20 +326,16 @@ play.
 
 Numbered to extend `web-app-plan` §9; these are the ones this doc adds.
 
-1. **Batch context sharing** (2.1) — independent videos grouped for UX, or shared
-   taxonomy/identity across a batch? Recommend independent for v1.
-2. **Signed PUT vs. resumable upload** (2.2) for large videos on flaky links.
-3. **Artifact layout** (2.3) — per-object vs. tarball; API redirect-to-signed-GET
+1. **Signed PUT vs. resumable upload** (2.2) for large videos on flaky links.
+2. **Artifact layout** (2.3) — per-object vs. tarball; API redirect-to-signed-GET
    vs. stream-through.
-4. **GKE Standard vs. Autopilot**, and whether to split API (Autopilot) from GPU
+3. **GKE Standard vs. Autopilot**, and whether to split API (Autopilot) from GPU
    workers (Standard).
-5. **GPU class** (L4 vs. A100) and **Spot vs. on-demand** GPU nodes.
-6. **Scale-to-zero vs. warm floor** for the worker pool, and the KEDA schedule.
-7. **Parent-job completion callback** — Celery `chord` vs. read-time aggregation
-   for parent status.
-8. **Cost guardrails** — per-batch OpenAI budget cap and where it's enforced
+4. **GPU class** (L4 vs. A100) and **Spot vs. on-demand** GPU nodes.
+5. **Scale-to-zero vs. warm floor** for the worker pool, and the KEDA schedule.
+6. **Cost guardrails** — per-batch OpenAI budget cap and where it's enforced
    (API pre-flight vs. worker).
-9. **Multi-user / auth** (still `web-app-plan` §9.3) — batches make "whose job is
+7. **Multi-user / auth** (still `web-app-plan` §9.3) — batches make "whose job is
    this" and per-user quota matter sooner.
 
 ---
@@ -352,17 +347,13 @@ Each step is independently shippable and de-risks the next.
 1. **GCS ingest + artifacts** (2.2, 2.3) — flip `remote_artifact_write` to a real
    GCS uploader, add signed-URL upload, make artifact routes serve from GCS. Do
    this first; it's independent of K8s and unblocks ephemeral workers.
-2. **Job fan-out** (2.1) — `parent_job_id` migration + `create_job` loop + parent
-   status aggregation + UI batch view.
-3. **Cooperative cancel** (`web-app-plan` §10.10) — needed before batches are
-   exposed, so cancel actually frees GPUs.
-4. **Adapt the existing containers for GKE** — publish the slim API image and
+2. **Adapt the existing containers for GKE** — publish the slim API image and
    the baked-weight CUDA worker image, then add deployment manifests/release jobs
    around them (`web-app-plan` §8, §10.11).
-5. **GKE cluster + managed services** — GPU node pool (tainted, driver DaemonSet),
+3. **GKE cluster + managed services** — GPU node pool (tainted, driver DaemonSet),
    Memorystore, Cloud SQL, GCS buckets, Artifact Registry, Secret Manager,
    Ingress. Alembic release Job.
-6. **Autoscaling** — KEDA Redis scaler on the worker Deployment + cluster
+4. **Autoscaling** — KEDA Redis scaler on the worker Deployment + cluster
    autoscaler on the GPU pool; tune floor/ceiling against real traffic.
-7. **Cost + retention guardrails** (§5) — token accounting, per-batch budget,
-   GCS lifecycle, `DELETE /runs/{id}`.
+5. **Cost + retention guardrails** (§5) — token accounting, per-batch budget,
+   GCS lifecycle, cloud-backed parity for `DELETE /jobs/{id}` cleanup.

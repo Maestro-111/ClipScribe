@@ -1,9 +1,10 @@
-"""Job endpoints: create, dispatch, inspect, cancel, and stream (web-app-plan §6).
+"""Job endpoints: create, dispatch, inspect, cancel, retry, delete, and stream.
 
-``POST /jobs`` returns 202 with a job id immediately; the run happens on the
-configured inline or Celery backend. Clients poll ``GET /jobs/{id}`` for the
-jobs row, use ``GET /jobs/{id}/progress`` for coarse list progress, and open
-``GET /jobs/{id}/events`` for the Redis Stream-backed SSE feed.
+``POST /jobs`` returns 202 with a parent job id immediately; each video becomes
+one child run on the configured inline or Celery backend. Clients poll
+``GET /jobs/{id}`` for parent/child state, use ``GET /jobs/{id}/progress`` for
+coarse child progress, and open ``GET /jobs/{id}/events`` for a child job's
+Redis Stream-backed SSE feed.
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ def get_job_service(request: Request) -> JobService:
     "",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=JobCreatedResponse,
-    summary="Create and enqueue a job",
+    summary="Create and enqueue a batch job",
 )
 def create_job(
     req: JobCreateRequest,
@@ -267,7 +268,7 @@ def job_progress(
 @router.post(
     "/{job_id}/cancel",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Cancel a queued job",
+    summary="Cancel a queued/running job or batch",
 )
 def cancel_job(
     job_id: str,
@@ -280,7 +281,7 @@ def cancel_job(
     "/{job_id}/retry",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=JobCreatedResponse,
-    summary="Retry a failed or canceled job",
+    summary="Retry a completed, failed, or canceled job/run",
 )
 def retry_job(
     job_id: str,
