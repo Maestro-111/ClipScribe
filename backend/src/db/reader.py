@@ -290,8 +290,7 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         filter by the same effective status exposed by the API: batch parents
         aggregate their children, while standalone rows keep their own status.
         """
-        query = (
-            """
+        query = """
             WITH child_status AS (
                 SELECT
                     parent_job_id,
@@ -339,7 +338,6 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             )
             SELECT * FROM effective_parent_jobs
             """
-        )
         params: dict = {"limit": limit, "offset": offset}
         if status is not None:
             query += " WHERE effective_status = :status"
