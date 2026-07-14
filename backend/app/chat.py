@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 import yaml
 from langchain_core.messages import (
@@ -28,7 +28,12 @@ from langchain_core.messages import (
 )
 from langchain_openai import ChatOpenAI
 
-from src.parser.advisory import ADVISORY_SYSTEM_PROMPT, build_advisory_agent
+from src.parser.advisory import (
+    ADVISORY_SYSTEM_PROMPT,
+    JOB_ADVISORY_SYSTEM_PROMPT,
+    build_advisory_agent,
+    build_job_advisory_agent,
+)
 
 if TYPE_CHECKING:
     from app.settings import Settings
@@ -83,6 +88,8 @@ class ChatService:
             max_retries=agent_cfg.get("max_retries", 5),
         )
 
+    # ── per-run inspector chat (scoped to one run) ──────────────────────────
+
     def list_sessions(self, run_id: str) -> list[dict]:
         return self.reader.get_chat_sessions(run_id)
 
@@ -93,14 +100,85 @@ class ChatService:
         return self.writer.delete_chat_session(run_id, session_id)
 
     def stream(self, run_id: str, session_id: str, message: str) -> Iterator[str]:
-        """Yield SSE frames for one chat turn and persist the transcript.
+        """Stream one per-run chat turn (SSE frames) and persist the transcript."""
+        history = self.reader.get_chat_messages(run_id, session_id)
+        agent = build_advisory_agent(self.model, self.reader, run_id)
+        yield from self._stream_turn(
+            history=history,
+            system_prompt=ADVISORY_SYSTEM_PROMPT,
+            agent=agent,
+            session_id=session_id,
+            message=message,
+            persist_scope={"run_id": run_id},
+            log_label=f"run {run_id}",
+        )
+
+    # ── job-level chat (spans every completed run in a batch job) ────────────
+
+    def list_job_sessions(self, job_id: str) -> list[dict]:
+        return self.reader.get_job_chat_sessions(job_id)
+
+    def get_job_history(self, job_id: str, session_id: str) -> list[dict]:
+        return self.reader.get_job_chat_messages(job_id, session_id)
+
+    def delete_job_session(self, job_id: str, session_id: str) -> int:
+        return self.writer.delete_job_chat_session(job_id, session_id)
+
+    def resolve_job_runs(self, job_id: str) -> list[dict]:
+        """Completed runs of a job as ``[{run_id, video_name}]``, oldest first.
+
+        Walks the batch children (or the job itself for a single leaf job) and
+        keeps only completed runs, which are the ones with inspectable data.
+        """
+        job = self.reader.get_job(job_id)
+        if job is None:
+            return []
+        children = self.reader.get_child_jobs(job_id)
+        candidates = children if children else [job]
+        return [
+            {"run_id": c["run_id"], "video_name": c.get("video_name") or c["run_id"]}
+            for c in candidates
+            if c.get("status") == "completed" and c.get("run_id")
+        ]
+
+    def stream_job(
+        self, job_id: str, session_id: str, message: str, runs: list[dict]
+    ) -> Iterator[str]:
+        """Stream one job-level chat turn (SSE frames) and persist the transcript."""
+        history = self.reader.get_job_chat_messages(job_id, session_id)
+        agent = build_job_advisory_agent(self.model, self.reader, runs)
+        yield from self._stream_turn(
+            history=history,
+            system_prompt=JOB_ADVISORY_SYSTEM_PROMPT,
+            agent=agent,
+            session_id=session_id,
+            message=message,
+            persist_scope={"job_id": job_id},
+            log_label=f"job {job_id}",
+        )
+
+    # ── shared streaming machinery ──────────────────────────────────────────
+
+    def _stream_turn(
+        self,
+        *,
+        history: list[dict],
+        system_prompt: str,
+        agent: Any,
+        session_id: str,
+        message: str,
+        persist_scope: dict[str, str],
+        log_label: str,
+    ) -> Iterator[str]:
+        """Drive one agent turn: replay history, stream tokens/tools, persist.
 
         Runs in a threadpool (StreamingResponse over a sync generator), so the
         blocking LLM stream + DB writes here never block the event loop.
+        ``persist_scope`` is the keying for ``add_chat_message`` — ``{run_id}``
+        for the per-run chat, ``{job_id}`` for the job chat.
         """
         # Rebuild conversation from the DB, then append the new turn.
-        history = self.reader.get_chat_messages(run_id, session_id)
-        lc_messages: list = [SystemMessage(content=ADVISORY_SYSTEM_PROMPT)]
+        lc_messages: list = [SystemMessage(content=system_prompt)]
         for m in history:
             if m["role"] == "user":
                 lc_messages.append(HumanMessage(content=m["content"]))
@@ -109,11 +187,10 @@ class ChatService:
         lc_messages.append(HumanMessage(content=message))
 
         self.writer.add_chat_message(
-            run_id=run_id, session_id=session_id, role="user", content=message
+            session_id=session_id, role="user", content=message, **persist_scope
         )
         yield _sse({"type": "session", "session_id": session_id})
 
-        agent = build_advisory_agent(self.model, self.reader, run_id)
         answer_parts: list[str] = []
         seen_tools: set[str] = set()
         try:
@@ -138,16 +215,16 @@ class ChatService:
                     answer_parts.append(text)
                     yield _sse({"type": "token", "content": text})
         except Exception as exc:  # noqa: BLE001 - surfaced to the client
-            logger.exception("Advisory chat failed for run %s", run_id)
+            logger.exception("Advisory chat failed for %s", log_label)
             yield _sse({"type": "error", "message": str(exc)})
 
         answer = "".join(answer_parts).strip()
         if answer:
             self.writer.add_chat_message(
-                run_id=run_id,
                 session_id=session_id,
                 role="assistant",
                 content=answer,
                 tool_calls=sorted(seen_tools) or None,
+                **persist_scope,
             )
         yield _sse({"type": "done"})

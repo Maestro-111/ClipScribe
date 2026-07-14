@@ -11,7 +11,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 
+from app import exports
 from app.deps import get_reader
 from app.errors import ProblemException
 from app.models import (
@@ -128,3 +130,32 @@ def get_parser(
 ) -> list[ParserResult]:
     _require_run(reader, run_id)
     return [ParserResult.model_validate(r) for r in reader.get_parser_results(run_id)]
+
+
+@router.get("/{run_id}/parser/export", summary="Download this run's ABCD report")
+def export_parser(
+    run_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> Response:
+    """Export one run's parser results as a CSV or XLSX download.
+
+    XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
+    flat Detail table (still opens in Excel, just without the extra tab).
+    """
+    if fmt not in exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+    run = _require_run(reader, run_id)
+    rows = reader.get_parser_results(run_id)
+    video_name = run.get("video_name") or run_id
+    content = (
+        exports.run_csv(rows) if fmt == "csv" else exports.run_xlsx(video_name, rows)
+    )
+    filename = exports.export_filename(f"{video_name}_abcd", fmt)
+    return Response(
+        content=content,
+        media_type=exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

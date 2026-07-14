@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(runs.router)
     app.include_router(chat.router)
+    app.include_router(chat.job_router)
     app.include_router(uploads.router)
     app.include_router(artifacts.router)
 

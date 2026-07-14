@@ -424,18 +424,24 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
     def add_chat_message(
         self,
         *,
-        run_id: str,
         session_id: str,
         role: str,
         content: str,
+        run_id: str | None = None,
+        job_id: str | None = None,
         tool_calls: list[str] | None = None,
     ) -> None:
-        """Append one advisory-chat message to a session transcript (§13)."""
+        """Append one advisory-chat message to a session transcript (§13).
+
+        Exactly one of ``run_id`` (per-run inspector chat) or ``job_id``
+        (job-level chat) identifies the conversation.
+        """
         with self._engine.begin() as conn:
             conn.execute(
                 chat_messages_table.insert(),
                 {
                     "run_id": run_id,
+                    "job_id": job_id,
                     "session_id": session_id,
                     "role": role,
                     "content": content,
@@ -444,11 +450,21 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
 
     def delete_chat_session(self, run_id: str, session_id: str) -> int:
-        """Delete all messages in one chat session. Returns rows removed."""
+        """Delete all messages in one per-run chat session. Returns rows removed."""
         with self._engine.begin() as conn:
             result = conn.execute(
                 chat_messages_table.delete()
                 .where(chat_messages_table.c.run_id == run_id)
+                .where(chat_messages_table.c.session_id == session_id)
+            )
+            return result.rowcount
+
+    def delete_job_chat_session(self, job_id: str, session_id: str) -> int:
+        """Delete all messages in one job-level chat session. Returns rows removed."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                chat_messages_table.delete()
+                .where(chat_messages_table.c.job_id == job_id)
                 .where(chat_messages_table.c.session_id == session_id)
             )
             return result.rowcount

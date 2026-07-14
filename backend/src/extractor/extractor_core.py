@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import cv2
+import gc
 import os
 
 import re
@@ -440,6 +441,13 @@ class VideoInformationExtractor:
         self.face_detection = face_detection
         self.detection_interval = detection_interval
 
+        # OpenCV and SAM2 create these per input video.  Their types are
+        # runtime-library objects, so keep the boundary untyped while ensuring
+        # cleanup can safely run after a partially initialized extraction.
+        self.cap: Any = None
+        self.video_writer: Any = None
+        self.inference_state: Any = None
+
         self.current_frame = 0
         self.obj_id_counter = 1
 
@@ -488,6 +496,7 @@ class VideoInformationExtractor:
         # for the timeline view, captured in _digest_video.
         self.frame_detections: list[FrameDetection] = []
         self.shot_data: list[ShotData] = []
+        self.shot_boundaries: list[tuple[int, int]] = []
 
         # Cap on per-frame visualization PNGs written to the artifact dir
         # (None = unlimited). The tracked mp4 and extraction_summary.json are
@@ -592,14 +601,65 @@ class VideoInformationExtractor:
         logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
 
     def cleanup(self) -> None:
-        """Release resources"""
+        """Release resources owned by this extraction run.
 
-        if hasattr(self, "cap") and self.cap is not None:
+        The detector, SAM2 predictor, Whisper model, and other model objects are
+        owned by the long-lived ``ClipScribeBuilder`` and intentionally remain
+        loaded between Celery tasks.  The SAM2 *inference state*, however, is
+        created for one video and can retain decoded frames and accelerator
+        tensors.  Drop that state explicitly so a worker can process a second
+        video without carrying the previous video's memory forward.
+        """
+
+        if self.cap is not None:
             self.cap.release()
+            self.cap = None
 
-        if hasattr(self, "video_writer") and self.video_writer is not None:
+        if self.video_writer is not None:
             self.video_writer.release()
+            self.video_writer = None
             logger.info("Video writer released. Output saved.")
+
+        inference_state = getattr(self, "inference_state", None)
+        if inference_state is not None:
+            try:
+                self.sam_model.reset_state(inference_state)
+            except Exception:  # noqa: BLE001 - cleanup must not mask task failures
+                logger.warning("Failed to reset SAM2 inference state", exc_info=True)
+            finally:
+                self.inference_state = None
+
+        # These are all owned by this per-job extractor.  Rebind instead of
+        # clearing in place: the completed extraction summary may still hold
+        # references to the old lists/dicts while the engine persists it.
+        self.active_trackers = {}
+        self.id_to_label = {}
+        self.text_registry = defaultdict(set)
+        self.object_registry = {}
+        self.audio_registry = []
+        self.scene_description_registry = []
+        self.global_stats = {}
+        self.frame_detections = []
+        self.shot_data = []
+        self.shot_boundaries = []
+        self.current_frame = 0
+        self.obj_id_counter = 1
+
+        gc.collect()
+
+        if self.device == "mps" and torch.backends.mps.is_available():
+            try:
+                torch.mps.synchronize()
+                torch.mps.empty_cache()
+            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
+                logger.warning("Failed to release MPS cached memory", exc_info=True)
+
+        if self.device == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
+                logger.warning("Failed to release CUDA cached memory", exc_info=True)
 
     def _is_new_object(self, new_box: Box, new_label: str) -> bool:
         """

@@ -45,7 +45,7 @@ clip_scribe:
     # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
     # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
     # Range: 10-50 frames. Default: 20
-    reid_model_frame_check_freq: 7
+    reid_model_frame_check_freq: 10
 
     # DINOv2 viewpoint-novelty gate for accumulating re-ID embeddings within a shot
     # A new embedding is folded into an object's running mean only when its cosine

@@ -390,3 +390,18 @@ class ChatSession(BaseModel):
 class ChatSessionsResponse(BaseModel):
     run_id: str
     sessions: list[ChatSession]
+
+
+class JobChatHistoryResponse(BaseModel):
+    """Transcript of one job-level chat session."""
+
+    job_id: str
+    session_id: str
+    messages: list[ChatMessage]
+
+
+class JobChatSessionsResponse(BaseModel):
+    """Job-level chat sessions for a batch job."""
+
+    job_id: str
+    sessions: list[ChatSession]

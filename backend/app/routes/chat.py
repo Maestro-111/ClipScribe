@@ -20,6 +20,8 @@ from app.models import (
     ChatRequest,
     ChatSession,
     ChatSessionsResponse,
+    JobChatHistoryResponse,
+    JobChatSessionsResponse,
 )
 from src.utils.ids import new_ulid
 
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB
 
 router = APIRouter(prefix="/runs", tags=["chat"])
+job_router = APIRouter(prefix="/jobs", tags=["chat"])
 
 
 def get_chat_service(request: Request) -> "ChatService":
@@ -108,3 +111,84 @@ def delete_session(
 ) -> None:
     _require_run(reader, run_id)
     service.delete_session(run_id, session_id)
+
+
+# ── Job-level advisory chat (spans every completed run in a batch job) ───────
+
+
+def _require_job(reader: "ClipScribeReaderDB", job_id: str) -> None:
+    if reader.get_job(job_id) is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+
+
+@job_router.post("/{job_id}/chat", summary="Ask the job-level advisory agent (SSE)")
+def post_job_chat(
+    job_id: str,
+    req: ChatRequest,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    service: ChatService = Depends(get_chat_service),
+) -> StreamingResponse:
+    _require_job(reader, job_id)
+    runs = service.resolve_job_runs(job_id)
+    if not runs:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"job '{job_id}' has no completed runs to analyze yet",
+        )
+    session_id = req.session_id or new_ulid()
+    return StreamingResponse(
+        service.stream_job(job_id, session_id, req.message, runs),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@job_router.get(
+    "/{job_id}/chat/sessions",
+    response_model=JobChatSessionsResponse,
+    summary="List job-level chat sessions",
+)
+def list_job_sessions(
+    job_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    service: ChatService = Depends(get_chat_service),
+) -> JobChatSessionsResponse:
+    _require_job(reader, job_id)
+    sessions = [ChatSession(**s) for s in service.list_job_sessions(job_id)]
+    return JobChatSessionsResponse(job_id=job_id, sessions=sessions)
+
+
+@job_router.get(
+    "/{job_id}/chat/{session_id}",
+    response_model=JobChatHistoryResponse,
+    summary="Get one job-level chat session's transcript",
+)
+def get_job_session(
+    job_id: str,
+    session_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    service: ChatService = Depends(get_chat_service),
+) -> JobChatHistoryResponse:
+    _require_job(reader, job_id)
+    messages = [ChatMessage(**m) for m in service.get_job_history(job_id, session_id)]
+    return JobChatHistoryResponse(
+        job_id=job_id, session_id=session_id, messages=messages
+    )
+
+
+@job_router.delete(
+    "/{job_id}/chat/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a job-level chat session",
+)
+def delete_job_session(
+    job_id: str,
+    session_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    service: ChatService = Depends(get_chat_service),
+) -> None:
+    _require_job(reader, job_id)
+    service.delete_job_session(job_id, session_id)

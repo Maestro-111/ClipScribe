@@ -14,9 +14,10 @@ import json
 from typing import TYPE_CHECKING, AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from app import exports
 from app.deps import get_reader, get_writer
 from app.errors import ProblemException
 from app.events import stream_key, summarize_progress
@@ -99,6 +100,69 @@ def get_job(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
     return build_job_response(reader, job)
+
+
+def _job_run_reports(
+    reader: "ClipScribeReaderDB", job: dict
+) -> list[exports.RunReport]:
+    """Completed runs of a job, oldest first, each with its parser results.
+
+    Works whether ``job`` is a batch parent (walk its children) or a single
+    leaf/parse job (itself). Only completed children with a ``run_id`` carry
+    inspectable data, so in-progress or failed siblings are skipped.
+    """
+    children = reader.get_child_jobs(job["job_id"])
+    candidates = children if children else [job]
+    reports: list[exports.RunReport] = []
+    for child in candidates:
+        run_id = child.get("run_id")
+        if child.get("status") != "completed" or not run_id:
+            continue
+        reports.append(
+            exports.RunReport(
+                run_id=run_id,
+                video_name=child.get("video_name") or run_id,
+                rows=reader.get_parser_results(run_id),
+            )
+        )
+    return reports
+
+
+@router.get("/{job_id}/export", summary="Download every run's ABCD report")
+def export_job(
+    job_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+) -> Response:
+    """Export all completed runs in a job as one CSV or XLSX download.
+
+    XLSX carries a cross-run Summary sheet plus one Detail sheet per run; CSV
+    stacks every run's criteria into one table with a leading Video column.
+    """
+    if fmt not in exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+    job = reader.get_job(job_id)
+    if job is None:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    reports = _job_run_reports(reader, job)
+    if not reports:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"job '{job_id}' has no completed runs to export",
+        )
+    content = exports.job_csv(reports) if fmt == "csv" else exports.job_xlsx(reports)
+    stem = f"{job.get('video_name') or 'job'}_abcd"
+    filename = exports.export_filename(stem, fmt)
+    return Response(
+        content=content,
+        media_type=exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete(

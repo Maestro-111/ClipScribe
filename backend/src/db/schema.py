@@ -204,11 +204,18 @@ shot_boundaries_table = Table(
 # User-facing transcript for the advisory chat agent (web-app-plan §13). The
 # agent fetches run data on demand via read-only tools; this table just stores
 # the conversation so the UI can list sessions and replay history.
+#
+# A message is scoped to exactly one of two chats: the per-run inspector chat
+# (``run_id`` set, ``job_id`` NULL) or the job-level chat that analyzes every run
+# in a batch job (``job_id`` set, ``run_id`` NULL).
 chat_messages_table = Table(
     "chat_messages",
     metadata_obj,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("run_id", Text, nullable=False),
+    # Set for the per-run inspector chat; NULL for job-level chat.
+    Column("run_id", Text),
+    # Set for the job-level chat; NULL for the per-run chat.
+    Column("job_id", Text),
     # Groups messages into one conversation; == the LangGraph thread id.
     Column("session_id", Text, nullable=False),
     # user | assistant
@@ -218,4 +225,5 @@ chat_messages_table = Table(
     Column("tool_calls_json", JSON),
     Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
     Index("ix_chat_messages_run_session", "run_id", "session_id"),
+    Index("ix_chat_messages_job_session", "job_id", "session_id"),
 )

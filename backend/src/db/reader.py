@@ -216,16 +216,30 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             return [dict(row) for row in result.mappings().fetchall()]
 
     def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
-        """Fetch the transcript for one advisory-chat session, oldest first."""
+        """Fetch a per-run chat session transcript, oldest first."""
+        return self._chat_messages("run_id", run_id, session_id)
+
+    def get_job_chat_messages(self, job_id: str, session_id: str) -> list[dict]:
+        """Fetch a job-level chat session transcript, oldest first."""
+        return self._chat_messages("job_id", job_id, session_id)
+
+    def _chat_messages(
+        self, scope_col: str, scope_val: str, session_id: str
+    ) -> list[dict]:
+        """Transcript for one chat session, scoped by ``run_id`` or ``job_id``.
+
+        ``scope_col`` is a fixed internal literal (never user input), so
+        interpolating it into the query is safe.
+        """
         with self._engine.connect() as conn:
             result = conn.execute(
                 text(
-                    "SELECT id, run_id, session_id, role, content, "
+                    "SELECT id, run_id, job_id, session_id, role, content, "
                     "tool_calls_json, created_at FROM chat_messages "
-                    "WHERE run_id = :run_id AND session_id = :session_id "
+                    f"WHERE {scope_col} = :scope AND session_id = :session_id "
                     "ORDER BY id"
                 ),
-                {"run_id": run_id, "session_id": session_id},
+                {"scope": scope_val, "session_id": session_id},
             )
             rows = [dict(row) for row in result.mappings().fetchall()]
         for row in rows:
@@ -238,19 +252,32 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         return rows
 
     def get_chat_sessions(self, run_id: str) -> list[dict]:
-        """List advisory-chat sessions for a run, most recently active first."""
+        """List per-run chat sessions, most recently active first."""
+        return self._chat_sessions("run_id", run_id)
+
+    def get_job_chat_sessions(self, job_id: str) -> list[dict]:
+        """List job-level chat sessions, most recently active first."""
+        return self._chat_sessions("job_id", job_id)
+
+    def _chat_sessions(self, scope_col: str, scope_val: str) -> list[dict]:
+        """Chat-session summaries scoped by ``run_id`` or ``job_id``.
+
+        ``scope_col`` is a fixed internal literal (never user input), so
+        interpolating it into the query is safe.
+        """
         with self._engine.connect() as conn:
             result = conn.execute(
                 text(
                     "SELECT session_id, COUNT(*) AS message_count, "
                     "MIN(created_at) AS started_at, MAX(created_at) AS last_at, "
                     "(SELECT content FROM chat_messages c2 "
-                    " WHERE c2.run_id = c.run_id AND c2.session_id = c.session_id "
+                    f" WHERE c2.{scope_col} = c.{scope_col} "
+                    "  AND c2.session_id = c.session_id "
                     " ORDER BY id LIMIT 1) AS title "
-                    "FROM chat_messages c WHERE run_id = :run_id "
+                    f"FROM chat_messages c WHERE {scope_col} = :scope "
                     "GROUP BY session_id ORDER BY MAX(id) DESC"
                 ),
-                {"run_id": run_id},
+                {"scope": scope_val},
             )
             return [dict(row) for row in result.mappings().fetchall()]
 
