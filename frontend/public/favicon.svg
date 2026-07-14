@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Neutral dark rounded tile so the mark reads on both light and dark tab bars. -->
+  <rect width="32" height="32" rx="7" fill="#171717"/>
+  <!-- Clapperboard top strip with diagonal "teeth" (the clip half of ClipScribe). -->
+  <rect x="6" y="7.5" width="20" height="5.5" rx="1" fill="#fafafa"/>
+  <g stroke="#171717" stroke-width="1.6">
+    <line x1="10" y1="7" x2="8" y2="13.5"/>
+    <line x1="15" y1="7" x2="13" y2="13.5"/>
+    <line x1="20" y1="7" x2="18" y2="13.5"/>
+    <line x1="25" y1="7" x2="23" y2="13.5"/>
+  </g>
+  <!-- Board body doubles as a written slate (the scribe half). -->
+  <rect x="6" y="14.5" width="20" height="10.5" rx="1.5" fill="#fafafa"/>
+  <g stroke="#171717" stroke-width="1.4" stroke-linecap="round">
+    <line x1="9" y1="18.5" x2="20" y2="18.5"/>
+    <line x1="9" y1="21.5" x2="16" y2="21.5"/>
+  </g>
+</svg>

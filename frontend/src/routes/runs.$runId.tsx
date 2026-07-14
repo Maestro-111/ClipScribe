@@ -16,6 +16,7 @@ import type {
   ShotBoundary,
 } from "../lib/run-types";
 import { ChatPanel } from "../components/ChatPanel";
+import { Verdict } from "../components/ui";
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunInspectorRoute,
@@ -357,11 +358,39 @@ function ParserTable({ results }: { results: ParserResult[] }) {
     return acc;
   }, {});
 
-  const evalIcon = (v: boolean | null) =>
-    v === true ? "✅" : v === false ? "❌" : "—";
+  // Headline counts so the pass/fail split is visible before scanning the table.
+  const passed = results.filter((r) => r.evaluation === true).length;
+  const failed = results.filter((r) => r.evaluation === false).length;
+  const passPct = results.length
+    ? Math.round((passed / results.length) * 100)
+    : 0;
 
   return (
     <div className="space-y-5">
+      {/* score summary */}
+      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-semibold text-neutral-900">{passPct}%</span>
+          <span className="text-sm text-neutral-500">pass rate</span>
+        </div>
+        <div className="ml-auto flex items-center gap-4 text-sm">
+          <span className="flex items-center gap-1.5 text-green-700">
+            <span className="h-2 w-2 rounded-full bg-green-500" />
+            {passed} passed
+          </span>
+          <span className="flex items-center gap-1.5 text-red-700">
+            <span className="h-2 w-2 rounded-full bg-red-500" />
+            {failed} failed
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200">
+          <div
+            className="h-full rounded-full bg-green-500"
+            style={{ width: `${passPct}%` }}
+          />
+        </div>
+      </div>
+
       {Object.entries(byCategory).map(([cat, rows]) => (
         <div key={cat}>
           <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
@@ -375,8 +404,8 @@ function ParserTable({ results }: { results: ParserResult[] }) {
                     className="cursor-pointer border-t hover:bg-neutral-50"
                     onClick={() => toggleRow(row.id)}
                   >
-                    <td className="w-8 py-1.5 text-center">
-                      {evalIcon(row.evaluation)}
+                    <td className="w-8 py-1.5">
+                      <Verdict value={row.evaluation} />
                     </td>
                     <td className="py-1.5 pr-4">{row.feature_name ?? "—"}</td>
                     <td className="py-1.5 text-xs text-neutral-400">
@@ -577,7 +606,7 @@ function RunInspector({ runId }: { runId: string }) {
 
       {/* ── run switcher (batch jobs only) ── */}
       {hasSiblings && (
-        <div className="flex items-center gap-3 rounded border bg-white px-3 py-2 text-sm">
+        <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm">
           <span className="text-neutral-500">
             Run {currentIdx + 1} of {siblingRuns.length} in this job
           </span>
@@ -620,7 +649,7 @@ function RunInspector({ runId }: { runId: string }) {
       )}
 
       {!runReady ? (
-        <section className="rounded border bg-white p-8 text-center">
+        <section className="rounded-lg border border-neutral-200 bg-white p-8 text-center shadow-sm">
           <p className="text-neutral-600">
             This run is still {currentSibling?.status ?? "processing"} — nothing
             to inspect yet.
@@ -634,7 +663,7 @@ function RunInspector({ runId }: { runId: string }) {
       ) : (
         <>
       {/* ── video + SVG overlay ── */}
-      <section className="space-y-3 rounded border bg-white p-4">
+      <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="font-medium">Video</h2>
 
         <div
@@ -709,7 +738,7 @@ function RunInspector({ runId }: { runId: string }) {
       </section>
 
       {/* ── timeline ── */}
-      <section className="rounded border bg-white p-4">
+      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 font-medium">Timeline</h2>
         {globalStats.isLoading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
@@ -725,7 +754,7 @@ function RunInspector({ runId }: { runId: string }) {
       </section>
 
       {/* ── ABCD criteria ── */}
-      <section className="rounded border bg-white p-4">
+      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 font-medium">ABCD criteria</h2>
         {parser.isLoading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
@@ -735,7 +764,7 @@ function RunInspector({ runId }: { runId: string }) {
       </section>
 
       {/* ── Advisory chat (web-app-plan §13) ── */}
-      <section className="rounded border bg-white p-4">
+      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 font-medium">Ask about this video</h2>
         <ChatPanel runId={runId} />
       </section>

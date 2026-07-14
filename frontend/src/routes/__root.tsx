@@ -1,6 +1,7 @@
 import { createRootRouteWithContext } from "@tanstack/react-router";
 import { Link, Outlet } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
+import { Logo } from "../components/ui";
 
 // __root.tsx is special: it's the ONE layout that wraps every page. Its
 // <Outlet /> is where the matched child route renders. File-based routing maps
@@ -19,10 +20,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootLayout() {
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <header className="border-b bg-white">
+    <div className="min-h-screen bg-neutral-100 text-neutral-900">
+      <header className="sticky top-0 z-20 border-b border-neutral-200 bg-white/85 backdrop-blur">
         <nav className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
-          <Link to="/" className="text-lg font-semibold">
+          <Link to="/" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+            <Logo size={22} />
             ClipScribe
           </Link>
           {/* activeProps styles the link when its route is active. `to` is

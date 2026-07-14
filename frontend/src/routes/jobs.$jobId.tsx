@@ -7,7 +7,7 @@ import {
   useRetryJob,
   type JobChild,
 } from "../api/hooks";
-import { statusColor } from "../lib/format";
+import { Spinner, StatusPill } from "../components/ui";
 
 // "/jobs/{id}" — the job page (web-app-plan §7 page 3, step 9).
 //
@@ -288,20 +288,16 @@ function LeafJob() {
             {state.videoName ?? job.data?.video_name ?? "Job"}
           </h1>
         </div>
-        <span
-          className={`rounded px-2 py-0.5 text-sm ${statusColor(status)}`}
-        >
-          {status}
-        </span>
+        <StatusPill status={status} />
       </div>
 
       {/* progress bar + actions */}
-      <section className="space-y-3 rounded border bg-white p-4">
+      <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-100">
           <div
             className={`h-full rounded-full transition-all ${
               status === "failed" ? "bg-red-500" : "bg-blue-500"
-            }`}
+            } ${status === "running" ? "progress-active" : ""}`}
             style={{ width: `${status === "completed" ? 100 : pct}%` }}
           />
         </div>
@@ -339,12 +335,12 @@ function LeafJob() {
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* phase tree */}
-        <section className="rounded border bg-white p-4">
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium">Phases</h2>
           {state.phaseOrder.length === 0 ? (
             <p className="text-sm text-neutral-500">Waiting for the job to start…</p>
           ) : (
-            <ul className="space-y-1.5 text-sm">
+            <ul className="space-y-2 text-sm">
               {state.phaseOrder.map((phase) => {
                 const ps = state.phases[phase] ?? "pending";
                 const shots =
@@ -352,13 +348,27 @@ function LeafJob() {
                     ? ` ${state.shotsCompleted}/${state.totalShots}`
                     : "";
                 return (
-                  <li key={phase} className="flex items-center gap-2">
-                    <span>
-                      {ps === "completed" ? "✓" : ps === "running" ? "◔" : "○"}
+                  <li key={phase} className="flex items-center gap-2.5">
+                    <span className="flex h-4 w-4 items-center justify-center">
+                      {ps === "completed" ? (
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-100 text-green-700">
+                          <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3.5 8.5l3 3 6-7" />
+                          </svg>
+                        </span>
+                      ) : ps === "running" ? (
+                        <Spinner className="h-3.5 w-3.5 text-blue-500" />
+                      ) : (
+                        <span className="h-2 w-2 rounded-full bg-neutral-300" />
+                      )}
                     </span>
                     <span
                       className={
-                        ps === "pending" ? "text-neutral-400" : "text-neutral-800"
+                        ps === "pending"
+                          ? "text-neutral-400"
+                          : ps === "running"
+                            ? "font-medium text-neutral-900"
+                            : "text-neutral-700"
                       }
                     >
                       {PHASE_LABELS[phase]}
@@ -372,7 +382,7 @@ function LeafJob() {
         </section>
 
         {/* current shot */}
-        <section className="rounded border bg-white p-4">
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium">Current shot</h2>
           {state.currentShot ? (
             <div className="space-y-3 text-sm">
@@ -427,15 +437,20 @@ function LeafJob() {
       </div>
 
       {/* log tail */}
-      <section className="rounded border bg-white p-4">
+      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="font-medium">Logs</h2>
-          <span className="text-xs text-neutral-400">
-            {state.streamStatus === "live"
-              ? "● live"
-              : state.streamStatus === "connecting"
-                ? "connecting…"
-                : "closed"}
+          <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+            {state.streamStatus === "live" ? (
+              <>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                live
+              </>
+            ) : state.streamStatus === "connecting" ? (
+              "connecting…"
+            ) : (
+              "closed"
+            )}
           </span>
         </div>
         <div
@@ -497,18 +512,16 @@ function BatchJob() {
             {total} run{total === 1 ? "" : "s"}
           </p>
         </div>
-        <span className={`rounded px-2 py-0.5 text-sm ${statusColor(status)}`}>
-          {status}
-        </span>
+        <StatusPill status={status} />
       </div>
 
       {/* batch progress + actions */}
-      <section className="space-y-3 rounded border bg-white p-4">
+      <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-100">
           <div
             className={`h-full rounded-full transition-all ${
               failed ? "bg-amber-500" : "bg-blue-500"
-            }`}
+            } ${isActive ? "progress-active" : ""}`}
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -531,12 +544,12 @@ function BatchJob() {
       </section>
 
       {/* per-run table */}
-      <section className="overflow-hidden rounded border bg-white">
+      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
         <table className="w-full text-sm">
-          <thead className="bg-neutral-100 text-left text-neutral-600">
+          <thead className="border-b border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
             <tr>
-              <th className="px-3 py-2">Video</th>
-              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2 font-medium">Video</th>
+              <th className="px-3 py-2 font-medium">Status</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -565,7 +578,7 @@ function ChildRow({ child }: { child: JobChild }) {
   const isCancellable = child.status === "queued" || running;
 
   return (
-    <tr className="border-t">
+    <tr className="border-t border-neutral-100 hover:bg-neutral-50">
       <td className="px-3 py-2 font-medium">
         <Link
           to="/jobs/$jobId"
@@ -579,14 +592,12 @@ function ChildRow({ child }: { child: JobChild }) {
         )}
       </td>
       <td className="px-3 py-2">
-        <span className={`rounded px-2 py-0.5 text-xs ${statusColor(child.status)}`}>
-          {child.status}
-        </span>
+        <StatusPill status={child.status} />
         {running && (
           <div className="mt-1 w-28">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
               <div
-                className="h-full rounded-full bg-blue-500 transition-all"
+                className="progress-active h-full rounded-full bg-blue-500 transition-all"
                 style={{ width: `${pct}%` }}
               />
             </div>

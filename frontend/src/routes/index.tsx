@@ -7,7 +7,8 @@ import {
   useRetryJob,
   type JobResponse,
 } from "../api/hooks";
-import { formatDateTime, formatDuration, statusColor } from "../lib/format";
+import { formatDateTime, formatDuration } from "../lib/format";
+import { EmptyState, Skeleton, StatusPill } from "../components/ui";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
 export const Route = createFileRoute("/")({
@@ -47,7 +48,7 @@ function JobsList() {
         <h1 className="text-2xl font-semibold">Jobs</h1>
         <Link
           to="/jobs/new"
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
         >
           New job
         </Link>
@@ -58,8 +59,10 @@ function JobsList() {
           <button
             key={s || "all"}
             onClick={() => setStatus(s)}
-            className={`rounded px-2 py-1 text-sm ${
-              status === s ? "bg-neutral-900 text-white" : "bg-white border"
+            className={`rounded-md px-2.5 py-1 text-sm capitalize transition-colors ${
+              status === s
+                ? "bg-neutral-900 text-white"
+                : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
             }`}
           >
             {s || "all"}
@@ -67,33 +70,67 @@ function JobsList() {
         ))}
       </div>
 
-      {isLoading && <p className="text-neutral-500">Loading…</p>}
-      {error && <p className="text-red-600">{(error as Error).message}</p>}
+      {error && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {(error as Error).message}
+        </p>
+      )}
 
-      {data && (
-        <div className="overflow-hidden rounded border bg-white">
+      {isLoading && (
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+          <div className="space-y-3 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="ml-auto h-4 w-24" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data && data.jobs.length === 0 && (
+        <div className="rounded-lg border border-neutral-200 bg-white shadow-sm">
+          <EmptyState
+            icon={
+              <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
+                <rect x="4" y="9" width="24" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M4 13h24" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M9 9l1.5-3M15 9l1.5-3M21 9l1.5-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            }
+            title="No jobs yet"
+            description="Create a job to process a video through the ClipScribe pipeline and watch it run live."
+            action={
+              <Link
+                to="/jobs/new"
+                className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Create your first job →
+              </Link>
+            }
+          />
+        </div>
+      )}
+
+      {data && data.jobs.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
           <table className="w-full text-sm">
-            <thead className="bg-neutral-100 text-left text-neutral-600">
+            <thead className="border-b border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
-                <th className="px-3 py-2">Video</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Platform</th>
-                <th className="px-3 py-2">Mode</th>
-                <th className="px-3 py-2">Created</th>
-                <th className="px-3 py-2">Duration</th>
+                <th className="px-3 py-2 font-medium">Video</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Platform</th>
+                <th className="px-3 py-2 font-medium">Mode</th>
+                <th className="px-3 py-2 font-medium">Created</th>
+                <th className="px-3 py-2 font-medium">Duration</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
-              {data.jobs.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-neutral-500">
-                    No jobs yet.
-                  </td>
-                </tr>
-              )}
               {data.jobs.map((job) => (
-                <tr key={job.job_id} className="border-t">
+                <tr key={job.job_id} className="border-t border-neutral-100 hover:bg-neutral-50">
                   <td className="px-3 py-2 font-medium">
                     <Link
                       to="/jobs/$jobId"
@@ -104,11 +141,7 @@ function JobsList() {
                     </Link>
                   </td>
                   <td className="px-3 py-2">
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs ${statusColor(job.status)}`}
-                    >
-                      {job.status}
-                    </span>
+                    <StatusPill status={job.status} />
                     {(() => {
                       const { total, done } = runCounts(job);
                       // Show run progress once there's more than one run, or
