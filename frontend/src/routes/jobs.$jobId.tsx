@@ -580,6 +580,7 @@ function BatchJob() {
         <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium">Ask about this job</h2>
           <ChatPanel
+            key={jobId}
             endpoint={`/api/jobs/${jobId}/chat`}
             suggestions={JOB_CHAT_SUGGESTIONS}
             intro={JOB_CHAT_INTRO}

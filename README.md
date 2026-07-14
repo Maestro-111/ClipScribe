@@ -111,7 +111,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 - `POST /uploads` — upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
 - `GET /inputs` — list server-side input videos accepted by the job form.
-- `POST /jobs` — create a `full`, `extract`, or `parse` job; `parse` requires an existing `run_id`, and `extract` writes artifacts only (no `runs` row).
+- `POST /jobs` — create a `full` or `extract` job with at least one video; `parse` is only available through the local batch entry point.
 - `GET /jobs` and `GET /jobs/{job_id}` — poll job state.
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.

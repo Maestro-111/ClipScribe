@@ -785,7 +785,7 @@ function RunInspector({ runId }: { runId: string }) {
       {/* ── Advisory chat (web-app-plan §13) ── */}
       <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 font-medium">Ask about this video</h2>
-        <ChatPanel endpoint={`/api/runs/${runId}/chat`} />
+        <ChatPanel key={runId} endpoint={`/api/runs/${runId}/chat`} />
       </section>
         </>
       )}
