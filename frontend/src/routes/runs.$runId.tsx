@@ -468,11 +468,19 @@ function ParserTable({ results }: { results: ParserResult[] }) {
 function RunInspector({ runId }: { runId: string }) {
   const navigate = useNavigate();
 
-  const run = useRun(runId);
-  const globalStats = useRunGlobalStats(runId);
-  const audioSegments = useRunAudioSegments(runId);
-  const parser = useRunParser(runId);
   const siblings = useRunSiblings(runId);
+
+  const siblingRuns = siblings.data ?? [];
+  const currentIdx = siblingRuns.findIndex((s) => s.run_id === runId);
+  const currentSibling = currentIdx >= 0 ? siblingRuns[currentIdx] : undefined;
+  const shouldFetchRun =
+    siblings.isSuccess &&
+    (currentSibling ? currentSibling.status === "completed" : true);
+  const run = useRun(runId, shouldFetchRun);
+  const detailQueriesEnabled = shouldFetchRun && !!run.data;
+  const globalStats = useRunGlobalStats(runId, detailQueriesEnabled);
+  const audioSegments = useRunAudioSegments(runId, detailQueriesEnabled);
+  const parser = useRunParser(runId, detailQueriesEnabled);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   // Fullscreen the wrapper (video + SVG overlay together), not the <video>:
@@ -492,7 +500,9 @@ function RunInspector({ runId }: { runId: string }) {
   );
   const frames = useRunFrames(
     runId,
-    frameWindow ?? { fromSec: 0, toSec: 0, enabled: false },
+    frameWindow
+      ? { ...frameWindow, enabled: detailQueriesEnabled }
+      : { fromSec: 0, toSec: 0, enabled: false },
   );
 
   const toggleSource = useCallback((src: DetectionSource) => {
@@ -558,13 +568,14 @@ function RunInspector({ runId }: { runId: string }) {
   // Only completed runs have inspectable data (the extractor writes the run row
   // at the end), so navigation is restricted to completed siblings and the
   // current run shows a "still processing" notice until it finishes.
-  const siblingRuns = siblings.data ?? [];
-  const currentIdx = siblingRuns.findIndex((s) => s.run_id === runId);
-  const currentSibling = currentIdx >= 0 ? siblingRuns[currentIdx] : undefined;
   const hasSiblings = siblingRuns.length > 1;
-  const runReady = currentSibling
-    ? currentSibling.status === "completed"
-    : !run.error && !!run.data;
+  const runReady = detailQueriesEnabled;
+  const waitingStatus =
+    currentSibling && currentSibling.status !== "completed"
+      ? currentSibling.status
+      : siblings.isLoading || run.isLoading
+        ? "loading"
+        : "unavailable";
   // All siblings share one parent; use it for the "back to batch" link.
   const parentJobId = siblingRuns[0]?.parent_job_id ?? null;
   const prevCompleted =
@@ -651,8 +662,11 @@ function RunInspector({ runId }: { runId: string }) {
       {!runReady ? (
         <section className="rounded-lg border border-neutral-200 bg-white p-8 text-center shadow-sm">
           <p className="text-neutral-600">
-            This run is still {currentSibling?.status ?? "processing"} — nothing
-            to inspect yet.
+            {waitingStatus === "loading"
+              ? "Loading run status..."
+              : waitingStatus === "unavailable"
+                ? "Run data is unavailable."
+                : `This run is still ${waitingStatus} - nothing to inspect yet.`}
           </p>
           {hasSiblings && (
             <p className="mt-1 text-sm text-neutral-400">

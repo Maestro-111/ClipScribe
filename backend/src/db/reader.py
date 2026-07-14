@@ -281,21 +281,78 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             result = conn.execute(text(query), params)
             return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
 
-    def list_parent_jobs(self, limit: int = 50, offset: int = 0) -> list[dict]:
+    def list_parent_jobs(
+        self, limit: int = 50, offset: int = 0, status: str | None = None
+    ) -> list[dict]:
         """Top-level (parent/standalone) jobs, most recent first.
 
-        Excludes child runs (``parent_job_id`` set). Status is not filtered here:
-        a parent's own row status is inert — its effective status is aggregated
-        from :meth:`get_child_jobs` in the API layer — so filtering happens after
-        aggregation, not in SQL.
+        Excludes child runs (``parent_job_id`` set). When ``status`` is provided,
+        filter by the same effective status exposed by the API: batch parents
+        aggregate their children, while standalone rows keep their own status.
         """
         query = (
-            "SELECT * FROM jobs WHERE parent_job_id IS NULL "
-            "ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
+            """
+            WITH child_status AS (
+                SELECT
+                    parent_job_id,
+                    COUNT(*) AS child_count,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END)
+                        AS completed_count,
+                    SUM(CASE
+                        WHEN status IN ('completed', 'failed', 'canceled')
+                        THEN 1 ELSE 0
+                    END) AS terminal_count,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
+                        AS failed_count,
+                    SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END)
+                        AS canceled_count,
+                    SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END)
+                        AS running_count
+                FROM jobs
+                WHERE parent_job_id IS NOT NULL
+                GROUP BY parent_job_id
+            ),
+            effective_parent_jobs AS (
+                SELECT
+                    p.*,
+                    CASE
+                        WHEN child_status.child_count IS NULL
+                            THEN p.status
+                        WHEN child_status.completed_count = child_status.child_count
+                            THEN 'completed'
+                        WHEN child_status.terminal_count = child_status.child_count
+                            AND child_status.failed_count > 0
+                            THEN 'failed'
+                        WHEN child_status.terminal_count = child_status.child_count
+                            AND child_status.canceled_count > 0
+                            THEN 'canceled'
+                        WHEN child_status.terminal_count = child_status.child_count
+                            THEN 'completed'
+                        WHEN child_status.running_count > 0
+                            OR child_status.terminal_count > 0
+                            THEN 'running'
+                        ELSE 'queued'
+                    END AS effective_status
+                FROM jobs AS p
+                LEFT JOIN child_status ON child_status.parent_job_id = p.job_id
+                WHERE p.parent_job_id IS NULL
+            )
+            SELECT * FROM effective_parent_jobs
+            """
         )
+        params: dict = {"limit": limit, "offset": offset}
+        if status is not None:
+            query += " WHERE effective_status = :status"
+            params["status"] = status
+        query += " ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
         with self._engine.connect() as conn:
-            result = conn.execute(text(query), {"limit": limit, "offset": offset})
-            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
+            result = conn.execute(text(query), params)
+            rows = []
+            for row in result.mappings().fetchall():
+                decoded = self._decode_job(dict(row))
+                decoded.pop("effective_status", None)
+                rows.append(decoded)
+            return rows
 
     def get_child_jobs(self, parent_job_id: str) -> list[dict]:
         """Child runs of a batch job, in submission order (oldest first)."""

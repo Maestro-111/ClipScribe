@@ -80,12 +80,10 @@ def list_jobs(
     reader: "ClipScribeReaderDB" = Depends(get_reader),
 ) -> JobListResponse:
     # Only top-level (parent/standalone) jobs are listed; each carries its
-    # children and an aggregated status. The status filter is applied after
-    # aggregation (a parent's own row status is inert), not in SQL.
-    parents = reader.list_parent_jobs(limit=limit, offset=offset)
+    # children and an aggregated status. The reader applies any status filter
+    # before pagination using the same effective parent status.
+    parents = reader.list_parent_jobs(limit=limit, offset=offset, status=job_status)
     jobs = [build_job_response(reader, p) for p in parents]
-    if job_status:
-        jobs = [j for j in jobs if j.status == job_status]
     return JobListResponse(jobs=jobs, limit=limit, offset=offset)
 
 

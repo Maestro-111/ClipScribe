@@ -134,7 +134,7 @@ export function useCreateJob() {
 }
 
 // --- Run inspector reads ---
-export function useRun(runId: string) {
+export function useRun(runId: string, enabled = true) {
   return useQuery({
     queryKey: keys.run(runId),
     queryFn: async () =>
@@ -143,6 +143,7 @@ export function useRun(runId: string) {
           params: { path: { run_id: runId } },
         }),
       ) as unknown as Run,
+    enabled,
     staleTime: Infinity,
   });
 }
@@ -167,7 +168,7 @@ export function useRunFrames(runId: string, window?: RunFramesWindow) {
   });
 }
 
-export function useRunGlobalStats(runId: string) {
+export function useRunGlobalStats(runId: string, enabled = true) {
   return useQuery({
     queryKey: keys.runGlobalStats(runId),
     queryFn: async () =>
@@ -176,11 +177,12 @@ export function useRunGlobalStats(runId: string) {
           params: { path: { run_id: runId } },
         }),
       ) as unknown as GlobalStatsResponse,
+    enabled,
     staleTime: Infinity,
   });
 }
 
-export function useRunParser(runId: string) {
+export function useRunParser(runId: string, enabled = true) {
   return useQuery({
     queryKey: keys.runParser(runId),
     queryFn: async () =>
@@ -189,11 +191,12 @@ export function useRunParser(runId: string) {
           params: { path: { run_id: runId } },
         }),
       ) as unknown as ParserResult[],
+    enabled,
     staleTime: Infinity,
   });
 }
 
-export function useRunAudioSegments(runId: string) {
+export function useRunAudioSegments(runId: string, enabled = true) {
   return useQuery({
     queryKey: keys.runAudioSegments(runId),
     queryFn: async () =>
@@ -202,6 +205,7 @@ export function useRunAudioSegments(runId: string) {
           params: { path: { run_id: runId } },
         }),
       ) as unknown as AudioSegment[],
+    enabled,
     staleTime: Infinity,
   });
 }

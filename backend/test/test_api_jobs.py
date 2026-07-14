@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 from app import settings as settings_mod
 from app.deps import get_executor, get_reader
@@ -484,3 +484,26 @@ def test_list_jobs_filter_and_shape(ctx):
     queued = client.get("/jobs", params={"status": "queued"})
     assert len(queued.json()["jobs"]) == 2
     assert client.get("/jobs", params={"status": "completed"}).json()["jobs"] == []
+
+
+def test_list_jobs_status_filter_applies_before_pagination(ctx):
+    client, state = ctx
+    state.install_service(run=True)
+    completed_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+    with state.reader._engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE jobs SET created_at = '2000-01-01T00:00:00' "
+                "WHERE job_id = :id"
+            ),
+            {"id": completed_id},
+        )
+    state.install_service(run=False)
+    client.post("/jobs", json=_full_body())
+    client.post("/jobs", json=_full_body())
+
+    resp = client.get("/jobs", params={"status": "completed", "limit": 1})
+    assert resp.status_code == 200
+    jobs = resp.json()["jobs"]
+    assert [job["job_id"] for job in jobs] == [completed_id]
+    assert jobs[0]["status"] == "completed"
