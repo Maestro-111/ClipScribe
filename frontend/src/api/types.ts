@@ -128,6 +128,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/{job_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download every run's ABCD report
+         * @description Export all completed runs in a job as one CSV or XLSX download.
+         *
+         *     XLSX carries a cross-run Summary sheet plus one Detail sheet per run; CSV
+         *     stacks every run's criteria into one table with a leading Video column.
+         */
+        get: operations["export_job_jobs__job_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}/events": {
         parameters: {
             query?: never;
@@ -369,6 +392,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/parser/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download this run's ABCD report
+         * @description Export one run's parser results as a CSV or XLSX download.
+         *
+         *     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
+         *     flat Detail table (still opens in Excel, just without the extra tab).
+         */
+        get: operations["export_parser_runs__run_id__parser_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/chat": {
         parameters: {
             query?: never;
@@ -416,6 +462,58 @@ export interface paths {
         post?: never;
         /** Delete a chat session */
         delete: operations["delete_session_runs__run_id__chat__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the job-level advisory agent (SSE) */
+        post: operations["post_job_chat_jobs__job_id__chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/chat/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List job-level chat sessions */
+        get: operations["list_job_sessions_jobs__job_id__chat_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/chat/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one job-level chat session's transcript */
+        get: operations["get_job_session_jobs__job_id__chat__session_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete a job-level chat session */
+        delete: operations["delete_job_session_jobs__job_id__chat__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -638,6 +736,28 @@ export interface components {
         InputsResponse: {
             /** Videos */
             videos: components["schemas"]["InputVideo"][];
+        };
+        /**
+         * JobChatHistoryResponse
+         * @description Transcript of one job-level chat session.
+         */
+        JobChatHistoryResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Messages */
+            messages: components["schemas"]["ChatMessage"][];
+        };
+        /**
+         * JobChatSessionsResponse
+         * @description Job-level chat sessions for a batch job.
+         */
+        JobChatSessionsResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Sessions */
+            sessions: components["schemas"]["ChatSession"][];
         };
         /**
          * JobChild
@@ -1203,6 +1323,39 @@ export interface operations {
             };
         };
     };
+    export_job_jobs__job_id__export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     job_events_jobs__job_id__events_get: {
         parameters: {
             query?: never;
@@ -1611,6 +1764,39 @@ export interface operations {
             };
         };
     };
+    export_parser_runs__run_id__parser_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_chat_runs__run_id__chat_post: {
         parameters: {
             query?: never;
@@ -1715,6 +1901,134 @@ export interface operations {
             header?: never;
             path: {
                 run_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_job_chat_jobs__job_id__chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_job_sessions_jobs__job_id__chat_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobChatSessionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_session_jobs__job_id__chat__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobChatHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_job_session_jobs__job_id__chat__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
                 session_id: string;
             };
             cookie?: never;

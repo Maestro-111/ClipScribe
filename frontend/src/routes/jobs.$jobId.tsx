@@ -7,7 +7,18 @@ import {
   useRetryJob,
   type JobChild,
 } from "../api/hooks";
-import { Spinner, StatusPill } from "../components/ui";
+import { ChatPanel } from "../components/ChatPanel";
+import { ExportMenu, Spinner, StatusPill } from "../components/ui";
+
+// Starter prompts + intro for the job-level chat, which reasons across every
+// video in the batch (unlike the per-run inspector chat).
+const JOB_CHAT_SUGGESTIONS = [
+  "What's the overall ABCD hit rate across these videos?",
+  "Which video performed best, and which worst?",
+  "Which ABCD category is weakest across the batch?",
+];
+const JOB_CHAT_INTRO =
+  "Ask about this job — the agent can compare every video's ABCD verdicts and the extracted data across the whole batch.";
 
 // "/jobs/{id}" — the job page (web-app-plan §7 page 3, step 9).
 //
@@ -512,7 +523,10 @@ function BatchJob() {
             {total} run{total === 1 ? "" : "s"}
           </p>
         </div>
-        <StatusPill status={status} />
+        <div className="flex items-center gap-3">
+          {done > 0 && <ExportMenu baseHref={`/api/jobs/${jobId}/export`} label="Export all" />}
+          <StatusPill status={status} />
+        </div>
       </div>
 
       {/* batch progress + actions */}
@@ -560,6 +574,19 @@ function BatchJob() {
           </tbody>
         </table>
       </section>
+
+      {/* ── Job-level advisory chat (analyzes every run in the batch) ── */}
+      {done > 0 && (
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 font-medium">Ask about this job</h2>
+          <ChatPanel
+            endpoint={`/api/jobs/${jobId}/chat`}
+            suggestions={JOB_CHAT_SUGGESTIONS}
+            intro={JOB_CHAT_INTRO}
+            placeholder="Ask about these videos…"
+          />
+        </section>
+      )}
     </div>
   );
 }

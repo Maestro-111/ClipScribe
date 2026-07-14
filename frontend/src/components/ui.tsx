@@ -101,6 +101,65 @@ export function EmptyState({
   );
 }
 
+// Download menu for the ABCD report. `baseHref` is the export endpoint (e.g.
+// "/api/runs/{id}/parser/export"); each item appends ?format=. The server sets
+// Content-Disposition: attachment, so a plain anchor triggers the download.
+// Native <details> handles open/close (and click-away) without extra state;
+// the marker is hidden (incl. Safari's ::-webkit-details-marker) so we control
+// the chevron, which flips when open.
+export function ExportMenu({
+  baseHref,
+  label = "Export",
+}: {
+  baseHref: string;
+  label?: string;
+}) {
+  return (
+    <details className="group relative inline-block [&_summary::-webkit-details-marker]:hidden">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 whitespace-nowrap rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:border-neutral-400 hover:bg-neutral-50">
+        {/* download tray icon */}
+        <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 text-neutral-500">
+          <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.3 8.23a.75.75 0 1 0-1.1 1.02l4.25 4.5a.75.75 0 0 0 1.1 0l4.25-4.5a.75.75 0 1 0-1.1-1.02l-2.95 3.134V2.75Z" />
+          <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
+        </svg>
+        {label}
+        {/* chevron flips on open */}
+        <svg
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className="h-3.5 w-3.5 text-neutral-400 transition-transform group-open:rotate-180"
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </summary>
+      <div className="absolute right-0 z-20 mt-1.5 w-40 overflow-hidden rounded-lg border border-neutral-200 bg-white py-1 shadow-lg ring-1 ring-black/5">
+        <a
+          href={`${baseHref}?format=xlsx`}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-green-100 text-[10px] font-semibold text-green-700">
+            X
+          </span>
+          Excel (.xlsx)
+        </a>
+        <a
+          href={`${baseHref}?format=csv`}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-neutral-100 text-[10px] font-semibold text-neutral-600">
+            ,
+          </span>
+          CSV (.csv)
+        </a>
+      </div>
+    </details>
+  );
+}
+
 // The ClipScribe mark — a clapperboard whose body doubles as a written slate.
 // Same artwork as public/favicon.svg; reused in the nav header. `size` is px.
 export function Logo({ size = 24 }: { size?: number }) {

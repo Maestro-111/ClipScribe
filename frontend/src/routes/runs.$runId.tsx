@@ -16,7 +16,7 @@ import type {
   ShotBoundary,
 } from "../lib/run-types";
 import { ChatPanel } from "../components/ChatPanel";
-import { Verdict } from "../components/ui";
+import { ExportMenu, Verdict } from "../components/ui";
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunInspectorRoute,
@@ -769,7 +769,12 @@ function RunInspector({ runId }: { runId: string }) {
 
       {/* ── ABCD criteria ── */}
       <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 font-medium">ABCD criteria</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-medium">ABCD criteria</h2>
+          {parserResults.length > 0 && (
+            <ExportMenu baseHref={`/api/runs/${runId}/parser/export`} />
+          )}
+        </div>
         {parser.isLoading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
         ) : (
@@ -780,7 +785,7 @@ function RunInspector({ runId }: { runId: string }) {
       {/* ── Advisory chat (web-app-plan §13) ── */}
       <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 font-medium">Ask about this video</h2>
-        <ChatPanel runId={runId} />
+        <ChatPanel endpoint={`/api/runs/${runId}/chat`} />
       </section>
         </>
       )}

@@ -1,5 +1,7 @@
-// Advisory chat panel (web-app-plan §13). Talks to the run-scoped agent at
-// POST /api/runs/{runId}/chat, which answers as a Server-Sent Events stream.
+// Advisory chat panel (web-app-plan §13). Talks to an advisory agent that
+// answers as a Server-Sent Events stream. The same component serves both the
+// run-scoped chat (POST /api/runs/{runId}/chat) and the job-scoped chat
+// (POST /api/jobs/{jobId}/chat) — the caller picks via `endpoint`.
 //
 // EventSource only does GET, so we stream the POST response body ourselves:
 // read the ReadableStream, split on SSE frame boundaries ("\n\n"), and parse
@@ -21,14 +23,15 @@ type StreamEvent =
   | { type: "error"; message: string }
   | { type: "done" };
 
-// A few starter prompts so the panel is useful without knowing what to ask.
-const SUGGESTIONS = [
+// Default starter prompts for the per-run inspector chat.
+const RUN_SUGGESTIONS = [
   "Which criteria failed, and why?",
   "What are the top 3 things to change in this video?",
   "How could we fix the failed criteria?",
 ];
 
 const TOOL_LABELS: Record<string, string> = {
+  // per-run + shared
   query_parser_results: "read ABCD verdicts",
   query_scene_descriptions: "read scenes",
   query_visual_objects: "read objects",
@@ -36,9 +39,22 @@ const TOOL_LABELS: Record<string, string> = {
   query_text_events: "read on-screen text",
   query_global_stats: "read pacing stats",
   query_field_descriptions: "read field docs",
+  // job-level
+  list_job_runs: "list videos",
+  query_job_scorecard: "read scorecard",
 };
 
-export function ChatPanel({ runId }: { runId: string }) {
+export function ChatPanel({
+  endpoint,
+  suggestions = RUN_SUGGESTIONS,
+  intro = "Ask about this video — the agent knows every ABCD verdict and the extracted scenes, objects, audio, and on-screen text.",
+  placeholder = "Ask about this video…",
+}: {
+  endpoint: string;
+  suggestions?: string[];
+  intro?: string;
+  placeholder?: string;
+}) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -76,7 +92,7 @@ export function ChatPanel({ runId }: { runId: string }) {
     scrollToBottom();
 
     try {
-      const resp = await fetch(`/api/runs/${runId}/chat`, {
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, session_id: sessionId.current }),
@@ -149,12 +165,9 @@ export function ChatPanel({ runId }: { runId: string }) {
       >
         {messages.length === 0 && (
           <div className="space-y-2 text-sm text-neutral-500">
-            <p>
-              Ask about this video — the agent knows every ABCD verdict and the
-              extracted scenes, objects, audio, and on-screen text.
-            </p>
+            <p>{intro}</p>
             <div className="flex flex-wrap gap-2">
-              {SUGGESTIONS.map((s) => (
+              {suggestions.map((s) => (
                 <button
                   key={s}
                   onClick={() => void send(s)}
@@ -217,7 +230,7 @@ export function ChatPanel({ runId }: { runId: string }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
-          placeholder="Ask about this video…"
+          placeholder={placeholder}
           className="flex-1 rounded border px-3 py-2 text-sm disabled:bg-neutral-100"
         />
         <button
