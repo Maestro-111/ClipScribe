@@ -1,16 +1,18 @@
-"""Advisory chat agent — post-run Q&A over a single video (web-app-plan §13).
+"""Advisory chat agents — post-run Q&A (web-app-plan §13).
 
 Same LangGraph ReAct machinery as the evaluators (``agent.py`` / ``tools.py``),
-with three differences: it gets the ``"advisory"`` tool group (every query tool
-plus ``query_parser_results``), it is conversational rather than one-shot, and it
-gives free-form guidance instead of a structured pass/fail.
+with run-level and job-level variants. The run agent gets the ``"advisory"``
+tool group (every query tool plus ``query_parser_results``); the job agent gets
+job-scoped tools for listing completed runs, reading aggregate scorecards, and
+querying per-run details. Both are conversational rather than one-shot and give
+free-form guidance instead of a structured pass/fail.
 
-The agent is read-only and strictly scoped to one ``run_id`` — every tool is
-bound to that id server-side, so it physically cannot read another run's data.
-It does only LLM calls + DB reads, so it runs in the API process with no worker
-and no pipeline model loading. Some LangChain/LangGraph imports may still pull
-in torch transitively in this environment, so the API route lazy-imports the
-chat service.
+The agents are read-only and strictly scoped server-side — either to one
+``run_id`` or to the completed ``run_id`` set for one ``job_id`` — so they
+cannot read unrelated data. They do only LLM calls + DB reads, so they run in
+the API process with no worker and no pipeline model loading. Some
+LangChain/LangGraph imports may still pull in torch transitively in this
+environment, so the API route lazy-imports the chat service.
 """
 
 from __future__ import annotations

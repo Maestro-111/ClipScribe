@@ -27,7 +27,8 @@ the Docker split have landed. `POST /jobs` runs child jobs either in-process
 (single-slot executor) or via a Redis-backed Celery worker, selected by
 `CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, parent/child
 job polling/progress, read-only run views (including batch siblings), advisory
-chat, artifact serving, health, and metadata endpoints.
+chat at run and job scope, ABCD CSV/XLSX exports, artifact serving, health, and
+metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
 /jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
 
@@ -104,6 +105,7 @@ clipscribe/
       routes/                     # jobs, runs, artifacts, chat, health, meta, uploads
       models.py                   # Pydantic request/response schemas
       events.py                   # Redis Streams progress helpers + log bridge
+      exports.py                  # on-demand CSV/XLSX ABCD report bytes
     docker/
       api/
         Dockerfile                # slim API image; also runs migrate
@@ -326,18 +328,21 @@ langsmith_run_id TEXT          # link to trace
 created_at      TIMESTAMP
 ```
 
-**`chat_messages`** — user-facing transcript for the advisory chat (§13). The
-agent's working memory lives in the LangGraph checkpointer; this table is what
-the UI lists and replays.
+**`chat_messages`** — user-facing transcript for advisory chat (§13). The
+database transcript is the agent's durable memory: each turn reloads prior
+messages and replays them into the agent, so no separate checkpointer is
+required.
 ```
 id               INTEGER PK
-run_id           TEXT
-session_id       TEXT          # = LangGraph thread_id
+run_id           TEXT          # set for per-run inspector chat; NULL for job chat
+job_id           TEXT          # set for job-level chat; NULL for run chat
+session_id       TEXT
 role             TEXT          # user | assistant
 content          TEXT
 tool_calls_json  JSONB         # optional: tools the agent invoked, for UI transparency
 created_at       TIMESTAMP
 INDEX (run_id, session_id)
+INDEX (job_id, session_id)
 ```
 
 ### Widened: shot boundaries
@@ -367,7 +372,8 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 - Current revisions are a baseline migration for the existing schema, a
   migration adding `jobs`, `frame_detections`, `parser_results`, and
   `shot_boundaries`, a chat migration adding `chat_messages`, and a
-  `parent_job_id` migration for batch fan-out.
+  `parent_job_id` migration for batch fan-out, plus a `job_id` chat migration
+  for job-level advisory transcripts.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
   repository root). `make migrate` applies SQLite always and then attempts
@@ -490,12 +496,13 @@ OpenAPI-generated; TS client codegen via `openapi-typescript`. All routes
 return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 Implemented routes cover the inline and Celery dispatch paths, Redis
 Stream-backed SSE progress, read-only run views, artifacts, metadata, uploads,
-and advisory chat.
+ABCD exports, and advisory chat.
 
 ### Jobs
 - `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; parser-only `parse` is local/dev-only and rejected by this API.
 - `GET    /jobs`                       — paginated top-level jobs, filterable by effective status; batch parent status is aggregated from children.
 - `GET    /jobs/{id}`                  — full state. Parents include `children`; child/leaf rows return their own status and no children.
+- `GET    /jobs/{id}/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
 - `GET    /jobs/{id}/events`           — SSE live progress for a leaf/child job. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
 - `POST   /jobs/{id}/cancel`           — cancel a queued/running child job, or every queued/running child under a parent batch. Running pipelines stop cooperatively at safe checkpoints.
@@ -512,6 +519,7 @@ and advisory chat.
 - `GET /runs/{id}/scenes`              — `scene_descriptions`.
 - `GET /runs/{id}/frames?from=X&to=Y`  — `frame_detections` in time window.
 - `GET /runs/{id}/parser`              — `parser_results`.
+- `GET /runs/{id}/parser/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
 
 ### Artifacts (filesystem-backed)
 - `GET /runs/{id}/video`               — original input, `Range`-aware.
@@ -530,11 +538,15 @@ and advisory chat.
 ### Uploads
 - `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `videos[].video_path` values.
 
-### Chat (advisory agent — post-run Q&A, see §13)
+### Chat (advisory agents — post-run Q&A, see §13)
 - `POST   /runs/{id}/chat`             — ask a question; streamed (SSE) answer. Body: `{session_id?, message}`.
 - `GET    /runs/{id}/chat/sessions`    — list chat sessions for the run.
 - `GET    /runs/{id}/chat/{session_id}`— message history for one session.
 - `DELETE /runs/{id}/chat/{session_id}`— delete a session.
+- `POST   /jobs/{id}/chat`             — ask a cross-run question over every completed run in a job; streamed (SSE) answer. Returns 409 until at least one run is complete.
+- `GET    /jobs/{id}/chat/sessions`    — list job-level chat sessions.
+- `GET    /jobs/{id}/chat/{session_id}`— message history for one job-level session.
+- `DELETE /jobs/{id}/chat/{session_id}`— delete a job-level session.
 
 ---
 
@@ -571,6 +583,8 @@ and advisory chat.
 3. **Live job** (`/jobs/{id}`)
    - Parent jobs render a batch panel with one row per child run, aggregated
      status, and per-run inspect/cancel/retry/delete actions.
+   - Once any child completes, parent jobs expose an "Export all" CSV/XLSX menu
+     and a job-level advisory chat that can compare the completed runs.
    - Child/leaf jobs render the SSE live page: top progress bar, cancel action,
      phase tree, current-shot panel (description, DINO prompt, taxonomy targets,
      processed frames), and log tail.
@@ -586,7 +600,7 @@ and advisory chat.
    - Timeline tracks for shots and audio.
    - Bottom: ABCD criteria table from `parser_results`, each row expandable to
      show `llm_prompt` + `llm_explanation` + LangSmith trace link.
-   - Tracked video download and advisory chat panel.
+   - Run-level CSV/XLSX export, tracked video download, and advisory chat panel.
 
 ### Live progress state shape
 
@@ -625,7 +639,7 @@ copy both `backend/` and `frontend/` without moving files around.
 ```
 backend/docker/
   api/
-    Dockerfile          # slim — FastAPI, DB, Redis/Celery client, advisory chat
+    Dockerfile          # slim — FastAPI, DB, Redis/Celery client, advisory chat, exports
     deploy.sh
   core/
     cpu/
@@ -837,8 +851,8 @@ slower than native MPS. Treat it as smoke-test only.
 The API Dockerfile installs only the locked `api` dependency group using
 `uv export --frozen --only-group api`, then copies the API package and only the
 source trees it imports at module load: `src/db`, `src/parser`, `src/utils`, and
-`src/clip_scribe`. It deliberately omits extractor/OCR/DINO/SAM2 and never
-installs torch.
+`src/clip_scribe`. It includes `openpyxl` for on-demand XLSX exports, but
+deliberately omits extractor/OCR/DINO/SAM2 and never installs torch.
 
 ```dockerfile
 FROM python:3.12-slim
@@ -965,12 +979,12 @@ These are decisions to make before the corresponding implementation step.
     download.
 
 18. **Advisory chat scope & memory (§13).**
-    Conversation memory via LangGraph checkpointer (`MemorySaver` in dev, the
-    Postgres checkpointer when deployed so sessions survive API restarts and
-    span replicas). Decide: one implicit session per run vs. multiple named
-    sessions; whether the agent may ever compare across runs (default **no** —
-    tools stay strictly bound to a single `run_id`); and whether transcripts are
-    retained/purged alongside run retention (§9.14).
+    **Resolved.** Conversation memory is the `chat_messages` table: each turn
+    reloads prior user/assistant messages for the same `session_id` and replays
+    them into the agent. There are two explicit scopes. Run inspector chat stays
+    strictly bound to one `run_id`; job-level chat stores `job_id`, analyzes only
+    completed runs in that job, and may compare those runs. Run transcripts are
+    purged with run deletion; job transcripts are purged with job deletion.
 
 ---
 
@@ -1093,6 +1107,16 @@ Strictly ordered; each step is shippable on its own.
     offers starter-prompt buttons. Follow-up: an "ask about this" shortcut on
     failed criterion rows (needs lifting chat state above `ParserTable`).
 
+15. **Job-level reporting and analysis.** **DONE.** `backend/app/exports.py`
+    builds CSV/XLSX bytes from persisted `parser_results`. Routes:
+    `GET /runs/{id}/parser/export` and `GET /jobs/{id}/export` (job XLSX:
+    `Summary` + one detail sheet per run; job CSV: flat table with `Video`).
+    Job-level chat adds `build_job_advisory_agent`, `build_job_tools`
+    (`list_job_runs`, `query_job_scorecard`, cross-run `query_parser_results`,
+    and per-run detail tools), `job_id`-scoped `chat_messages`, `/jobs/{id}/chat`
+    routes, and a parent job chat panel. The existing run inspector chat remains
+    scoped to the current run.
+
 ---
 
 ## 11. Risks / things that could derail this
@@ -1203,14 +1227,13 @@ orchestrator.
 
 ---
 
-## 13. Advisory chat agent (post-run Q&A)
+## 13. Advisory chat agents (post-run Q&A)
 
-An interactive follow-up to evaluation. After a run completes, the user opens
-the run inspector, sees the ABCD verdicts, and can **ask questions** of an agent
-that already knows the whole video and every verdict the evaluator agents
-produced — e.g. *"criterion X failed — how would we fix it?"* or *"overall,
-what should change in this creative?"*. Backend and frontend support have landed
-as steps 13–14 in §10.
+Interactive follow-up to evaluation. After a run completes, the user can ask
+run-scoped questions in the inspector (one video only), or ask job-level
+questions from the parent job page once any child run completes (compare every
+completed video in that job). Backend and frontend support have landed as
+steps 13–15 in §10.
 
 ### Why it's a clean fit (not a new subsystem)
 
@@ -1219,38 +1242,42 @@ LangGraph ReAct agent via `create_react_agent(model, tools)`, and
 `backend/src/parser/tools.py` exposes read-only, run-scoped query tools
 (`query_audio_segments`, `query_text_events`, `query_visual_objects`,
 `query_scene_descriptions`, `query_global_stats`, `query_field_descriptions`),
-grouped by feature type in `tool_map`. The advisory chat agent is the same
-pattern with three deltas:
+grouped by feature type in `tool_map`. The advisory chat agents use the same
+pattern with these deltas:
 
-1. **All tools, not one group.** It gets a new `"advisory"` tool group that
-   includes every existing query tool.
-2. **One new tool — `query_parser_results`.** Reads the run's `parser_results`
+1. **Run chat: all tools, not one group.** It gets a new `"advisory"` tool
+   group that includes every existing run-scoped query tool.
+2. **Run chat: `query_parser_results`.** Reads the run's `parser_results`
    rows so the agent can cite each criterion's verdict, `llm_explanation`, and
    `llm_prompt`. This is what lets it reason about *why* something failed and
    what the evaluators saw.
-3. **Conversational + advisory.** Multi-turn, free-form guidance (a strategist
+3. **Job chat: `build_job_tools`.** Adds `list_job_runs`,
+   `query_job_scorecard`, cross-run `query_parser_results`, and per-run detail
+   tools that validate every requested `run_id` against the job's completed
+   runs.
+4. **Conversational + advisory.** Multi-turn, free-form guidance (a strategist
    proposing concrete, testable changes) instead of the evaluators' one-shot
    structured pass/fail (`_parse_agent_response` in `agent.py`).
 
 ### The architectural win: API-only, no pipeline models
 
-The chat agent does **only LLM calls + DB reads**. It never loads pipeline
-models and never touches the Celery worker. It runs in the API process; routes
+The chat agents do **only LLM calls + DB reads**. They never load pipeline
+models and never touch the Celery worker. They run in the API process; routes
 lazy-import the service because LangChain/LangGraph may transitively import
 torch in this environment. Consequences:
 
 - It ships independently of the Celery worker path.
 - It reuses the API's existing `reader_db` and `OPENAI_API_KEY`; no worker
   round-trip. The slim API image includes the LLM dependencies needed for this
-  route while avoiding the pipeline model stack.
+  route family while avoiding the pipeline model stack.
 
-### Security model — read-only and run-scoped
+### Security model — read-only and server-scoped
 
-Every tool is bound to a single `run_id` **server-side**, exactly as the
-evaluators do today (`build_tools(reader_db, run_id, tool_group)`). The client
-sends a message and an optional `session_id`; it never passes a `run_id` into a
-tool. The agent physically cannot read another run's data because no tool
-accepts a cross-run argument. That closure is the entire isolation story.
+Run chat tools are bound to a single `run_id` **server-side**, exactly as the
+evaluators do today (`build_tools(reader_db, run_id, tool_group)`). Job chat
+tools are bound to the completed `run_id` set resolved from one `job_id`; per-run
+detail tools accept a `run_id`, but reject anything outside that set. The client
+sends a message and optional `session_id`; it does not decide tool scope.
 
 ### Components
 
@@ -1264,27 +1291,37 @@ accepts a cross-run argument. That closure is the entire isolation story.
   persona is a senior creative strategist; must cite specific field values /
   verdicts; must fetch data via tools rather than invent it; must give concrete,
   testable recommendations.
+- **`build_job_advisory_agent(model, reader_db, runs)`** —
+  `create_react_agent(model, job_tools)` over the job's completed runs. The
+  system prompt explicitly encourages cross-video comparison inside that job.
 - **Conversation memory = the DB (as built).** Each turn reloads the session's
   prior `chat_messages` and replays them into the agent as Human/AI messages, so
-  history survives API restarts and spans replicas without a checkpointer — the
-  `chat_messages` table is the single source of truth. (A LangGraph
+  history survives API restarts and spans replicas without a checkpointer. A
+  message is keyed by exactly one scope: `run_id` for inspector chat or `job_id`
+  for job chat. The `chat_messages` table is the single source of truth. (A LangGraph
   `MemorySaver`/Postgres checkpointer keyed by `thread_id = session_id` remains a
   possible optimization if replaying full history ever gets expensive.)
 - **Streaming** — `agent.stream(..., stream_mode="messages")` piped over an SSE
   response. This reuses the §9 SSE *pattern*, but the event source is the LLM
   token stream directly — no Redis stream, no worker involved.
 
-### Frontend (extends §7 page 4, Run inspector)
+### Frontend (extends §7 pages 3–4)
 
-A chat panel below the ABCD criteria table:
-- Streams the assistant answer token-by-token.
-- Renders tool-call chips ("queried visual objects…", "read parser verdicts…")
+A shared `ChatPanel` is mounted in two places:
+
+- The run inspector below the ABCD criteria table, scoped to `/runs/{id}/chat`.
+- The parent job page, scoped to `/jobs/{id}/chat`, once at least one child run
+  has completed.
+
+Both panels:
+- Stream the assistant answer token-by-token.
+- Render tool-call chips ("queried visual objects…", "read parser verdicts…")
   so the reasoning is transparent.
 - Planned follow-up: each failed criterion row gets an **"ask about this"**
   shortcut that seeds a question like *"Criterion '{feature_name}' failed — what
   would fix it?"*.
 
-### Open questions (tracked in §9.18 and §9.8)
+### Further considerations (tracked in §9.8)
 
 - **Cost.** A turn can fan out into many tool calls over a large dataset. Cap
   reasoning depth with `recursion_limit` (as the evaluators already do) and

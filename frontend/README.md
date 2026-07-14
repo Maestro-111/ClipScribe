@@ -2,8 +2,8 @@
 
 A Vite + React + TypeScript single-page app for the ClipScribe web dashboard.
 This now covers the jobs list, multi-video new-job form, batch/live job pages,
-run inspector, and post-run advisory chat described in `docs/web-app-plan.md`
-§10.
+run inspector, ABCD export downloads, and run/job advisory chat described in
+`docs/web-app-plan.md` §10.
 
 ## Stack (and why each piece exists)
 
@@ -63,9 +63,12 @@ replays and tails Redis Stream progress events through the same Vite proxy.
   Re-run `gen:api` after any backend API change (this is the anti-drift step,
   plan §9.12). Multipart uploads and a few lifecycle calls use plain `fetch`
   where it is simpler than wrapping them in `openapi-fetch`.
-- **Data fetching:** components never call `fetch` directly. They use the hooks
-  in `src/api/hooks.ts` (`useJobs`, `useJob`, `useCreateJob`, …). Reads are
-  `useQuery` (cached); writes are `useMutation` (invalidate the cache on success).
+- **Data fetching:** ordinary JSON API reads/writes use the hooks in
+  `src/api/hooks.ts` (`useJobs`, `useJob`, `useCreateJob`, …). Reads are
+  `useQuery` (cached); writes are `useMutation` (invalidate the cache on
+  success). Streaming chat uses `fetch` directly so it can read the POST response
+  body as SSE frames, uploads use multipart `fetch`, lifecycle shortcuts use
+  plain `fetch`, and export downloads are plain anchors.
 
 ## Layout
 
@@ -79,7 +82,8 @@ src/
     client.ts           openapi-fetch client + error unwrapping.
     hooks.ts            TanStack Query hooks over the client.
   components/
-    ChatPanel.tsx       Post-run advisory chat, streamed over SSE.
+    ChatPanel.tsx       Run/job advisory chat, streamed over SSE.
+    ui.tsx              Shared UI, including the ABCD export menu.
   lib/format.ts         Display helpers.
   routes/
     __root.tsx          App shell (nav + <Outlet/>).
@@ -93,8 +97,8 @@ src/
 
 - Jobs list: status filter, polling, parent batch rows with child summaries, running-run progress bars, inspect links for completed runs, cancel/retry actions, and job deletion.
 - New job: create user-facing `full` jobs from one or more existing or uploaded videos; `extract` and parser-only `parse` stay developer paths outside the form.
-- Job pages: parent jobs show the batch's child runs; child/leaf jobs show the SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
-- Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, batch sibling navigation, back-to-batch navigation, shot/audio timeline, parser criteria table, tracked video download, and advisory chat.
+- Job pages: parent jobs show the batch's child runs, job-level advisory chat, and an "Export all" CSV/XLSX menu once at least one child completes; child/leaf jobs show the SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
+- Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, batch sibling navigation, back-to-batch navigation, shot/audio timeline, parser criteria table with CSV/XLSX export, tracked video download, and run-scoped advisory chat.
 - Not yet built: the fuller inspector layer controls from the plan and failed-criterion "ask about this" shortcuts.
 
 ## Scripts

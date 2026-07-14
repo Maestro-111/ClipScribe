@@ -32,10 +32,10 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - LangGraph/LangChain parser agents for feature evaluation
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
-- Per-run extraction artifacts and parser report generation
-- FastAPI API for uploads, jobs, Redis Stream-backed live progress, run inspection, advisory chat, and artifact serving
+- Per-run extraction artifacts, parser report generation, and CSV/XLSX ABCD exports for runs and jobs
+- FastAPI API for uploads, jobs, Redis Stream-backed live progress, run inspection, run/job advisory chat, ABCD exports, and artifact serving
 - Inline or Redis-backed Celery job dispatch
-- Vite/React dashboard for job submission, live job progress, run inspection, and post-run advisory chat
+- Vite/React dashboard for job submission, live job progress, run inspection, ABCD export downloads, and run/job advisory chat
 
 ## Setup
 
@@ -105,20 +105,23 @@ The stack is a Vite/React dashboard, a FastAPI API, one or more Celery workers, 
 - `inline` — one long-lived `ClipScribeBuilder` and a single-slot in-process executor.
 - `celery` — a model-free API that dispatches jobs to a Redis-backed Celery worker.
 
-Running jobs can be marked canceled, but cooperative mid-run interruption is still planned. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the live job page (`/jobs/{job_id}`), and the run inspector (`/runs/{run_id}`) with advisory chat.
+`POST /jobs` creates a parent job and fans its `videos` array out to one child run per video. Running child jobs stop cooperatively at extractor/parser checkpoints when canceled; parent cancellation cancels every queued or running child. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the batch/live job page (`/jobs/{job_id}`) with job-level chat and "Export all", and the run inspector (`/runs/{run_id}`) with sibling navigation, per-run export, and per-run advisory chat.
 
 Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 - `POST /uploads` — upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
 - `GET /inputs` — list server-side input videos accepted by the job form.
-- `POST /jobs` — create a `full` or `extract` job with at least one video; `parse` is only available through the local batch entry point.
-- `GET /jobs` and `GET /jobs/{job_id}` — poll job state.
-- `GET /jobs/{job_id}/events` — SSE stream that replays and tails Redis Stream progress/log events.
+- `POST /jobs` — create a batch job from one or more `videos` sharing platform params and hints; parser-only `parse` is local/dev-only and rejected by the job API.
+- `GET /jobs` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
+- `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
-- `POST /jobs/{job_id}/cancel` — cancel a queued job or mark a running job canceled.
-- `POST /jobs/{job_id}/retry` — create a fresh job from a failed/canceled job's stored request.
-- `DELETE /jobs/{job_id}` — remove a completed, failed, or canceled job row.
-- `GET /runs/{run_id}/...` — inspect persisted run data, frame detections, parser results, and artifacts.
+- `GET /jobs/{job_id}/export?format=xlsx|csv` — export all completed runs' ABCD results; XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
+- `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in a job.
+- `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
+- `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
+- `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data, chat transcripts, and artifacts.
+- `GET /runs/{run_id}/...` — inspect persisted run data, sibling runs, frame detections, parser results, and artifacts.
+- `GET /runs/{run_id}/parser/export?format=xlsx|csv` — export one run's ABCD results; XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
 - `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed run.
 
 ### Local batch entry point (`main.py`)
@@ -141,7 +144,7 @@ Three images back the web app, all built from the repository root as context:
 
 | Image | Dockerfile                           | Role                                                                                                                                                      |
 | --- |--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, Celery dispatch, advisory chat). Also runs the one-shot Alembic migration.              |
+| `api` | `backend/docker/api/Dockerfile`      | Slim, torch-free FastAPI (REST + SSE, DB reads, artifact serving, ABCD exports, Celery dispatch, advisory chat). Also runs the one-shot Alembic migration.              |
 | `worker` | `backend/docker/core/cpu/Dockerfile` | Heavy Celery worker running the full pipeline. CPU build here; `backend/docker/core/gpu/Dockerfile` is the CUDA variant for a Linux + NVIDIA host (see `docs/deployment.md`). |
 | `frontend` | `frontend/Dockerfile`                | Vite/React SPA built with pnpm and served by nginx, which reverse-proxies `/api/*` to the `api` service (SSE-safe).                                       |
 
@@ -226,7 +229,7 @@ uv run pre-commit run --all-files
 
 > **Note:** pre-commit must be run from `backend/`. It discovers the config (`backend/.pre-commit-config.yaml`) from the current directory, but then executes every hook from the git root with file paths relative to that root. That is why the `exclude` patterns are `backend/`-prefixed and the mypy hook `cd backend` before running. Running pre-commit from the repository root fails with `.pre-commit-config.yaml is not a file`.
 
-Install only the slim API dependency group for API-container work. The `api` group includes the advisory-chat LLM libraries (`langgraph`, `langchain-openai`) and resolves torch-free, so the API container stays slim while still serving `/runs/{id}/chat`:
+Install only the slim API dependency group for API-container work. The `api` group includes the advisory-chat LLM libraries (`langgraph`, `langchain-openai`) plus `openpyxl` for XLSX exports and resolves torch-free, so the API container stays slim while still serving chat and export routes:
 
 ```bash
 uv sync --only-group api
@@ -245,7 +248,7 @@ Working Makefile targets include `make setup` (model prefetch), `make checkpoint
 ```text
 clipscribe/
 ├── backend/
-│   ├── app/                    FastAPI: routes, settings, inline/Celery dispatch, Redis events, chat
+│   ├── app/                    FastAPI: routes, settings, inline/Celery dispatch, Redis events, chat, exports
 │   ├── src/
 │   │   ├── clip_scribe/        Engine, builder, platform configs, clip_scribe.yaml
 │   │   ├── extractor/          Scene extraction, taxonomy, tracking, scene description

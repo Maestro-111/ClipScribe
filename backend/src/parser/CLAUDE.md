@@ -7,8 +7,8 @@ Evaluates extracted video metadata against platform-specific feature criteria. U
 * `parser_core.py`: `VideoInformationParser` — main entry point that resolves the platform evaluator, emits parse-phase progress events, persists per-criterion results to `parser_results`, and writes CSV reports.
 * `evaluator_base.py`: `BaseEvaluator` — abstract base class for platform evaluators. Handles baseline vs agentic dispatch, parallel agent execution, and feature-type-to-time-scope resolution.
 * `agent.py`: `build_agent` / `run_agent` — builds a LangGraph ReAct agent and runs it with a system prompt, tools, and an optional `time_scope` restriction.
-* `advisory.py`: Builds the post-run advisory chat agent over a single run.
-* `tools.py`: `build_tools` — constructs LangGraph tool closures (`query_audio_segments`, `query_text_events`, `query_visual_objects`, `query_scene_descriptions`, `query_global_stats`, `query_parser_results`) scoped to a run and grouped by feature type.
+* `advisory.py`: Builds the post-run advisory chat agents over a single run and over a job's completed runs.
+* `tools.py`: `build_tools` constructs run-scoped LangGraph tool closures (`query_audio_segments`, `query_text_events`, `query_visual_objects`, `query_scene_descriptions`, `query_global_stats`, `query_parser_results`) grouped by feature type; `build_job_tools` constructs the job-scoped tool set (`list_job_runs`, `query_job_scorecard`, cross-run `query_parser_results`, plus per-run detail tools).
 * `models.py`: Pydantic models shared across platforms (`BaseFeatureResult`, `BaseAgentEvaluation`).
 * `youtube/`: YouTube-specific evaluator, criteria definitions, baseline logic, models, and CSV report generation.
 

@@ -60,8 +60,8 @@ dev = [
 # Install with `uv sync --only-group api` — unlike an extra, --only-group
 # EXCLUDES the heavy main dependencies (paddleocr/whisper/sam2/dino/opencv), so
 # the API image never pulls the pipeline ML stack. It DOES include the
-# advisory-chat LLM libraries (`langgraph`, `langchain-openai`) so the API can
-# serve `/runs/{id}/chat`.
+# advisory-chat LLM libraries (`langgraph`, `langchain-openai`) plus `openpyxl`
+# so the API can serve chat and ABCD export routes.
 [dependency-groups]
 # Runtime dependency set for the heavy Celery worker container images
 # (backend/docker/core/{cpu,gpu}). It is a dependency-group (not an extra) for

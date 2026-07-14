@@ -1,8 +1,10 @@
 """Advisory chat endpoints (web-app-plan §6, §13).
 
-``POST /runs/{id}/chat`` streams the agent's answer as Server-Sent Events; the
-GET/DELETE routes manage the persisted session transcripts. All routes 404 if
-the run does not exist. The agent is read-only and scoped to ``run_id``.
+``POST /runs/{id}/chat`` streams per-run Q&A and ``POST /jobs/{id}/chat``
+streams job-level Q&A across completed runs. The GET/DELETE routes manage
+persisted session transcripts. Run routes 404 if the run does not exist; job
+routes 404 if the job does not exist and 409 until at least one run is complete.
+Agents are read-only and server-side scoped to ``run_id`` or ``job_id``.
 """
 
 from __future__ import annotations

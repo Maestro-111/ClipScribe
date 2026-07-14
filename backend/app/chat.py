@@ -1,11 +1,12 @@
 """Advisory chat service (web-app-plan §13) — API-side glue for post-run Q&A.
 
-Builds the LLM + a run-scoped ReAct agent (``backend/src/parser/advisory.py``), streams
-its answer as Server-Sent Events, and persists the transcript to
-``chat_messages``. It does no pipeline model loading and does not use the
-worker — just LLM calls + DB reads — so it lives in the API process. Some
-LangChain/LangGraph imports may transitively import torch in this environment,
-so routes lazy-import this service.
+Builds the LLM + a ReAct agent (``backend/src/parser/advisory.py``), streams
+answers as Server-Sent Events, and persists transcripts to ``chat_messages``.
+There are two scopes: per-run inspector chat (one ``run_id``) and job-level chat
+(one ``job_id`` spanning the job's completed runs). It does no pipeline model
+loading and does not use the worker — just LLM calls + DB reads — so it lives in
+the API process. Some LangChain/LangGraph imports may transitively import torch
+in this environment, so routes lazy-import this service.
 
 Conversation memory is the DB: each turn reloads the session's prior messages
 and replays them into the agent, so history survives restarts and multiple API
@@ -79,7 +80,7 @@ class ChatService:
         self.writer = writer
         self.settings = settings
         agent_cfg = _load_agent_config()
-        # Reusable across requests; the run-scoped agent is built per request.
+        # Reusable across requests; scoped run/job agents are built per request.
         self.model = ChatOpenAI(
             model=agent_cfg.get("llm", "gpt-4o-mini"),
             temperature=agent_cfg.get("temperature", 0.2),

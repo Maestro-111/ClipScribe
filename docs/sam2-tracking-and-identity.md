@@ -158,7 +158,8 @@ later detection believe a reappeared object is "new" (see §6).
 
 ### 4.3 Embedding accumulation (re-ID fuel)
 
-Every `reid_model_frame_check_freq` frames (default 20), the object's crop is
+Every `reid_model_frame_check_freq` frames (currently 10 in `clip_scribe.yaml`;
+the constructor fallback is 20 if the key is omitted), the object's crop is
 embedded and *maybe* folded into a running mean:
 
 ```python
