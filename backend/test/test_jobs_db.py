@@ -313,3 +313,29 @@ def test_delete_run_clears_run_keyed_tables(db):
     assert reader.get_frame_detections("r1") == []
     assert reader.get_parser_results("r1") == []
     assert reader.get_run("r2") is not None
+
+
+def test_delete_job_clears_job_scoped_chat_only(db):
+    writer, reader, _ = db
+    writer.create_job(job_id="j1", mode="full")
+    writer.create_job(job_id="j2", mode="full")
+    writer.add_chat_message(
+        job_id="j1", session_id="s1", role="user", content="job one"
+    )
+    writer.add_chat_message(
+        job_id="j2", session_id="s1", role="user", content="job two"
+    )
+    writer.add_chat_message(
+        run_id="r1", session_id="s1", role="user", content="run one"
+    )
+
+    assert writer.delete_job("j1") is True
+
+    assert reader.get_job("j1") is None
+    assert reader.get_job_chat_messages("j1", "s1") == []
+    assert [m["content"] for m in reader.get_job_chat_messages("j2", "s1")] == [
+        "job two"
+    ]
+    assert [m["content"] for m in reader.get_chat_messages("r1", "s1")] == [
+        "run one"
+    ]

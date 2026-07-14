@@ -72,7 +72,7 @@ Common environment variables:
 - `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
 - `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
 - `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
-- `CLIPSCRIBE_DB_BACKEND` - optional override for `database.backend` from `clip_scribe.yaml` (`sqlite` | `postgresql`). The env var wins over yaml, so the Docker/compose stack and prod force `postgresql` without editing the config; local CLI runs keep the yaml default.
+- `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` does not carry a backend key, only pool settings.
 - `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
@@ -86,7 +86,7 @@ The main configuration file is:
 backend/src/clip_scribe/configs/clip_scribe.yaml
 ```
 
-The current checked-in config uses SQLite by default. Switch `database.backend` to `postgresql` (and set `POSTGRESQL_URL`) to use PostgreSQL.
+To use PostgreSQL, set `CLIPSCRIBE_DB_BACKEND=postgresql` and `POSTGRESQL_URL`.
 
 Database schema is managed by Alembic. Apply migrations after creating a fresh database or pulling new migrations:
 
@@ -193,7 +193,7 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | --- | --- | --- | --- |
 | `POSTGRESQL_URL` | `…@localhost:5433/clipscribe` | `…@postgres:5432/clipscribe` | Secret Manager |
 | `REDIS_URL` | `redis://localhost:6379/0` | `redis://redis:6379/0` | Memorystore URL |
-| `CLIPSCRIBE_DB_BACKEND` | unset (yaml `sqlite`) or `postgresql` | `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DB_BACKEND` | unset (`sqlite`) or `postgresql` | `postgresql` | `postgresql` |
 | `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |

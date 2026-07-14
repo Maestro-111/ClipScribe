@@ -364,11 +364,17 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             return result.rowcount > 0
 
     def delete_job(self, job_id: str) -> bool:
-        """Delete a job row. Returns True if a row was deleted, False if not found."""
+        """Delete a job row and its job-scoped chat transcript."""
         with self._engine.begin() as conn:
             result = conn.execute(
                 jobs_table.delete().where(jobs_table.c.job_id == job_id)
             )
+            if result.rowcount > 0:
+                conn.execute(
+                    chat_messages_table.delete().where(
+                        chat_messages_table.c.job_id == job_id
+                    )
+                )
             return result.rowcount > 0
 
     def delete_run(self, run_id: str) -> None:

@@ -5,6 +5,7 @@ job-level export endpoints, including the empty-job and bad-format guards.
 Uses ``metadata.create_all`` directly (tests own their schema).
 """
 
+import csv
 import io
 
 import openpyxl
@@ -97,6 +98,40 @@ def test_job_xlsx_summary_and_unique_sheets_per_run():
 def test_export_filename_slugs_unsafe_chars():
     assert exports.export_filename("ad: name/v2_abcd", "xlsx") == "ad_name_v2_abcd.xlsx"
     assert exports.export_filename("", "csv") == "export.csv"
+
+
+def test_exports_escape_formula_like_text_cells():
+    rows = [
+        {
+            "feature_category": "=Category",
+            "feature_name": "+Feature",
+            "feature_criteria": "-Criteria",
+            "evaluation": True,
+            "llm_explanation": "@Explanation",
+            "llm_prompt": "=Prompt",
+        }
+    ]
+    report = exports.RunReport(RUN1, "=video.mp4", rows)
+
+    run_csv_rows = list(csv.reader(io.StringIO(exports.run_csv(rows).decode())))
+    assert run_csv_rows[1] == [
+        "'=Category",
+        "'+Feature",
+        "'-Criteria",
+        "PASS",
+        "'@Explanation",
+        "'=Prompt",
+    ]
+
+    job_csv_rows = list(csv.reader(io.StringIO(exports.job_csv([report]).decode())))
+    assert job_csv_rows[1][0] == "'=video.mp4"
+
+    run_wb = openpyxl.load_workbook(io.BytesIO(exports.run_xlsx("ad.mp4", rows)))
+    assert run_wb["Detail"]["A2"].value == "'=Category"
+    assert run_wb["Scores"]["A2"].value == "'=Category"
+
+    job_wb = openpyxl.load_workbook(io.BytesIO(exports.job_xlsx([report])))
+    assert job_wb["Summary"]["A2"].value == "'=video.mp4"
 
 
 # ── routes ───────────────────────────────────────────────────────────────────

@@ -57,6 +57,7 @@ class RunReport:
 
 
 VALID_FORMATS = frozenset({"csv", "xlsx"})
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
 
 
 def export_filename(stem: str, fmt: str) -> str:
@@ -76,7 +77,13 @@ def _detail_value(row: dict, field: str) -> str:
     if field == "evaluation":
         return _result_text(row.get("evaluation"))
     value = row.get(field)
-    return "" if value is None else str(value)
+    return "" if value is None else _spreadsheet_text(str(value))
+
+
+def _spreadsheet_text(value: str) -> str:
+    if value.startswith(_FORMULA_PREFIXES):
+        return f"'{value}"
+    return value
 
 
 def _category_order(rows: list[dict]) -> list[str]:
@@ -132,7 +139,10 @@ def job_csv(reports: list[RunReport]) -> bytes:
     for report in reports:
         for r in report.rows:
             writer.writerow(
-                [report.video_name, *(_detail_value(r, k) for k, _l in DETAIL_FIELDS)]
+                [
+                    _spreadsheet_text(report.video_name),
+                    *(_detail_value(r, k) for k, _l in DETAIL_FIELDS),
+                ]
             )
     return buf.getvalue().encode("utf-8")
 
@@ -171,7 +181,7 @@ def _write_scores_sheet(ws: Worksheet, rows: list[dict]) -> None:
     for cell in ws[1]:
         cell.font = _HEADER_FONT
     for cat, passed, total in per_category:
-        ws.append([cat, passed, total, _score_pct(passed, total)])
+        ws.append([_spreadsheet_text(cat), passed, total, _score_pct(passed, total)])
     total_row = ["Total", total_passed, total_all, _score_pct(total_passed, total_all)]
     ws.append(total_row)
     for cell in ws[ws.max_row]:
@@ -232,7 +242,14 @@ def _write_job_summary(ws: Worksheet, reports: list[RunReport]) -> None:
         _per_cat, passed, total = _scores(report.rows)
         grand_passed += passed
         grand_total += total
-        ws.append([report.video_name, passed, total, _score_pct(passed, total)])
+        ws.append(
+            [
+                _spreadsheet_text(report.video_name),
+                passed,
+                total,
+                _score_pct(passed, total),
+            ]
+        )
     ws.append(
         ["Total", grand_passed, grand_total, _score_pct(grand_passed, grand_total)]
     )
