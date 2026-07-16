@@ -31,6 +31,14 @@ chat at run and job scope, ABCD CSV/XLSX exports, artifact serving, health, and
 metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
 /jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
+**A content-addressed video registry has landed** (commit `b727927`): uploads
+are deduplicated by SHA-256 and recorded in a new `videos` table that is the
+source of truth for the input picker, decoupling the opaque storage key from the
+filename the user picked. A `VideoStorage` seam (`backend/src/utils/video_storage.py`,
+`CLIPSCRIBE_VIDEO_STORAGE`) fronts local disk today with a GCS backend reserved,
+mirroring the artifact-upload seam. Frontend polish for the new-job page
+(post-create upload flow, a `JobSidebar` summary/cost panel, and a decorative
+`PipelineAnimation`) is in progress and not yet committed.
 
 ---
 
@@ -270,6 +278,25 @@ and celery paths call the same `run_job_core(...)` lifecycle.
 
 ### New tables
 
+**`videos`** — content-addressed registry of uploaded source videos, the source
+of truth for the input picker. It decouples the opaque storage key a job
+references (`video_path`) from the friendly filename the user picked. Dedup is
+keyed on `(user_id, content_hash)`, so re-uploading identical bytes reuses the
+existing `stored_key` instead of storing a second copy. Pruning a row here never
+affects run history — a `runs` row keeps its own `video_name`/`video_path`
+snapshot.
+```
+user_id         TEXT NOT NULL   # owner; constant "local" until auth; part of dedup key
+content_hash    TEXT NOT NULL   # sha256 of the bytes; dedup identity within a user
+stored_key      TEXT NOT NULL   # opaque storage key, e.g. "<ulid>.mp4"; what video_path references
+original_name   TEXT NOT NULL   # filename it was uploaded as; shown in the picker
+size_bytes      INTEGER
+created_at      TIMESTAMP
+last_seen_at    TIMESTAMP        # refreshed whenever a re-upload dedups to this row
+UNIQUE (user_id, content_hash)   # uq_videos_user_hash
+INDEX  (user_id)                 # ix_videos_user
+```
+
 **`jobs`** — orchestration state, separate from `runs` (which is extractor
 output).
 ```
@@ -369,11 +396,12 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
   same SQLAlchemy metadata from `backend/src/db/schema.py`. `env.py` resolves
   the DB URL via `resolve_database_url()` (config + env), never the static
   `alembic.ini` placeholder — so migrations always target the app's DB.
-- Current revisions are a baseline migration for the existing schema, a
+- Current revisions, in order: a baseline migration for the existing schema; a
   migration adding `jobs`, `frame_detections`, `parser_results`, and
-  `shot_boundaries`, a chat migration adding `chat_messages`, and a
-  `parent_job_id` migration for batch fan-out, plus a `job_id` chat migration
-  for job-level advisory transcripts.
+  `shot_boundaries`; a chat migration adding `chat_messages`; a `parent_job_id`
+  migration for batch fan-out; a `job_id` chat migration for job-level advisory
+  transcripts; and a `videos` registry migration (`f3a1c9d2b7e5`) for the
+  content-addressed input picker.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
   repository root). `make migrate` applies SQLite always and then attempts
@@ -533,10 +561,10 @@ ABCD exports, and advisory chat.
 ### Metadata
 - `GET /platforms`                     — list, with required params.
 - `GET /defaults`                      — current yaml config exposed (read-only).
-- `GET /inputs`                        — list videos under `CLIPSCRIBE_INPUT_DIR`.
+- `GET /inputs`                        — the user's videos from the `videos` registry, reconciled against storage at read time. A row whose `stored_key` no longer resolves (bucket cleanup, a dev deleting the file) is pruned and omitted, so the picker never offers a missing video. Each entry returns `original_name` + `stored_key` (the latter is a valid `videos[].video_path`).
 
 ### Uploads
-- `POST /uploads`                      — stream uploaded video(s) to `CLIPSCRIBE_INPUT_DIR`; returned `path` values are valid `videos[].video_path` values.
+- `POST /uploads`                      — stream uploaded video(s) through the `VideoStorage` backend. Each file is staged to a temp file while its SHA-256 is computed, then deduplicated: a matching `(user_id, content_hash)` reuses the existing `stored_key` (and refreshes `last_seen_at`); a miss commits the object and inserts a `videos` row. Returned `path` values are `stored_key`s, valid as `videos[].video_path`.
 
 ### Chat (advisory agents — post-run Q&A, see §13)
 - `POST   /runs/{id}/chat`             — ask a question; streamed (SSE) answer. Body: `{session_id?, message}`.
@@ -574,11 +602,19 @@ ABCD exports, and advisory chat.
      `video_type`, and `platform`. `extract` and parser-only `parse` remain
      developer paths. Device is process configuration, not submitted in the job
      request.
-   - Videos field: upload one or more files via `POST /uploads` OR pick from server-side
-     `input/` directory via `GET /inputs`.
+   - Videos field: pick previously-uploaded videos from the registry via
+     `GET /inputs` and/or queue new local files. On submit, queued files are
+     uploaded via `POST /uploads` first, their returned `stored_key`s are merged
+     with the picked ones, and only then is `POST /jobs` sent — dedup means
+     re-picking an already-uploaded file costs nothing.
    - `GET /defaults` is available for config-driven form expansion; the current
      first-pass form only renders the fields it submits.
-   - Submit → `POST /jobs` → redirect to the parent `/jobs/{job_id}` batch view.
+   - A right-hand `JobSidebar` (in progress, uncommitted) mirrors the live form
+     state, shows an estimated OpenAI call/cost count, and previews the run
+     outputs; a decorative `PipelineAnimation` illustrates the eight pipeline
+     stages.
+   - Submit → (`POST /uploads` for new files) → `POST /jobs` → redirect to the
+     parent `/jobs/{job_id}` batch view.
 
 3. **Live job** (`/jobs/{id}`)
    - Parent jobs render a batch panel with one row per child run, aggregated
@@ -703,6 +739,7 @@ Backend vars (current):
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
 | `CLIPSCRIBE_DEVICE` | builder device (web app) | `cpu` default; set `mps` for native GPU | `cpu` (Mac) / `cuda` (GPU box) |
+| `CLIPSCRIBE_VIDEO_STORAGE` | source-video backend (`local` \| `gcs`) | `local` | `local` (`gcs` reserved) |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | LLM + tracing | secret | secret |
 
 **Device precedence.** `settings.clip_scribe_device` reads `CLIPSCRIBE_DEVICE`
@@ -877,12 +914,22 @@ extra, it excludes the heavy main dependencies (torch / whisper / paddleocr).
 
 These are decisions to make before the corresponding implementation step.
 
-1. **Video ingest.** **Resolved for the sync path.**
-   The API now supports both near-term local flows: `POST /uploads` streams
-   browser uploads into `CLIPSCRIBE_INPUT_DIR`, and `GET /inputs` lists videos
-   already present in that directory. `POST /jobs` accepts the returned
-   server-side relative path and rejects traversal or missing files before
-   enqueuing. Still open for cloud/multi-user: pre-signed object-storage upload.
+1. **Video ingest.** **Resolved for the sync path, now content-addressed.**
+   `POST /uploads` streams browser uploads through a `VideoStorage` backend
+   (`backend/src/utils/video_storage.py`), hashing each file as it stages it and
+   deduplicating on `(user_id, content_hash)` — identical bytes reuse the
+   existing stored object. Every distinct video is recorded in the `videos`
+   registry table (§4), which `GET /inputs` reads (reconciled against storage) as
+   the picker's source of truth; the old "scan `CLIPSCRIBE_INPUT_DIR`" behavior
+   is gone. `POST /jobs` accepts the returned opaque `stored_key` as
+   `video_path`. The storage seam has an ingest half (API: `staging_dir` →
+   `commit`) and a materialize half (worker: `job_execution.py` calls
+   `storage.materialize(key)` to get a local path for the extractor, then
+   `storage.release(...)` after the run — a no-op for the local backend, a
+   scratch-file delete for cloud). `LocalVideoStorage` (files under `input_dir`)
+   is the only implementation; `GCSVideoStorage` is a fail-fast stub documenting
+   the drop-in contract. Still open for cloud/multi-user: implement the GCS
+   backend and pre-signed direct-to-bucket upload so large files skip the API.
 
 2. **Artifact storage.** **Mostly resolved.**
    The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the

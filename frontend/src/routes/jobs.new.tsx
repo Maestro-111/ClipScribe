@@ -7,6 +7,8 @@ import {
   useUploadVideos,
   type JobCreateRequest,
 } from "../api/hooks";
+import { PipelineAnimation } from "../components/PipelineAnimation";
+import { JobSummary, RunOutputs } from "../components/JobSidebar";
 
 // "/jobs/new" — the create-job form (web-app-plan §7, page 2).
 export const Route = createFileRoute("/jobs/new")({
@@ -158,10 +160,11 @@ function NewJob() {
   }
 
   return (
-    <div className="max-w-xl">
-      <h1 className="mb-6 text-2xl font-semibold">New job</h1>
+    <div className="grid gap-10 lg:grid-cols-[minmax(0,34rem)_1fr] lg:gap-20">
+      <div className="max-w-xl">
+        <h1 className="mb-6 text-2xl font-semibold">New job</h1>
 
-      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
         {/* ── Job ─────────────────────────────────────────────────── */}
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
@@ -459,8 +462,26 @@ function NewJob() {
               : selected.length > 1
                 ? `Create job (${selected.length} videos)`
                 : "Create job"}
-        </button>
-      </form>
+          </button>
+        </form>
+      </div>
+
+      {/* Right canvas: fill the otherwise-empty space with context for the job
+          being created — the pipeline each video runs through, a live summary
+          of the current form state, and a preview of the run's outputs. Dropped
+          entirely below lg where the form goes full width. */}
+      <aside className="hidden space-y-8 lg:block">
+        <PipelineAnimation />
+        <JobSummary
+          videoCount={selected.length}
+          platform={platform}
+          brandName={brandName}
+          videoType={videoType}
+          hintTermCount={splitComma(userHints).length}
+          generateHintFromName={generateHintFromName}
+        />
+        <RunOutputs />
+      </aside>
     </div>
   );
 }
