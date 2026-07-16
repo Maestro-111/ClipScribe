@@ -75,13 +75,19 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     )
     from app.settings import get_settings
     from src.utils.cancel import JobCanceled
+    from src.utils.video_storage import make_video_storage
 
     writer = builder.writer_db
     job_id = payload["job_id"]
     run_id = payload["run_id"]
     req = JobCreateRequest.model_validate(payload["req"])
 
-    redis_url = get_settings().redis_url
+    settings = get_settings()
+    redis_url = settings.redis_url
+    # The payload carries a logical storage key, not a local path: the API and
+    # worker may not share a filesystem (a cloud bucket + remote worker). Bring
+    # the bytes local here, right before extraction, and release after.
+    storage = make_video_storage(settings.video_storage_backend, settings.input_dir)
     reporter = make_reporter(redis_url, job_id)
     canceller = make_canceller(redis_url, job_id)
     install_job_log_bridge(redis_url)
@@ -104,19 +110,25 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
         if platform_conf is None:
             raise ValueError(f"unsupported platform: {req.platform.value}")
 
-        engine = builder.build_clip_scribe(
-            video_name=payload["video_name"] or "",
-            video_path=payload["video_path"] or "",
-            video_type=payload["video_type"],
-            clib_scribe_mode=req.mode.value,
-            clib_scribe_platform_name=req.platform.value,
-            clib_scribe_platform_conf=platform_conf,
-            user_hints=req.user_hints,
-            generate_hint_from_name=req.generate_hint_from_name,
-            progress_reporter=reporter,
-            cancel_token=canceller,
-        )
-        engine.run(run_id=run_id)
+        local_video = storage.materialize(payload["video_path"] or "")
+        try:
+            engine = builder.build_clip_scribe(
+                video_name=payload["video_name"] or "",
+                video_path=str(local_video),
+                video_type=payload["video_type"],
+                clib_scribe_mode=req.mode.value,
+                clib_scribe_platform_name=req.platform.value,
+                clib_scribe_platform_conf=platform_conf,
+                user_hints=req.user_hints,
+                generate_hint_from_name=req.generate_hint_from_name,
+                progress_reporter=reporter,
+                cancel_token=canceller,
+            )
+            engine.run(run_id=run_id)
+        finally:
+            # Release any scratch copy the backend downloaded (no-op for local
+            # storage, where the materialized path is the stored file itself).
+            storage.release(local_video)
     except JobCanceled:
         # Cooperative cancel: the engine stopped at a checkpoint. cancel_job has
         # already flipped the row to 'canceled', so this guarded write is

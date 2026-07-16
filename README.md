@@ -150,7 +150,7 @@ Three images back the web app, all built from the repository root as context:
 
 `docker-compose.yml` wires these plus `postgres`, `redis`, and two one-shot services: `migrate` (`alembic upgrade head`) and `prewarm` (model-weight download). There are two ways to run.
 
-### Mode 1 — Everything in Compose (CPU worker, note CPU will slow the worker down)
+### Mode 1 — Everything in Compose (CPU only worker)
 
 ```bash
 docker compose build
@@ -161,7 +161,7 @@ The app is at `http://localhost:5173`. Model weights are fetched automatically: 
 
 The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has no arm64 wheel, and amd64 is the deploy target). On an **Apple Silicon** Mac they run under QEMU emulation — correct but slow, and `prewarm` loading models emulated can take a while. Mode 1 is best on a Linux/amd64 host or CI; on a Mac, use **Mode 2** for real work (native MPS worker) and treat Mode 1 as an end-to-end smoke test.
 
-### Mode 2 — Hybrid local dev (native MPS worker)
+### Mode 2 — Hybrid local dev (MPS/CPU/GPU worker)
 
 Run only Postgres + Redis (note, you can spin just Redis and specify sqlite as db in backend/src/clip_scribe/configs/clip_scribe.yaml) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
 
@@ -181,10 +181,6 @@ cd backend && uv run celery -A app.celery_app worker --pool=solo --concurrency=1
 # shell 4 — frontend (native, Vite dev proxy)
 cd frontend && pnpm install && pnpm dev
 ```
-
-### Mode 3 — backend/main.py (native MPS worker)
-
-Run the pipeline from the script directly. Note, this will not use Reddis and it may use Postgres or Sqlite db. May use MPS.
 
 Mode 2 uses the Vite dev-server `/api` proxy; Mode 1 serves the built SPA behind nginx doing the same proxy — same mental model in both.
 

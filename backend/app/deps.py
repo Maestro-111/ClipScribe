@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from app.errors import ProblemException
 from app.settings import Settings, get_settings
+from src.utils.video_storage import VideoStorage, make_video_storage
 
 if TYPE_CHECKING:
     from concurrent.futures import Future, ThreadPoolExecutor
@@ -20,9 +21,24 @@ if TYPE_CHECKING:
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 
+# Single-tenant placeholder until auth lands. Everything user-scoped (uploads,
+# the videos registry, the input picker) reads this, so wiring in real auth is
+# "make current_user_id return the authenticated id" rather than a refactor.
+DEFAULT_USER_ID = "local"
+
 
 def settings_dep() -> Settings:
     return get_settings()
+
+
+def current_user_id() -> str:
+    """The requesting user's id. Constant until auth is added."""
+    return DEFAULT_USER_ID
+
+
+def video_storage_dep(settings: Settings = Depends(settings_dep)) -> VideoStorage:
+    """The configured video storage backend (local disk or, later, a bucket)."""
+    return make_video_storage(settings.video_storage_backend, settings.input_dir)
 
 
 def get_builder(request: Request) -> "ClipScribeBuilder":

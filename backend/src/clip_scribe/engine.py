@@ -219,7 +219,7 @@ class ClipScribeEngine:
             raise
         finally:
             self.extractor.cleanup()
-            logger.info("Done!")
+            logger.info("Extraction Done!")
 
     def _save_metadata_to_db(
         self,
@@ -254,4 +254,5 @@ class ClipScribeEngine:
             writer_db=self.writer_db,
         )
 
-        logger.info(f"Parser report generated: {report_path}")
+        logger.info("Parsing complete!")
+        logger.info(f"Parser local report generated: {report_path}")

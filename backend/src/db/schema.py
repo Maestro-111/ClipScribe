@@ -113,6 +113,32 @@ field_descriptions_table = Table(
 # per-shot temporal boundaries.
 # ---------------------------------------------------------------------------
 
+# Registry of uploaded source videos, decoupling the opaque storage key from
+# the friendly name a user picked the file by (web-app-plan §9.1). One row per
+# distinct video per user; dedup is keyed on the content hash so re-uploading
+# the same bytes reuses the existing key instead of storing a second copy. This
+# is the source of truth for the input picker only — a run keeps its own
+# ``video_name`` snapshot, so pruning a row here never affects run history.
+videos_table = Table(
+    "videos",
+    metadata_obj,
+    # Owner. Constant ("local") until auth lands; part of the dedup key so two
+    # users uploading identical bytes get isolated copies.
+    Column("user_id", Text, nullable=False),
+    # sha256 of the file bytes; dedup identity within a user.
+    Column("content_hash", Text, nullable=False),
+    # Opaque storage key (e.g. "<ulid>.mp4"); what a job's video_path references.
+    Column("stored_key", Text, nullable=False),
+    # The name the file was uploaded as; shown in the picker.
+    Column("original_name", Text, nullable=False),
+    Column("size_bytes", Integer),
+    Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    # Refreshed whenever a re-upload dedups to this row; a coarse recency signal.
+    Column("last_seen_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    UniqueConstraint("user_id", "content_hash", name="uq_videos_user_hash"),
+    Index("ix_videos_user", "user_id"),
+)
+
 jobs_table = Table(
     "jobs",
     metadata_obj,

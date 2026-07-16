@@ -420,6 +420,30 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             )
             return [dict(row) for row in result.mappings().fetchall()]
 
+    def get_video_by_hash(self, user_id: str, content_hash: str) -> dict | None:
+        """Look up a registered video by its content hash (dedup check)."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM videos " "WHERE user_id = :uid AND content_hash = :h"
+                ),
+                {"uid": user_id, "h": content_hash},
+            )
+            row = result.mappings().fetchone()
+            return dict(row) if row else None
+
+    def list_videos(self, user_id: str) -> list[dict]:
+        """All registered videos for a user, newest first (input picker)."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT * FROM videos WHERE user_id = :uid "
+                    "ORDER BY created_at DESC, stored_key DESC"
+                ),
+                {"uid": user_id},
+            )
+            return [dict(row) for row in result.mappings().fetchall()]
+
     @staticmethod
     def _decode_job(row: dict) -> dict:
         """Decode ``params_json`` to a dict when the driver returns raw text.

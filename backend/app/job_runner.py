@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from app.settings import Settings
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from src.utils.video_storage import VideoStorage
 
 logger = logging.getLogger("clip_scribe")
 
@@ -106,6 +107,8 @@ class JobService:
         reader: "ClipScribeReaderDB",
         writer: "ClipScribeWriterDB",
         settings: "Settings",
+        storage: "VideoStorage",
+        user_id: str,
         *,
         builder: "ClipScribeBuilder | None" = None,
         executor: "ThreadPoolExecutor | None" = None,
@@ -114,6 +117,10 @@ class JobService:
         self.reader = reader
         self.writer = writer
         self.settings = settings
+        # Source-video storage backend + requesting user, for validating that a
+        # job's video keys still resolve to stored objects at dispatch time.
+        self.storage = storage
+        self.user_id = user_id
         # Inline-mode only: the model-loaded builder + single-slot executor that
         # run the engine in-process. Both are None in celery mode.
         self.builder = builder
@@ -143,8 +150,9 @@ class JobService:
         # Surface an unavailable backend once, before any rows are written, so a
         # failed request never leaves a half-created parent behind.
         self._ensure_dispatchable()
-        # Resolve every input up front: a bad path 404s/400s before we persist.
-        resolved = [(v, self._resolve_input(v.video_path)) for v in req.videos]
+        # Validate every input up front: a bad/missing key 404s/400s before we
+        # persist. Returns the logical storage key, not a local path.
+        resolved = [(v, self._validate_input(v.video_path)) for v in req.videos]
 
         device = getattr(self.builder, "device", None)
         parent_id = new_ulid()
@@ -160,7 +168,7 @@ class JobService:
             params_json=req.model_dump(mode="json"),
         )
 
-        for video, video_path_abs in resolved:
+        for video, video_key in resolved:
             child_id = new_ulid()
             run_id = new_ulid()
             # The child stores a single-video request so retrying it re-runs just
@@ -184,8 +192,8 @@ class JobService:
                 run_id=run_id,
                 req=child_req,
                 video_name=video.video_name,
-                # Inline runs on this machine, so pass the resolved absolute path.
-                video_path=str(video_path_abs),
+                # The logical storage key; the worker materializes it locally.
+                video_path=video_key,
                 video_type=video.video_type,
             )
             try:
@@ -458,7 +466,7 @@ class JobService:
                 detail=f"run '{job_id}' has no video to retry",
             )
         video = req.videos[0]
-        video_path_abs = self._resolve_input(video.video_path)
+        video_key = self._validate_input(video.video_path)
         old_run_id = job.get("run_id")
         new_run_id = new_ulid()
 
@@ -491,7 +499,7 @@ class JobService:
             run_id=new_run_id,
             req=req,
             video_name=video.video_name,
-            video_path=str(video_path_abs),
+            video_path=video_key,
             video_type=video.video_type,
         )
         try:
@@ -526,24 +534,30 @@ class JobService:
                 "Failed to remove artifact dir for run %s", run_id, exc_info=True
             )
 
-    def _resolve_input(self, rel_path: str | None) -> Path:
-        """Resolve a request path under INPUT_DIR, guarding against traversal."""
-        if not rel_path:
+    def _validate_input(self, key: str | None) -> str:
+        """Validate a job's video storage key and return it unchanged.
+
+        The API never resolves the key to a local path — that would only be
+        meaningful when the API and worker share a filesystem. Instead it checks
+        the key is well-formed and still resolves to a stored object, then puts
+        the *logical* key in the payload; the worker materializes it locally at
+        run time (see app.job_execution.run_job_core).
+        """
+        if not key:
             raise ProblemException(
                 status=400, title="Bad Request", detail="video_path is required"
             )
-        base = self.settings.input_dir
-        candidate = (base / rel_path).resolve()
-        try:
-            candidate.relative_to(base)
-        except ValueError:
+        # Keys are opaque but must be relative and free of traversal segments so
+        # a crafted request can't reach outside the storage namespace.
+        parts = Path(key).parts
+        if Path(key).is_absolute() or ".." in parts:
             raise ProblemException(
                 status=400,
                 title="Bad Request",
-                detail="video_path escapes the input directory",
+                detail="video_path is not a valid storage key",
             )
-        if not candidate.is_file():
+        if not self.storage.exists(key):
             raise ProblemException(
-                status=404, title="Not Found", detail=f"video not found: {rel_path}"
+                status=404, title="Not Found", detail=f"video not found: {key}"
             )
-        return candidate
+        return key

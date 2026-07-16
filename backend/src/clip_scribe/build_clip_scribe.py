@@ -325,15 +325,20 @@ class ClipScribeBuilder:
 
             reid_model.eval()
 
-            logger.info(f"loading whisper to {self.device}")
+            logger.info("loading whisper to cpu (forces action)")
 
             # Whisper ignores the TORCH_HOME/HF_HOME-style env vars other
             # downloaders honor, so point its weights under checkpoints/ with an
             # explicit download_root. Keeps every model cache in one directory
             # (one Docker volume in dev, one baked image layer in prod).
+            #
+            # Force CPU (like MTCNN above): Whisper defaults to fp16 on non-CPU
+            # devices, and fp16 in the decoder overflows to NaN logits on MPS,
+            # crashing Categorical() sampling. CPU runs fp32 and is robust; the
+            # "base" model is fast enough for typical clips.
             audio_model = whisper.load_model(
                 "base",
-                device=self.device,
+                device="cpu",
                 download_root=str(self.models_weights_dir / "whisper"),
             )
 

@@ -100,7 +100,7 @@ class ChatService:
     def delete_session(self, run_id: str, session_id: str) -> int:
         return self.writer.delete_chat_session(run_id, session_id)
 
-    def stream(self, run_id: str, session_id: str, message: str) -> Iterator[str]:
+    def stream_run(self, run_id: str, session_id: str, message: str) -> Iterator[str]:
         """Stream one per-run chat turn (SSE frames) and persist the transcript."""
         history = self.reader.get_chat_messages(run_id, session_id)
         agent = build_advisory_agent(self.model, self.reader, run_id)

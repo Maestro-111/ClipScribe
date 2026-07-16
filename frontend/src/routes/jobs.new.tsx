@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   useCreateJob,
   useInputs,
@@ -25,11 +25,21 @@ function hasAllowedSuffix(name: string): boolean {
   return ALLOWED_SUFFIXES.some((s) => lower.endsWith(s));
 }
 
-// One video queued for the job. `path` is the server-side INPUT_DIR path; `name`
-// is what the user sees. A job fans out to one run per entry here.
+// One video queued for the job; a job fans out to one run per entry here.
+// `name` is what the user sees. A video is either already stored (`path` set —
+// picked from the existing list) or a local file pending upload (`file` set —
+// nothing is sent to the server until "Create job"). On submit, pending files
+// are uploaded and their returned storage keys fill in `path`.
 interface SelectedVideo {
-  path: string;
   name: string;
+  path?: string;
+  file?: File;
+}
+
+// Stable identity for dedup/removal: the storage key for stored videos, or a
+// name+size signature for files not yet uploaded.
+function videoKey(v: SelectedVideo): string {
+  return v.path ?? `pending:${v.file?.name}:${v.file?.size}`;
 }
 
 function NewJob() {
@@ -48,36 +58,27 @@ function NewJob() {
   const [videoType, setVideoType] = useState("");
   const [videoTab, setVideoTab] = useState<"pick" | "upload">("pick");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadVideos();
-
-  // `webkitdirectory` isn't in React's input typings; set it on the DOM node.
-  useEffect(() => {
-    folderInputRef.current?.setAttribute("webkitdirectory", "");
-  }, []);
 
   const addVideos = (videos: SelectedVideo[]) =>
     setSelected((prev) => {
-      const byPath = new Map(prev.map((v) => [v.path, v]));
-      for (const v of videos) byPath.set(v.path, v);
-      return [...byPath.values()];
+      const byKey = new Map(prev.map((v) => [videoKey(v), v]));
+      for (const v of videos) byKey.set(videoKey(v), v);
+      return [...byKey.values()];
     });
 
-  const removeVideo = (path: string) =>
-    setSelected((prev) => prev.filter((v) => v.path !== path));
+  const removeVideo = (key: string) =>
+    setSelected((prev) => prev.filter((v) => videoKey(v) !== key));
 
   const isSelected = (path: string) => selected.some((v) => v.path === path);
 
-  const handleUpload = (fileList: FileList | null) => {
+  // Queue chosen files locally — nothing uploads until "Create job", so
+  // deselecting a video never leaves an orphaned upload behind.
+  const handleSelectFiles = (fileList: FileList | null) => {
     if (!fileList) return;
     const files = Array.from(fileList).filter((f) => hasAllowedSuffix(f.name));
     if (!files.length) return;
-    upload.mutate(files, {
-      onSuccess: (uploaded) => {
-        addVideos(uploaded.map((u) => ({ path: u.path, name: u.name })));
-        setVideoTab("pick");
-      },
-    });
+    addVideos(files.map((f) => ({ name: f.name, file: f })));
   };
 
   // Platform selection. Options come from GET /platforms; today the backend
@@ -99,14 +100,37 @@ function NewJob() {
 
   const canSubmit = selected.length > 0;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // Upload any files not yet on the server, in one request, and map their
+    // returned storage keys back onto the queued entries (order preserved). On
+    // failure, bail — the error surfaces via `upload.error` and nothing is
+    // created.
+    const pending = selected.filter((v) => v.file);
+    let resolved = selected;
+    if (pending.length) {
+      let uploaded;
+      try {
+        uploaded = await upload.mutateAsync(pending.map((v) => v.file!));
+      } catch {
+        return;
+      }
+      const keyByPending = new Map(
+        pending.map((v, i) => [videoKey(v), uploaded[i]]),
+      );
+      resolved = selected.map((v) => {
+        const u = v.file ? keyByPending.get(videoKey(v)) : undefined;
+        return u ? { name: u.name, path: u.path } : v;
+      });
+    }
+
     createJob.mutate(
       {
         mode,
         platform: platform as JobCreateRequest["platform"],
-        videos: selected.map((v) => ({
-          video_path: v.path,
+        videos: resolved.map((v) => ({
+          video_path: v.path!,
           video_name: v.name,
           video_type: videoType || null,
         })),
@@ -137,7 +161,7 @@ function NewJob() {
     <div className="max-w-xl">
       <h1 className="mb-6 text-2xl font-semibold">New job</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
         {/* ── Job ─────────────────────────────────────────────────── */}
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
@@ -157,13 +181,13 @@ function NewJob() {
                 <ul className="mb-2 space-y-1">
                   {selected.map((v) => (
                     <li
-                      key={v.path}
+                      key={videoKey(v)}
                       className="flex items-center justify-between rounded border bg-neutral-50 px-2 py-1 text-sm"
                     >
                       <span className="truncate">{v.name}</span>
                       <button
                         type="button"
-                        onClick={() => removeVideo(v.path)}
+                        onClick={() => removeVideo(videoKey(v))}
                         className="ml-2 text-neutral-400 hover:text-red-500"
                         title="Remove"
                       >
@@ -228,32 +252,36 @@ function NewJob() {
 
               {videoTab === "upload" && (
                 <div className="space-y-2">
-                  {/* Hidden native inputs; the styled buttons below trigger them. */}
+                  {/* Hidden native inputs; the styled buttons below trigger them.
+                      Files are only queued here — they upload on "Create job". */}
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
                     accept=".mp4,.mov,.mkv,.webm,.m4v"
                     className="sr-only"
-                    onChange={(e) => handleUpload(e.target.files)}
+                    onChange={(e) => handleSelectFiles(e.target.files)}
                   />
+                  {/* `webkitdirectory` isn't in React's input typings, so set it
+                      via a callback ref — which runs whenever this node mounts,
+                      unlike a mount-only effect that fires before the tab exists. */}
                   <input
-                    ref={folderInputRef}
+                    ref={(el) => el?.setAttribute("webkitdirectory", "")}
                     type="file"
                     multiple
                     className="sr-only"
-                    onChange={(e) => handleUpload(e.target.files)}
+                    onChange={(e) => handleSelectFiles(e.target.files)}
+                    id="folder-input"
                   />
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      disabled={upload.isPending}
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex flex-1 flex-col items-center gap-1 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center hover:border-blue-400 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                      className="flex flex-1 flex-col items-center gap-1 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center hover:border-blue-400 hover:bg-blue-50"
                     >
                       <span className="text-2xl">🎬</span>
                       <span className="text-sm font-medium text-neutral-700">
-                        {upload.isPending ? "Uploading…" : "Select video files"}
+                        Select video files
                       </span>
                       <span className="text-xs text-neutral-400">
                         one or more · .mp4 .mov .mkv .webm .m4v
@@ -261,24 +289,20 @@ function NewJob() {
                     </button>
                     <button
                       type="button"
-                      disabled={upload.isPending}
-                      onClick={() => folderInputRef.current?.click()}
-                      className="flex flex-1 flex-col items-center gap-1 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center hover:border-blue-400 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                      onClick={() =>
+                        document.getElementById("folder-input")?.click()
+                      }
+                      className="flex flex-1 flex-col items-center gap-1 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center hover:border-blue-400 hover:bg-blue-50"
                     >
                       <span className="text-2xl">📁</span>
                       <span className="text-sm font-medium text-neutral-700">
-                        {upload.isPending ? "Uploading…" : "Select a folder"}
+                        Select a folder
                       </span>
                       <span className="text-xs text-neutral-400">
-                        uploads every video in the folder
+                        queues every video in the folder
                       </span>
                     </button>
                   </div>
-                  {upload.error && (
-                    <p className="text-sm text-red-600">
-                      {(upload.error as Error).message}
-                    </p>
-                  )}
                 </div>
               )}
             </div>
@@ -417,22 +441,24 @@ function NewJob() {
           </div>
         </section>
 
-        {createJob.error && (
+        {(createJob.error || upload.error) && (
           <p className="text-sm text-red-600">
-            {(createJob.error as Error).message}
+            {((createJob.error || upload.error) as Error).message}
           </p>
         )}
 
         <button
           type="submit"
-          disabled={!canSubmit || createJob.isPending}
+          disabled={!canSubmit || upload.isPending || createJob.isPending}
           className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {createJob.isPending
-            ? "Submitting…"
-            : selected.length > 1
-              ? `Create job (${selected.length} videos)`
-              : "Create job"}
+          {upload.isPending
+            ? "Uploading…"
+            : createJob.isPending
+              ? "Submitting…"
+              : selected.length > 1
+                ? `Create job (${selected.length} videos)`
+                : "Create job"}
         </button>
       </form>
     </div>

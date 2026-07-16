@@ -21,6 +21,7 @@ from .schema import (
     parser_results_table,
     jobs_table,
     chat_messages_table,
+    videos_table,
 )
 
 logger = logging.getLogger("clip_scribe")
@@ -244,6 +245,58 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
 
         if rows:
             conn.execute(frame_detections_table.insert(), rows)
+
+    # ------------------------------------------------------------------ videos
+    def insert_video(
+        self,
+        *,
+        user_id: str,
+        content_hash: str,
+        stored_key: str,
+        original_name: str,
+        size_bytes: int | None,
+    ) -> None:
+        """Register a newly stored source video (schema.py::videos_table).
+
+        Called only after a dedup miss, so the ``(user_id, content_hash)``
+        uniqueness constraint is expected to hold.
+        """
+        with self._engine.begin() as conn:
+            conn.execute(
+                videos_table.insert().values(
+                    user_id=user_id,
+                    content_hash=content_hash,
+                    stored_key=stored_key,
+                    original_name=original_name,
+                    size_bytes=size_bytes,
+                )
+            )
+        logger.info("Registered video %s (%s)", stored_key, original_name)
+
+    def touch_video(self, user_id: str, content_hash: str) -> None:
+        """Refresh ``last_seen_at`` when a re-upload dedups to an existing row."""
+        from datetime import datetime, timezone
+
+        with self._engine.begin() as conn:
+            conn.execute(
+                videos_table.update()
+                .where(
+                    (videos_table.c.user_id == user_id)
+                    & (videos_table.c.content_hash == content_hash)
+                )
+                .values(last_seen_at=datetime.now(timezone.utc).isoformat())
+            )
+
+    def delete_video(self, user_id: str, stored_key: str) -> None:
+        """Remove a registry row (input reconcile: object gone from storage)."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                videos_table.delete().where(
+                    (videos_table.c.user_id == user_id)
+                    & (videos_table.c.stored_key == stored_key)
+                )
+            )
+        logger.info("Pruned orphaned video registry row %s", stored_key)
 
     def create_job(
         self,

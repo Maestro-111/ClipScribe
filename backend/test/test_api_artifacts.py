@@ -7,11 +7,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from app import settings as settings_mod
-from app.deps import get_reader, settings_dep
+from app.deps import get_reader, get_writer, settings_dep
 from app.main import app
 from app.settings import Settings
 from src.db.reader import ClipScribeReaderDB
 from src.db.schema import metadata_obj, runs_table
+from src.db.writer import ClipScribeWriterDB
 
 RUN_ID = "r1"
 
@@ -29,6 +30,7 @@ def client(tmp_path):
             {"run_id": RUN_ID, "video_name": "ad.mp4", "video_path": "ad.mp4"},
         )
     reader = ClipScribeReaderDB(engine=engine)
+    writer = ClipScribeWriterDB(engine=engine)
 
     input_dir = tmp_path / "input"
     input_dir.mkdir()
@@ -49,6 +51,7 @@ def client(tmp_path):
     art_mod.PROJECT_ROOT = tmp_path
 
     app.dependency_overrides[get_reader] = lambda: reader
+    app.dependency_overrides[get_writer] = lambda: writer
     app.dependency_overrides[settings_dep] = lambda: settings
     with TestClient(app) as c:
         yield c
@@ -82,6 +85,32 @@ def test_upload_duplicate_names_get_distinct_paths(client):
     assert first.json()["uploaded"][0]["name"] == "clip.mp4"
     assert second.json()["uploaded"][0]["name"] == "clip.mp4"
     assert first.json()["uploaded"][0]["path"] != second.json()["uploaded"][0]["path"]
+
+
+def test_upload_same_bytes_dedup_to_one_key(client):
+    # Identical content uploaded twice reuses the stored object and one row.
+    first = client.post("/uploads", files={"files": ("a.mp4", b"same", "video/mp4")})
+    second = client.post("/uploads", files={"files": ("b.mp4", b"same", "video/mp4")})
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["uploaded"][0]["path"] == second.json()["uploaded"][0]["path"]
+    # The dedup keeps the original registered name, not the second upload's.
+    assert second.json()["uploaded"][0]["name"] == "a.mp4"
+    # And the picker lists it exactly once.
+    listed = client.get("/inputs").json()["videos"]
+    assert [v["name"] for v in listed] == ["a.mp4"]
+
+
+def test_inputs_prunes_missing_object(client, tmp_path):
+    up = client.post("/uploads", files={"files": ("c.mp4", b"bytes", "video/mp4")})
+    key = up.json()["uploaded"][0]["path"]
+    assert client.get("/inputs").json()["videos"][0]["name"] == "c.mp4"
+
+    # Simulate an out-of-band removal (bucket cleanup / dev deletes the file).
+    (tmp_path / "input" / key).unlink()
+
+    # Reconcile-on-read drops it from the picker and prunes the registry row.
+    assert client.get("/inputs").json()["videos"] == []
+    assert client.get("/inputs").json()["videos"] == []
 
 
 def test_upload_rejects_bad_extension(client):

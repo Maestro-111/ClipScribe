@@ -53,8 +53,8 @@ def _require_run(reader: "ClipScribeReaderDB", run_id: str) -> None:
         )
 
 
-@router.post("/{run_id}/chat", summary="Ask the advisory agent (SSE stream)")
-def post_chat(
+@router.post("/{run_id}/chat", summary="Ask the agent about the run (SSE stream)")
+def post_run_chat(
     run_id: str,
     req: ChatRequest,
     reader: "ClipScribeReaderDB" = Depends(get_reader),
@@ -63,7 +63,7 @@ def post_chat(
     _require_run(reader, run_id)
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
-        service.stream(run_id, session_id, req.message),
+        service.stream_run(run_id, session_id, req.message),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -125,7 +125,7 @@ def _require_job(reader: "ClipScribeReaderDB", job_id: str) -> None:
         )
 
 
-@job_router.post("/{job_id}/chat", summary="Ask the job-level advisory agent (SSE)")
+@job_router.post("/{job_id}/chat", summary="Ask the agent about the job (SSE)")
 def post_job_chat(
     job_id: str,
     req: ChatRequest,

@@ -105,6 +105,19 @@ class Settings:
             {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
         )
 
+        # Where source videos live (see src/utils/video_storage.py):
+        #   "local" — files under input_dir (the default; single-tenant dev).
+        #   "gcs"   — a cloud bucket (reserved; not yet implemented).
+        # The only selector; the local backend uses input_dir above as its root.
+        self.video_storage_backend: str = (
+            os.environ.get("CLIPSCRIBE_VIDEO_STORAGE", "local").strip().lower()
+        )
+        if self.video_storage_backend not in ("local", "gcs"):
+            raise ValueError(
+                f"CLIPSCRIBE_VIDEO_STORAGE must be 'local' or 'gcs', "
+                f"got {self.video_storage_backend!r}"
+            )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

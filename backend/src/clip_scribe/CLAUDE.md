@@ -13,4 +13,5 @@ This directory contains the initialization and orchestration logic for the entir
 * When adding new models or dependencies to the pipeline, instantiate them in `build_clip_scribe.py` and pass them into the `VideoInformationExtractor`.
 * When adding a new platform, create a config in `platform_configs/` extending `BasePlatformConf` and a corresponding evaluator in `backend/src/parser/`.
 * Ensure proper device mapping (MPS vs CPU vs CUDA) is maintained when adding new PyTorch models here.
+  * Whisper and MTCNN are intentionally pinned to CPU. On MPS, fp16 in the Whisper decoder overflows to NaN logits and crashes `Categorical()` sampling during transcription; MTCNN has the same class of MPS instability. Do not move them onto `self.device` without forcing fp32 and verifying on Apple Silicon.
 * Keep schema creation in Alembic migrations; builder DB setup should use `resolve_database_url()` and `create_db_engine()`, not `metadata.create_all`.

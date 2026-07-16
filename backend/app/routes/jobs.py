@@ -18,7 +18,8 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app import exports
-from app.deps import get_reader, get_writer
+from app.deps import current_user_id, get_reader, get_writer
+from src.utils.video_storage import make_video_storage
 from app.errors import ProblemException
 from app.events import stream_key, summarize_progress
 from app.settings import get_settings
@@ -51,10 +52,15 @@ def get_job_service(request: Request) -> JobService:
     executor, and futures are inline-only and stay ``None`` under celery.
     """
     state = request.app.state
+    storage = make_video_storage(
+        state.settings.video_storage_backend, state.settings.input_dir
+    )
     return JobService(
         get_reader(request),
         get_writer(request),
         state.settings,
+        storage,
+        current_user_id(),
         builder=getattr(state, "builder", None),
         executor=getattr(state, "executor", None),
         futures=getattr(state, "futures", None),

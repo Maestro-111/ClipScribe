@@ -20,6 +20,7 @@ from app.settings import Settings
 from src.db.reader import ClipScribeReaderDB
 from src.db.schema import metadata_obj
 from src.db.writer import ClipScribeWriterDB
+from src.utils.video_storage import LocalVideoStorage
 
 
 class InlineExecutor:
@@ -79,9 +80,14 @@ def ctx(tmp_path):
 
     settings = Settings()
     settings.input_dir = input_dir.resolve()
+    storage = LocalVideoStorage(settings.input_dir)
 
     state = SimpleNamespace(
-        reader=reader, writer=writer, settings=settings, input_dir=input_dir
+        reader=reader,
+        writer=writer,
+        settings=settings,
+        input_dir=input_dir,
+        storage=storage,
     )
 
     app.dependency_overrides[get_reader] = lambda: reader
@@ -91,7 +97,15 @@ def ctx(tmp_path):
         fake_engine = fake_engine or FakeEngine()
         executor = InlineExecutor(run=run)
         builder = FakeBuilder(reader, writer, fake_engine, device=device)
-        svc = JobService(reader, writer, settings, builder=builder, executor=executor)
+        svc = JobService(
+            reader,
+            writer,
+            settings,
+            storage,
+            "local",
+            builder=builder,
+            executor=executor,
+        )
         app.dependency_overrides[get_job_service] = lambda: svc
         state.svc = svc
         state.executor = executor
@@ -215,7 +229,7 @@ def test_create_job_records_failure(ctx):
 
 def test_dispatch_unavailable_creates_no_rows(ctx):
     client, state = ctx
-    svc = JobService(state.reader, state.writer, state.settings)
+    svc = JobService(state.reader, state.writer, state.settings, state.storage, "local")
     app.dependency_overrides[get_job_service] = lambda: svc
 
     resp = client.post("/jobs", json=_full_body())
