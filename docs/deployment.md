@@ -40,6 +40,11 @@ carries over unchanged:
 - **Load-once builder** (`web-app-plan` §3). Model loading is amortized across
   every job a worker process handles. This is what makes a *warm* worker pool
   (below) worth it.
+- **Source-video storage seam already exists** (`web-app-plan` §9.1).
+  `backend/src/utils/video_storage.py` gives the API an ingest contract
+  (stage/hash/commit) and the worker a materialization contract (key -> local
+  path -> release). `LocalVideoStorage` backs today's upload registry; the GCS
+  backend is a fail-fast stub documenting the drop-in contract.
 - **Artifact-upload seam already exists** (`web-app-plan` §9.2). `backend/src/utils/artifacts.py`
   has an `ArtifactUploader` with a `SimulatedGCSArtifactUploader` that currently
   logs the `gs://…/<run_id>/artifacts.tar.gz` it *would* push. Swapping in a real
@@ -91,22 +96,30 @@ The per-video task is exactly today's `run_job` — untouched. What changes:
 tracking, and parser execution; they are grouped for UX and share only the
 submitted platform params and hints.
 
-### 2.2 Move ingest to signed-URL object storage
+### 2.2 Implement cloud video storage and direct ingest
 
-**Today:** `video_path` is relative to a local `INPUT_DIR`, and
-`JobService._resolve_input` does a filesystem traversal guard. That cannot work
-when the browser uploads gigabytes and the worker is an ephemeral pod on another
-machine.
+**Today:** `video_path` is already an opaque storage key, not a local path. The
+API stores uploaded bytes through `VideoStorage`, records a `videos` registry row
+with the original filename, deduplicates by `(user_id, content_hash)`, and
+validates jobs by asking the storage backend whether the key exists. The worker
+materializes the key to a pod-local file immediately before extraction and
+releases it afterward. The only implemented backend is `LocalVideoStorage`,
+which stores keys under `CLIPSCRIBE_INPUT_DIR`; `GCSVideoStorage` is reserved and
+fails fast.
 
-- Browser requests a **signed PUT URL** from the API, uploads **directly to a
-  GCS bucket** — the API never touches the bytes (this is the open item in
-  `web-app-plan` §9.1).
-- `video_path` becomes a `gs://bucket/uploads/<id>/<name>` URI. `_resolve_input`'s
-  local check is replaced by "object exists in the bucket." The traversal guard
-  becomes irrelevant.
-- The **worker** downloads the object to pod-local scratch (an `emptyDir` /
-  ephemeral SSD) at task start, runs, and uploads results back. This is why the
-  artifact change (2.3) is coupled to this one.
+What remains for cloud deployment:
+
+- Implement `GCSVideoStorage` so `commit` writes to
+  `gs://<bucket>/<user_id>/<ulid><suffix>`, `exists` checks the blob,
+  `materialize` downloads to pod-local scratch, and `release` deletes that
+  scratch copy.
+- Add a browser direct-upload path: the browser requests a **signed PUT URL** or
+  resumable upload session from the API, uploads **directly to GCS**, and the
+  API registers the object/hash/filename in the same `videos` table. This avoids
+  pushing gigabyte files through the API process.
+- Keep `video_path` as the returned opaque storage key; the rest of job dispatch
+  and worker execution should not need to know whether the key points at local
+  disk or a bucket object.
 
 **Choice — signed URL vs. resumable upload.** Large video files over flaky
 connections favor GCS **resumable uploads**; a simple signed PUT is easier.
@@ -273,7 +286,7 @@ schedule), revisited once we see real traffic.
 | API | GKE CPU node pool (or Autopilot) | Slim image, HPA on CPU/RPS. |
 | Broker + progress stream | **Memorystore for Redis** | Managed; both Celery broker and the per-job SSE stream. Don't self-host. |
 | Relational DB | **Cloud SQL for PostgreSQL** | Default backend for the web deployment (`web-app-plan` §9.6). Private IP. |
-| Video + artifact storage | **Cloud Storage (GCS)** | Signed-URL upload (2.2), artifact objects (2.3). Lifecycle rules for retention (§6). |
+| Video + artifact storage | **Cloud Storage (GCS)** | GCS `VideoStorage` + signed/resumable upload (2.2), artifact objects (2.3). Lifecycle rules for retention (§6). |
 | Images | **Artifact Registry** | Slim API image + heavy core image; the core image is 8–15 GB, so co-locate the registry in-region to keep pulls fast. |
 | Secrets | **Secret Manager** | LLM keys, DB creds; injected as env at deploy. |
 | Ingress / TLS | **GCLB via GKE Ingress/Gateway** + managed cert | Long backend timeout for SSE. |
@@ -344,9 +357,11 @@ Numbered to extend `web-app-plan` §9; these are the ones this doc adds.
 
 Each step is independently shippable and de-risks the next.
 
-1. **GCS ingest + artifacts** (2.2, 2.3) — flip `remote_artifact_write` to a real
-   GCS uploader, add signed-URL upload, make artifact routes serve from GCS. Do
-   this first; it's independent of K8s and unblocks ephemeral workers.
+1. **GCS video storage + artifacts** (2.2, 2.3) — implement
+   `GCSVideoStorage`, add signed/resumable upload registration, flip
+   `remote_artifact_write` to a real GCS uploader, and make artifact routes
+   serve from GCS. Do this first; it's independent of K8s and unblocks
+   ephemeral workers.
 2. **Adapt the existing containers for GKE** — publish the slim API image and
    the baked-weight CUDA worker image, then add deployment manifests/release jobs
    around them (`web-app-plan` §8, §10.11).

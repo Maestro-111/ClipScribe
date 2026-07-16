@@ -29,7 +29,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 3. **Scene Description and Taxonomy:** `backend/src/extractor/scene_describer.py` samples frames and produces scene descriptions plus GroundingDINO prompts. `backend/src/extractor/taxonomy_core.py` generates canonical targets and maps raw labels to the taxonomy.
 4. **Detection and Tracking:** GroundingDINO detects raw objects, SBERT resolves labels, and SAM2 tracks objects across frames.
 5. **Parallel Tasks:** Whisper extracts audio, PaddleOCR extracts text, and MTCNN extracts faces.
-6. **Persistence:** `backend/src/db/` writes and reads structured run data, including raw frame detections, shot boundaries, and parser results. Alembic migrations in `backend/alembic/` own schema creation.
+6. **Persistence:** `backend/src/db/` writes and reads structured run data, including uploaded video registry rows, raw frame detections, shot boundaries, and parser results. Alembic migrations in `backend/alembic/` own schema creation.
 7. **Parser:** `backend/src/parser/` evaluates persisted data against platform-specific criteria such as YouTube rules.
 8. **Web API:** `backend/app/` exposes the FastAPI layer for uploads, parent/child batch job creation/polling, inline or Celery dispatch, Redis Stream-backed SSE progress, cooperative cancel/retry/delete, run reads, advisory chat, artifacts, health, and metadata.
 9. **Frontend:** `frontend/` contains the Vite/React dashboard for job listing, job creation, live job progress, run inspection, and advisory chat. It uses pnpm, TanStack Router/Query, Tailwind v4, and OpenAPI-generated types.
@@ -44,7 +44,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
   - `CLIPSCRIBE_DB_BACKEND` selects the database backend (`sqlite` or `postgresql`); default is `sqlite`. This is the only selector — `clip_scribe.yaml` carries no backend key, just the pool knobs (`pool_size`, `max_overflow`).
   - `POSTGRESQL_URL` when `CLIPSCRIBE_DB_BACKEND=postgresql`.
   - `SQLITE_URL` is optional when the backend is `sqlite`; default is `sqlite:///data/clip_scribe.db`.
-  - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.
+  - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_VIDEO_STORAGE`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.
 - Main configuration is `backend/src/clip_scribe/configs/clip_scribe.yaml`.
 
 ## Commands
@@ -72,9 +72,10 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `backend/src/extractor/`: Video extraction, scene description, taxonomy generation/resolution, tracking metrics, and cross-shot identity logic.
 - `backend/src/parser/`: LangGraph/LangChain parser agents, query tools, evaluator base classes, and YouTube evaluation.
 - `backend/src/ocr/`: PaddleOCR wrapper and OCR box consolidation.
-- `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer.
+- `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer, including the `videos` registry used by the input picker.
 - `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests and Redis fallback.
 - `backend/src/utils/cancel.py`: Cooperative cancellation interface and null token used by CLI/tests and Redis fallback.
+- `backend/src/utils/video_storage.py`: Source-video storage seam. Local storage is implemented; GCS is a fail-fast reserved backend.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
 - `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

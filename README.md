@@ -33,7 +33,7 @@ ClipScribe splits a video into scenes, detects and tracks objects across shots, 
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
 - Per-run extraction artifacts, parser report generation, and CSV/XLSX ABCD exports for runs and jobs
-- FastAPI API for uploads, jobs, Redis Stream-backed live progress, run inspection, run/job advisory chat, ABCD exports, and artifact serving
+- FastAPI API for deduplicated video uploads, jobs, Redis Stream-backed live progress, run inspection, run/job advisory chat, ABCD exports, and artifact serving
 - Inline or Redis-backed Celery job dispatch
 - Vite/React dashboard for job submission, live job progress, run inspection, ABCD export downloads, and run/job advisory chat
 
@@ -73,7 +73,8 @@ Common environment variables:
 - `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
 - `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` does not carry a backend key, only pool settings.
-- `CLIPSCRIBE_INPUT_DIR` - optional API input directory relative to `backend/`; defaults to `input`.
+- `CLIPSCRIBE_INPUT_DIR` - local source-video storage root relative to `backend/`; defaults to `input` and backs `CLIPSCRIBE_VIDEO_STORAGE=local`.
+- `CLIPSCRIBE_VIDEO_STORAGE` - source-video storage backend (`local` | `gcs`); defaults to `local`. `gcs` is reserved and fails fast until implemented.
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
 - `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
@@ -105,12 +106,12 @@ The stack is a Vite/React dashboard, a FastAPI API, one or more Celery workers, 
 - `inline` — one long-lived `ClipScribeBuilder` and a single-slot in-process executor.
 - `celery` — a model-free API that dispatches jobs to a Redis-backed Celery worker.
 
-`POST /jobs` creates a parent job and fans its `videos` array out to one child run per video. Running child jobs stop cooperatively at extractor/parser checkpoints when canceled; parent cancellation cancels every queued or running child. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the batch/live job page (`/jobs/{job_id}`) with job-level chat and "Export all", and the run inspector (`/runs/{run_id}`) with sibling navigation, per-run export, and per-run advisory chat.
+`POST /jobs` creates a parent job and fans its `videos` array out to one child run per video. Each `video_path` is an opaque storage key returned by `POST /uploads` or `GET /inputs`; the worker materializes that key to a local file only when extraction starts. Running child jobs stop cooperatively at extractor/parser checkpoints when canceled; parent cancellation cancels every queued or running child. The API request has no device field — the builder device comes from `CLIPSCRIBE_DEVICE`. The dashboard screens are the jobs list (`/`), the new-job form (`/jobs/new`), the batch/live job page (`/jobs/{job_id}`) with job-level chat and "Export all", and the run inspector (`/runs/{run_id}`) with sibling navigation, per-run export, and per-run advisory chat.
 
 Useful API routes (reached from the browser under the `/api` proxy prefix):
 
-- `POST /uploads` — upload one or more video files into `CLIPSCRIBE_INPUT_DIR`.
-- `GET /inputs` — list server-side input videos accepted by the job form.
+- `POST /uploads` — upload one or more video files through the configured video storage backend; files are streamed to staging, hashed, deduplicated per user by SHA-256, and registered with their original filenames.
+- `GET /inputs` — list the user's registered videos after reconciling missing storage objects; returned `path` values are valid `videos[].video_path` keys.
 - `POST /jobs` — create a batch job from one or more `videos` sharing platform params and hints; parser-only `parse` is local/dev-only and rejected by the job API.
 - `GET /jobs` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
@@ -195,6 +196,7 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | `CLIPSCRIBE_DB_BACKEND` | unset (`sqlite`) or `postgresql` | `postgresql` | `postgresql` |
 | `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
+| `CLIPSCRIBE_VIDEO_STORAGE` | `local` | `local` | `gcs` once implemented |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |
 
 The container-column values live in each service's `environment:` block in `docker-compose.yml` and win over `env_file`.
@@ -253,21 +255,21 @@ clipscribe/
 │   │   ├── db/                 SQLAlchemy schema, engine, reader, writer
 │   │   ├── dino/               GroundingDINO wrapper (+ vendored groundingdino, third-party)
 │   │   ├── sam2/               Vendored SAM2 (third-party)
-│   │   └── utils/              Progress, artifacts, ids, logging
+│   │   └── utils/              Progress, artifacts, video storage, ids, logging
 │   ├── scripts/                prewarm.py + model-download helpers
 │   ├── docker/
 │   │   ├── api/                Slim, torch-free API image
 │   │   └── core/{cpu,gpu}/     Heavy Celery worker images
 │   ├── alembic/                Migration environment and versions
 │   ├── checkpoints/            Model weights (gitignored; populated by prewarm)
-│   ├── input/ artifacts/ parser_artifacts/ data/ logs/    Local I/O (gitignored)
+│   ├── input/ artifacts/ parser_artifacts/ data/ logs/    Local storage and generated I/O (gitignored)
 │   ├── main.py                 Local batch entry point
 │   └── pyproject.toml, uv.lock
 ├── frontend/
 │   ├── src/
 │   │   ├── routes/             Jobs list, new job, live job, run inspector
 │   │   ├── api/                Generated OpenAPI types + client/hooks
-│   │   ├── components/         ChatPanel and shared UI
+│   │   ├── components/         ChatPanel, JobSidebar, PipelineAnimation, shared UI
 │   │   └── lib/                State, formatting, run types
 │   ├── Dockerfile, nginx.conf  Build + nginx-serve the SPA
 │   └── package.json
@@ -281,6 +283,7 @@ clipscribe/
 Generated artifacts are intentionally kept out of the core source tree:
 
 - `backend/artifacts/<run_id>/` - tracked videos, extraction summaries, and capped per-frame visualization PNGs.
+- `backend/input/` - local source-video storage for `CLIPSCRIBE_VIDEO_STORAGE=local`; uploaded objects are named by opaque storage keys and tracked in the `videos` registry.
 - `backend/parser_artifacts/` - generated parser reports and scores.
 - `backend/data/` - local database files.
 - `backend/logs/` - runtime logs.

@@ -316,9 +316,10 @@ export function useRetryJob() {
 
 export type UploadedVideo = { name: string; path: string; size_bytes: number };
 
-// Upload one or more video files to the server's input/ directory in a single
-// request (POST /uploads accepts a list). openapi-fetch can't represent File in
-// the generated schema (it emits string[]), so we use plain fetch + FormData.
+// Upload one or more video files through the server's video-storage backend in
+// a single request (POST /uploads accepts a list). openapi-fetch can't represent
+// File in the generated schema (it emits string[]), so we use plain fetch +
+// FormData.
 export function useUploadVideos() {
   const qc = useQueryClient();
   return useMutation({

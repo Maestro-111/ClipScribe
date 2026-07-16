@@ -25,20 +25,20 @@ load-once builder, progress seam, raw detection persistence, the FastAPI app,
 **Celery/Redis job dispatch**, batch parent/child jobs, cooperative cancel, and
 the Docker split have landed. `POST /jobs` runs child jobs either in-process
 (single-slot executor) or via a Redis-backed Celery worker, selected by
-`CLIPSCRIBE_JOB_BACKEND`; the API exposes uploads, input listing, parent/child
-job polling/progress, read-only run views (including batch siblings), advisory
-chat at run and job scope, ABCD CSV/XLSX exports, artifact serving, health, and
-metadata endpoints.
+`CLIPSCRIBE_JOB_BACKEND`; the API exposes deduplicated uploads,
+registry-backed input listing, parent/child job polling/progress, read-only run
+views (including batch siblings), advisory chat at run and job scope, ABCD
+CSV/XLSX exports, artifact serving, health, and metadata endpoints.
 **SSE live progress has landed** — a per-job Redis stream feeds `GET
 /jobs/{id}/events`, the frontend live page, and jobs-list progress bars.
-**A content-addressed video registry has landed** (commit `b727927`): uploads
+**A content-addressed video registry has landed**: uploads
 are deduplicated by SHA-256 and recorded in a new `videos` table that is the
 source of truth for the input picker, decoupling the opaque storage key from the
 filename the user picked. A `VideoStorage` seam (`backend/src/utils/video_storage.py`,
 `CLIPSCRIBE_VIDEO_STORAGE`) fronts local disk today with a GCS backend reserved,
-mirroring the artifact-upload seam. Frontend polish for the new-job page
-(post-create upload flow, a `JobSidebar` summary/cost panel, and a decorative
-`PipelineAnimation`) is in progress and not yet committed.
+mirroring the artifact-upload seam. The new-job page queues local files without
+uploading until submit, supports folder selection, and includes the `JobSidebar`
+summary/cost panel plus a decorative `PipelineAnimation`.
 
 ---
 
@@ -84,7 +84,7 @@ mirroring the artifact-upload seam. Frontend polish for the new-job page
 - **Redis**: both the Celery broker/result backend and the live-progress Streams store.
 - **Postgres**: existing schema (`backend/src/db/schema.py`) plus web-app
   tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`,
-  `chat_messages`).
+  `chat_messages`, `videos`).
 
 ---
 
@@ -108,7 +108,7 @@ clipscribe/
       job_execution.py            # run_job_core — lifecycle shared by inline + celery
       main.py                     # FastAPI app + lifespan; builder inline / DB-only for celery
       job_runner.py               # JobService: validate, persist, dispatch (inline|celery)
-      settings.py                 # CLIPSCRIBE_* API env settings (job_backend, redis_url)
+      settings.py                 # CLIPSCRIBE_* API env settings (job, Redis, video storage)
       errors.py                   # RFC7807 problem+json handlers
       routes/                     # jobs, runs, artifacts, chat, health, meta, uploads
       models.py                   # Pydantic request/response schemas
@@ -127,14 +127,14 @@ clipscribe/
           deploy.sh
     checkpoints/                  # all model weights live here (see §8)
     data/                         # SQLite db lives here
-    input/                        # video inputs for CLI / picker
+    input/                        # local source-video storage and CLI inputs
     test/
   frontend/                       # TS SPA
     src/
       api/                        # generated TS client + query hooks
       lib/                        # state, formatting, run types
       routes/                     # JobsList / NewJob / JobLive / RunInspector
-      components/                 # ChatPanel and reusable UI pieces
+      components/                 # ChatPanel, JobSidebar, PipelineAnimation, reusable UI pieces
     package.json
     vite.config.ts
   docker-compose.yml              # full local stack: postgres, redis, migrate, prewarm, api, worker, frontend
@@ -149,7 +149,7 @@ Notes on the layout as it stands:
   `src` is installed as a top-level package.
 - `PROJECT_ROOT = Path(__file__).resolve().parents[2]` inside
   `build_clip_scribe.py` resolves to `backend/`, which is where `data/`,
-  `input/`, `checkpoints/` now live — so relative-path resolution works
+  `input/`, `checkpoints/` now live — so local-storage and checkpoint path resolution works
   without code changes.
 - Pre-commit must be invoked from `backend/` because the config lives at
   `backend/.pre-commit-config.yaml`. See root `CLAUDE.md` § Commands.
@@ -609,7 +609,7 @@ ABCD exports, and advisory chat.
      re-picking an already-uploaded file costs nothing.
    - `GET /defaults` is available for config-driven form expansion; the current
      first-pass form only renders the fields it submits.
-   - A right-hand `JobSidebar` (in progress, uncommitted) mirrors the live form
+   - A right-hand `JobSidebar` mirrors the live form
      state, shows an estimated OpenAI call/cost count, and previews the run
      outputs; a decorative `PipelineAnimation` illustrates the eight pipeline
      stages.
@@ -1067,14 +1067,17 @@ Strictly ordered; each step is shippable on its own.
    parent job plus one child run per video and submits each child to a single-slot
    in-process executor in `inline` mode, so the HTTP contract is asynchronous
    from the client's perspective.
-   Implemented routes include uploads, input listing, job list/get, read-only
-   `/runs/*`, filesystem artifacts, health, and metadata; errors use RFC7807.
+   Implemented routes include deduplicated uploads, registry-backed input
+   listing, job list/get, read-only `/runs/*`, filesystem artifacts, health,
+   and metadata; errors use RFC7807.
    Request shape intentionally omits device, using process configuration
    (`CLIPSCRIBE_DEVICE` in web mode) instead.
 
 6. **Frontend bootstrap.** **DONE.** Vite + React + TS + Tailwind + TanStack Router /
    Query. Pages: Jobs list, New job, live Job page, and Run inspector against
-   existing DB data.
+   existing DB data. The new-job page now queues local files until submit,
+   supports folder selection, and renders the `JobSidebar` plus
+   `PipelineAnimation` companion panels.
 
 7. **Inspector overlay.** **DONE (first pass).** Uses `frame_detections` to draw
    SVG boxes on `<video>`, with layer toggles, active detections, timeline

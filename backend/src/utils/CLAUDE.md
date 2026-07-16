@@ -8,6 +8,7 @@ Shared helper functions, global logging configurations, and standalone scripts.
 * `clib_scribe_video_manager.py`: Video file management utilities.
 * `progress.py`: Defines the structured progress event vocabulary, the `ProgressReporter` interface, phase helpers, and `NullProgressReporter` for CLI/tests.
 * `artifacts.py`: Defines the `artifacts/<run_id>/` directory convention and the no-op/simulated remote artifact upload seam.
+* `video_storage.py`: Defines the source-video storage seam. `LocalVideoStorage` stores opaque keys under `CLIPSCRIBE_INPUT_DIR`; `GCSVideoStorage` is a fail-fast reserved backend documenting the cloud contract.
 * `ids.py`: Generates ULID run ids for extraction jobs.
 
 ## Guidelines

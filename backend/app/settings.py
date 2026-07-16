@@ -3,8 +3,9 @@
 Read from the environment so the same code runs as a native dev process,
 docker-compose service, or slim API container. Paths resolve against
 the backend root the same way ``build_clip_scribe.PROJECT_ROOT`` does, so the
-API, the CLI, and the worker all agree on where ``input/`` and ``artifacts/``
-live in both native and containerized runs (web-app-plan §2, §8, §9).
+API, the CLI, and the worker all agree on where local source videos and
+``artifacts/`` live in both native and containerized runs (web-app-plan §2,
+§8, §9).
 """
 
 from __future__ import annotations
@@ -59,8 +60,9 @@ class Settings:
     CANCEL_FLAG_TTL_SECONDS = 24 * 3600
 
     def __init__(self) -> None:
-        # Directory the uploader writes to and jobs reference video paths under.
-        # A single base so the container split is just a bind-mount line.
+        # Local source-video storage root. The API stores opaque keys here when
+        # CLIPSCRIBE_VIDEO_STORAGE=local; cloud backends use it only for local
+        # staging/materialization.
         self.input_dir: Path = (
             PROJECT_ROOT / os.environ.get("CLIPSCRIBE_INPUT_DIR", "input")
         ).resolve()

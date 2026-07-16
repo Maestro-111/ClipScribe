@@ -82,7 +82,7 @@ class VideoInput(BaseModel):
     alignment.
     """
 
-    # Relative to INPUT_DIR (populated via POST /uploads or already in input/).
+    # Opaque video storage key returned by POST /uploads or GET /inputs.
     video_path: str
     video_name: str
     video_type: str | None = None
@@ -234,7 +234,7 @@ class PlatformsResponse(BaseModel):
 
 class InputVideo(BaseModel):
     name: str
-    # Relative to INPUT_DIR, suitable for VideoInput.video_path.
+    # Opaque video storage key, suitable for VideoInput.video_path.
     path: str
     size_bytes: int
 

@@ -83,6 +83,8 @@ src/
     hooks.ts            TanStack Query hooks over the client.
   components/
     ChatPanel.tsx       Run/job advisory chat, streamed over SSE.
+    JobSidebar.tsx      New-job summary and expected output panels.
+    PipelineAnimation.tsx  Decorative pipeline companion for the new-job page.
     ui.tsx              Shared UI, including the ABCD export menu.
   lib/format.ts         Display helpers.
   routes/
@@ -96,7 +98,7 @@ src/
 ## Current UI scope
 
 - Jobs list: status filter, polling, parent batch rows with child summaries, running-run progress bars, inspect links for completed runs, cancel/retry actions, and job deletion.
-- New job: create user-facing `full` jobs from one or more existing or uploaded videos; `extract` and parser-only `parse` stay developer paths outside the form.
+- New job: create user-facing `full` jobs from picked registry videos and/or locally queued files. Files are not uploaded until "Create job"; folder selection queues every allowed video in the folder, then submit uploads them, merges returned storage keys, and creates the batch. `extract` and parser-only `parse` stay developer paths outside the form.
 - Job pages: parent jobs show the batch's child runs, job-level advisory chat, and an "Export all" CSV/XLSX menu once at least one child completes; child/leaf jobs show the SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
 - Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, batch sibling navigation, back-to-batch navigation, shot/audio timeline, parser criteria table with CSV/XLSX export, tracked video download, and run-scoped advisory chat.
 - Not yet built: the fuller inspector layer controls from the plan and failed-criterion "ask about this" shortcuts.
