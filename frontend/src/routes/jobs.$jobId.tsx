@@ -131,6 +131,12 @@ function reducer(state: LiveState, action: Action): LiveState {
           : state.totalShots;
       return {
         ...state,
+        // Grow phaseOrder here too: if job.started was trimmed from the stream
+        // before this client connected, phase events are the only phase signal
+        // we get, and the tree must still render instead of "Waiting…".
+        phaseOrder: state.phaseOrder.includes(phase)
+          ? state.phaseOrder
+          : [...state.phaseOrder, phase],
         totalShots,
         phases: { ...state.phases, [phase]: "running" },
       };
@@ -141,6 +147,9 @@ function reducer(state: LiveState, action: Action): LiveState {
         (action.data.total_shots as number | undefined) ?? state.totalShots;
       return {
         ...state,
+        phaseOrder: state.phaseOrder.includes(phase)
+          ? state.phaseOrder
+          : [...state.phaseOrder, phase],
         totalShots,
         phases: { ...state.phases, [phase]: "completed" },
       };
@@ -249,7 +258,7 @@ function LeafJob() {
 
   // Open the SSE stream once per job id; the endpoint replays history first, so
   // this fills in even if the page loads mid-run or just after completion.
-  useEffect(() => {
+    useEffect(() => {
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     es.onopen = () => dispatch({ type: "@stream/open" });
     es.onmessage = (e) => {

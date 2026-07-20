@@ -21,7 +21,7 @@ from app import exports
 from app.deps import current_user_id, get_reader, get_writer
 from src.utils.video_storage import make_video_storage
 from app.errors import ProblemException
-from app.events import stream_key, summarize_progress
+from app.events import started_key, stream_key, summarize_progress
 from app.settings import get_settings
 from app.job_runner import JobService, build_job_response
 from app.models import (
@@ -226,7 +226,17 @@ async def _job_event_stream(
 
     try:
         # Replay everything already in the stream.
-        for entry_id, fields in await client.xrange(key):
+        entries = await client.xrange(key)
+        # `job.started` seeds the client's phase tree but is the first entry
+        # approximate MAXLEN trimming drops once a long, log-heavy run fills the
+        # stream. If it has aged out, re-emit the snapshot the reporter persisted
+        # so a client connecting mid-run still gets its phases — otherwise the live
+        # view is stuck on "Waiting for the job to start…" while logs keep flowing.
+        if not any(fields["type"] == "job.started" for _id, fields in entries):
+            snapshot = await client.get(started_key(job_id))
+            if snapshot is not None:
+                yield _sse_frame(json.loads(snapshot))
+        for entry_id, fields in entries:
             last_id = entry_id
             yield _sse_frame(fields)
             if fields["type"] in settings.TERMINAL_EVENTS:

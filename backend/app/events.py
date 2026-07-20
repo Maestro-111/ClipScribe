@@ -43,6 +43,10 @@ def cancel_key(job_id: str) -> str:
     return f"job:{job_id}:cancel"
 
 
+def started_key(job_id: str) -> str:
+    return f"job:{job_id}:started"
+
+
 # Per-phase share of overall progress, mirroring the frontend live page's
 # weighting (web-app-plan §7). Kept here next to the events they summarize so the
 # jobs-list progress bar (GET /jobs/{id}/progress) has a single server-side
@@ -80,6 +84,11 @@ def summarize_progress(events: list[tuple[str, dict[str, Any]]]) -> dict[str, An
         elif event_type == "phase.started":
             phase = data.get("phase")
             if phase:
+                # Grow phase_order from phase events too: if job.started was trimmed
+                # from the stream before this read, they are the only phase signal
+                # left, and the bar must still advance rather than sit at 0.
+                if phase not in phase_status:
+                    phase_order.append(phase)
                 phase_status[phase] = "running"
                 current_phase = phase
                 if phase == "shot_processing" and data.get("total_shots"):
@@ -87,6 +96,8 @@ def summarize_progress(events: list[tuple[str, dict[str, Any]]]) -> dict[str, An
         elif event_type == "phase.completed":
             phase = data.get("phase")
             if phase:
+                if phase not in phase_status:
+                    phase_order.append(phase)
                 phase_status[phase] = "completed"
             if data.get("total_shots"):
                 total_shots = int(data["total_shots"])
@@ -145,13 +156,25 @@ class RedisProgressReporter(ProgressReporter):
         self._settings = get_settings()
 
     def emit(self, event_type: str, data: Mapping[str, Any] | None = None) -> None:
+        entry = _entry(event_type, data)
         try:
             self._client.xadd(
                 self._key,
-                _entry(event_type, data),
+                entry,
                 maxlen=self._settings.STREAM_MAXLEN,
                 approximate=True,
             )
+            # `job.started` carries the phase list that seeds the live view's phase
+            # tree, but it's a single early entry that approximate MAXLEN trimming
+            # evicts first once a chatty run's logs fill the stream. Persist it to a
+            # standalone key (untrimmed, same TTL as a finished stream) so the SSE
+            # replay can re-emit it even after it has aged out of the stream itself.
+            if event_type == "job.started":
+                self._client.set(
+                    started_key(self._job_id),
+                    json.dumps(entry),
+                    ex=self._settings.STREAM_TTL_SECONDS,
+                )
             if event_type in self._settings.TERMINAL_EVENTS:
                 self._client.expire(self._key, self._settings.STREAM_TTL_SECONDS)
         except Exception:  # noqa: BLE001 - reporting must never break the job
@@ -241,7 +264,7 @@ def reset_stream(redis_url: str, job_id: str) -> None:
     """
     try:
         client = redis.Redis.from_url(redis_url)
-        client.delete(stream_key(job_id), cancel_key(job_id))
+        client.delete(stream_key(job_id), cancel_key(job_id), started_key(job_id))
     except Exception:  # noqa: BLE001 - retry must not 500 on a transport blip
         logger.warning(
             "Redis unavailable at %s; could not reset stream for job %s",

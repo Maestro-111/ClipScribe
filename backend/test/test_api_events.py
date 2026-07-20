@@ -134,6 +134,30 @@ def test_sse_replays_history_and_closes_on_terminal_event(shared_redis) -> None:
     assert _sse_types(frames) == ["job.started", "job.completed"]
 
 
+def test_sse_reemits_started_snapshot_after_trim(shared_redis) -> None:
+    # On a long, log-heavy run, approximate MAXLEN trimming evicts the one-time
+    # job.started entry first. The reporter persists it to a standalone key, and
+    # the SSE replay must re-emit that snapshot so a mid-run subscriber still gets
+    # its phases instead of being stuck on "Waiting for the job to start…".
+    reporter = RedisProgressReporter("j", shared_redis)
+    reporter.emit(ProgressEvent.JOB_STARTED, {"phases": ["audio"], "video_name": "ad"})
+    reporter.emit(ProgressEvent.PHASE_STARTED, {"phase": "audio"})
+    reporter.emit(ProgressEvent.JOB_COMPLETED, {"run_id": "R1"})
+
+    # Simulate the trim: drop the job.started entry from the stream, leaving the
+    # snapshot key intact.
+    entries = shared_redis.xrange(stream_key("j"))
+    started_id = next(e[0] for e in entries if e[1]["type"] == "job.started")
+    shared_redis.xdel(stream_key("j"), started_id)
+
+    frames = asyncio.run(
+        _collect(_job_event_stream("redis://x", "j", _Reader("running")))
+    )
+    assert _sse_types(frames) == ["job.started", "phase.started", "job.completed"]
+    started = json.loads(frames[0][len("data: ") :])["data"]
+    assert started == {"phases": ["audio"], "video_name": "ad"}
+
+
 def test_sse_closes_via_terminal_job_row_backstop(shared_redis) -> None:
     # A job canceled before it emitted a terminal event: only a start event is in
     # the stream, but the job row is terminal, so the generator must still close.
@@ -177,6 +201,19 @@ def test_summarize_progress_terminal_is_100() -> None:
 
 def test_summarize_progress_empty_is_zero() -> None:
     assert summarize_progress([])["percent"] == 0.0
+
+
+def test_summarize_progress_recovers_phase_order_without_job_started() -> None:
+    # job.started (which seeds phase_order) was trimmed out of the stream; phase
+    # events are the only phase signal left, so the bar must still advance.
+    events = [
+        ("phase.completed", {"phase": "scene_detection"}),  # 0.05
+        ("phase.started", {"phase": "audio"}),  # +0.15 * 0.1 = 0.015
+    ]
+    summary = summarize_progress(events)
+    # 0.05 completed + 0.015 running, over a 0.20 total weight = 32.5%.
+    assert summary["percent"] == 32.5
+    assert summary["phase"] == "audio"
 
 
 def test_sse_frame_shape() -> None:
