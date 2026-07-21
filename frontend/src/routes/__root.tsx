@@ -20,9 +20,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootLayout() {
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-900">
+    <div className="min-h-screen overflow-x-hidden bg-neutral-100 text-neutral-900">
       <header className="sticky top-0 z-20 border-b border-neutral-200 bg-white/85 backdrop-blur">
-        <nav className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
+        <nav className="flex w-full items-center gap-6 px-6 py-3 lg:px-10">
           <Link to="/" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
             <Logo size={22} />
             ClipScribe

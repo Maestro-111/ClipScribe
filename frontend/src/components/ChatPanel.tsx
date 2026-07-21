@@ -12,6 +12,8 @@
 //   {type:"error", message}
 //   {type:"done"}
 import { useRef, useState } from "react";
+import { Markdown } from "./Markdown";
+import { Logo } from "./ui";
 
 type Role = "user" | "assistant";
 type ChatMsg = { role: Role; content: string; tools?: string[] };
@@ -43,6 +45,27 @@ const TOOL_LABELS: Record<string, string> = {
   list_job_runs: "list videos",
   query_job_scorecard: "read scorecard",
 };
+
+// "JARVIS"-style thinking indicator: the ClipScribe mark haloed by a spinning
+// arc-reactor ring with a breathing glow, plus blinking dots. Shown while the
+// agent is reasoning/calling tools, before the first answer token lands.
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2.5" aria-live="polite" aria-label="thinking">
+      <span className="relative flex h-8 w-8 items-center justify-center">
+        <span className="jarvis-glow absolute inset-0 rounded-full" aria-hidden />
+        <span className="jarvis-ring absolute -inset-1 rounded-full" aria-hidden />
+        <Logo size={18} />
+      </span>
+      <span className="flex items-center gap-1 text-xs text-neutral-500">
+        thinking
+        <span className="jarvis-dot" style={{ animationDelay: "0ms" }}>.</span>
+        <span className="jarvis-dot" style={{ animationDelay: "200ms" }}>.</span>
+        <span className="jarvis-dot" style={{ animationDelay: "400ms" }}>.</span>
+      </span>
+    </div>
+  );
+}
 
 export function ChatPanel({
   endpoint,
@@ -204,14 +227,21 @@ export function ChatPanel({
                   ))}
                 </div>
               )}
-              <div className="whitespace-pre-wrap">
-                {m.content}
-                {m.role === "assistant" &&
-                  streaming &&
-                  i === messages.length - 1 && (
+              {m.role === "user" ? (
+                <div className="whitespace-pre-wrap">{m.content}</div>
+              ) : m.content ? (
+                // Assistant answers are Markdown; render them so **emphasis**,
+                // lists, and `code` display instead of raw markers.
+                <div>
+                  <Markdown text={m.content} />
+                  {streaming && i === messages.length - 1 && (
                     <span className="ml-0.5 inline-block animate-pulse">▋</span>
                   )}
-              </div>
+                </div>
+              ) : streaming && i === messages.length - 1 ? (
+                // No tokens yet: the agent is thinking / running tools.
+                <ThinkingIndicator />
+              ) : null}
             </div>
           </div>
         ))}

@@ -354,7 +354,6 @@ function NewJob() {
                 <Field
                   label="Brand name"
                   hint="The brand being advertised. Used by parser agents to identify brand presence."
-                  required
                 >
                   <input
                     value={brandName}
@@ -362,6 +361,7 @@ function NewJob() {
                     placeholder="e.g. RAM"
                     className="w-full rounded border px-2 py-1.5"
                   />
+                  {!brandName.trim() && <FieldWarning>The brand-presence criteria (brand in speech, brand logo on screen) can't identify anything without a brand name — those checks will effectively pass on nothing.</FieldWarning>}
                 </Field>
 
                 <Field
@@ -398,6 +398,7 @@ function NewJob() {
                     placeholder="e.g. learn more, visit us today"
                     className="w-full rounded border px-2 py-1.5"
                   />
+                  {!callToActions.trim() && <FieldWarning>The call-to-action criteria (CTA in speech, CTA on screen) have no phrases to match against and will effectively pass on nothing.</FieldWarning>}
                 </Field>
               </>
             )}
@@ -508,5 +509,17 @@ function Field({
       </label>
       {hint && <p className="mt-1 text-xs text-neutral-500">{hint}</p>}
     </div>
+  );
+}
+
+// Non-blocking advisory shown under an optional field whose emptiness weakens
+// the parser (e.g. brand-presence / CTA criteria have nothing to match). Amber,
+// not red — the job is still valid to submit.
+function FieldWarning({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-1 flex items-start gap-1 text-xs text-amber-600">
+      <span aria-hidden>⚠</span>
+      <span>{children}</span>
+    </p>
   );
 }

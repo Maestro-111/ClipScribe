@@ -39,7 +39,8 @@ export interface RunFramesWindow {
 // fetching always agree on the exact key array (a common source of "why won't
 // my list refresh?" bugs).
 export const keys = {
-  jobs: (status?: string) => ["jobs", { status }] as const,
+  jobs: (status?: string, limit?: number, offset?: number) =>
+    ["jobs", { status, limit, offset }] as const,
   job: (id: string) => ["jobs", id] as const,
   run: (id: string) => ["runs", id] as const,
   runFrames: (id: string, window?: RunFramesWindow) =>
@@ -59,19 +60,23 @@ export const keys = {
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "canceled"]);
 
-// --- Jobs list ---
-export function useJobs(status?: string) {
+// --- Jobs list (paginated) ---
+// Server-side offset pagination via the existing /jobs `limit`/`offset` query
+// params. `placeholderData` keeps the previous page on screen while the next
+// one loads, so paging doesn't flash the skeleton or drop the 2s poll.
+export function useJobs(status?: string, limit = 20, offset = 0) {
   return useQuery({
-    queryKey: keys.jobs(status),
+    queryKey: keys.jobs(status, limit, offset),
     // openapi-fetch returns a Promise<{ data, error }>; we await it, then
     // `unwrap` throws on error (so Query flips to its error state) or returns
     // the typed data.
     queryFn: async () =>
       unwrap(
         await api.GET("/jobs", {
-          params: { query: status ? { status } : {} },
+          params: { query: { ...(status ? { status } : {}), limit, offset } },
         }),
       ),
+    placeholderData: (previousData) => previousData,
     refetchInterval: (query) =>
       query.state.data?.jobs.some((job) => !TERMINAL_JOB_STATUSES.has(job.status))
         ? 2000

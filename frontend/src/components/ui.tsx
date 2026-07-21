@@ -160,6 +160,46 @@ export function ExportMenu({
   );
 }
 
+// Prev/Next pager shared by the jobs list and the per-run batch table. Kept
+// dumb: the caller owns the page index and decides when each direction is
+// available (server-side "full page" heuristic for the list, exact slice
+// bounds for the client-side table). `label` shows the current range/page.
+export function Pagination({
+  canPrev,
+  canNext,
+  onPrev,
+  onNext,
+  label,
+}: {
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  label?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="text-neutral-500">{label}</span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onPrev}
+          disabled={!canPrev}
+          className="rounded border border-neutral-300 bg-white px-2.5 py-1 font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ← Prev
+        </button>
+        <button
+          onClick={onNext}
+          disabled={!canNext}
+          className="rounded border border-neutral-300 bg-white px-2.5 py-1 font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // The ClipScribe mark — a clapperboard whose body doubles as a written slate.
 // Same artwork as public/favicon.svg; reused in the nav header. `size` is px.
 export function Logo({ size = 24 }: { size?: number }) {

@@ -8,7 +8,7 @@ import {
   type JobResponse,
 } from "../api/hooks";
 import { formatDateTime, formatDuration } from "../lib/format";
-import { EmptyState, Skeleton, StatusPill } from "../components/ui";
+import { EmptyState, Pagination, Skeleton, StatusPill } from "../components/ui";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
 export const Route = createFileRoute("/")({
@@ -16,6 +16,7 @@ export const Route = createFileRoute("/")({
 });
 
 const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
+const PAGE_SIZE = 20;
 
 // A job is a batch parent with one run per video. The list row shows how many
 // of those runs have finished; a single completed run links straight to its
@@ -37,18 +38,32 @@ function soleCompletedRun(job: JobResponse): string | null {
 
 function JobsList() {
   const [status, setStatus] = useState("");
-  const { data, isLoading, error } = useJobs(status || undefined);
+  const [page, setPage] = useState(0);
+  const { data, isLoading, error } = useJobs(
+    status || undefined,
+    PAGE_SIZE,
+    page * PAGE_SIZE,
+  );
+  // No total count from the API, so infer "there's a next page" from a full
+  // page of results. `isLoading` is only true on the very first fetch (later
+  // pages reuse placeholderData), so it's a safe gate for the skeleton.
+  const count = data?.jobs.length ?? 0;
+  const canNext = count === PAGE_SIZE;
+  const canPrev = page > 0;
   const retry = useRetryJob();
   const cancel = useCancelJob();
   const del = useDeleteJob();
 
   return (
-    <div>
+    // Full-bleed: the dashboard spans the whole viewport (see styles.css) while
+    // every other route stays in the shared max-w-6xl column. px matches the
+    // page gutter so content isn't glued to the screen edges.
+    <div className="full-bleed px-6 lg:px-10">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Jobs</h1>
         <Link
           to="/jobs/new"
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-neutral-800"
         >
           New job
         </Link>
@@ -58,7 +73,10 @@ function JobsList() {
         {STATUSES.map((s) => (
           <button
             key={s || "all"}
-            onClick={() => setStatus(s)}
+            onClick={() => {
+              setStatus(s);
+              setPage(0);
+            }}
             className={`rounded-md px-2.5 py-1 text-sm capitalize transition-colors ${
               status === s
                 ? "bg-neutral-900 text-white"
@@ -105,7 +123,7 @@ function JobsList() {
             action={
               <Link
                 to="/jobs/new"
-                className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                className="inline-block rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
               >
                 Create your first job →
               </Link>
@@ -116,22 +134,22 @@ function JobsList() {
 
       {data && data.jobs.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead className="border-b border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
+          <table className="w-full text-base">
+            <thead className="border-b border-neutral-200 bg-neutral-50 text-left text-sm uppercase tracking-wide text-neutral-500">
               <tr>
-                <th className="px-3 py-2 font-medium">Video</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Platform</th>
-                <th className="px-3 py-2 font-medium">Mode</th>
-                <th className="px-3 py-2 font-medium">Created</th>
-                <th className="px-3 py-2 font-medium">Duration</th>
-                <th className="px-3 py-2"></th>
+                <th className="px-4 py-3 font-medium">Video</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Platform</th>
+                <th className="px-4 py-3 font-medium">Mode</th>
+                <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium">Duration</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {data.jobs.map((job) => (
                 <tr key={job.job_id} className="border-t border-neutral-100 hover:bg-neutral-50">
-                  <td className="px-3 py-2 font-medium">
+                  <td className="px-4 py-3 font-medium">
                     <Link
                       to="/jobs/$jobId"
                       params={{ jobId: job.job_id }}
@@ -140,7 +158,7 @@ function JobsList() {
                       {job.video_name ?? "—"}
                     </Link>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <StatusPill status={job.status} />
                     {(() => {
                       const { total, done } = runCounts(job);
@@ -156,17 +174,17 @@ function JobsList() {
                       return null;
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-neutral-600">
+                  <td className="px-4 py-3 text-neutral-600">
                     {job.platform ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-neutral-600">{job.mode ?? "—"}</td>
-                  <td className="px-3 py-2 text-neutral-600">
+                  <td className="px-4 py-3 text-neutral-600">{job.mode ?? "—"}</td>
+                  <td className="px-4 py-3 text-neutral-600">
                     {formatDateTime(job.created_at)}
                   </td>
-                  <td className="px-3 py-2 text-neutral-600">
+                  <td className="px-4 py-3 text-neutral-600">
                     {formatDuration(job.started_at, job.finished_at)}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
                       {job.status === "completed" &&
                         (soleCompletedRun(job) ? (
@@ -232,6 +250,18 @@ function JobsList() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {data && count > 0 && (canPrev || canNext) && (
+        <div className="mt-4">
+          <Pagination
+            canPrev={canPrev}
+            canNext={canNext}
+            onPrev={() => setPage((p) => Math.max(0, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+            label={`Showing ${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + count}`}
+          />
         </div>
       )}
     </div>

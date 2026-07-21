@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   useCancelJob,
   useJob,
@@ -8,7 +8,10 @@ import {
   type JobChild,
 } from "../api/hooks";
 import { ChatPanel } from "../components/ChatPanel";
-import { ExportMenu, Spinner, StatusPill } from "../components/ui";
+import { ExportMenu, Pagination, Spinner, StatusPill } from "../components/ui";
+
+// Per-run table page size for batch jobs with many videos.
+const RUNS_PAGE_SIZE = 8;
 
 // Starter prompts + intro for the job-level chat, which reasons across every
 // video in the batch (unlike the per-run inspector chat).
@@ -509,6 +512,8 @@ function BatchJob() {
   const job = useJob(jobId);
   const cancel = useCancelJob();
 
+  const [page, setPage] = useState(0);
+
   const children = job.data?.children ?? [];
   const status = job.data?.status ?? "queued";
   const total = children.length;
@@ -517,6 +522,13 @@ function BatchJob() {
   const canceled = children.filter((c) => c.status === "canceled").length;
   const isActive = status === "queued" || status === "running";
   const pct = total ? Math.round((done / total) * 100) : 0;
+
+  // Client-side pagination over the already-loaded children. Clamp the page in
+  // case the list shrinks (e.g. a run is deleted) while we're on a later page.
+  const pageCount = Math.max(1, Math.ceil(total / RUNS_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const start = safePage * RUNS_PAGE_SIZE;
+  const visibleChildren = children.slice(start, start + RUNS_PAGE_SIZE);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -577,12 +589,22 @@ function BatchJob() {
             </tr>
           </thead>
           <tbody>
-            {children.map((child) => (
+            {visibleChildren.map((child) => (
               <ChildRow key={child.job_id} child={child} />
             ))}
           </tbody>
         </table>
       </section>
+
+      {total > RUNS_PAGE_SIZE && (
+        <Pagination
+          canPrev={safePage > 0}
+          canNext={safePage < pageCount - 1}
+          onPrev={() => setPage(Math.max(0, safePage - 1))}
+          onNext={() => setPage(Math.min(pageCount - 1, safePage + 1))}
+          label={`Runs ${start + 1}–${start + visibleChildren.length} of ${total}`}
+        />
+      )}
 
       {/* ── Job-level advisory chat (analyzes every run in the batch) ── */}
       {done > 0 && (
