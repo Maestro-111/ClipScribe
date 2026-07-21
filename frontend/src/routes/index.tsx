@@ -31,16 +31,16 @@ function runCounts(job: JobResponse) {
 function JobsList() {
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(0);
-  const { data, isLoading, error } = useJobs(
+  const { data, isLoading, isPlaceholderData, error } = useJobs(
     status || undefined,
     PAGE_SIZE,
     page * PAGE_SIZE,
   );
   // No total count from the API, so infer "there's a next page" from a full
-  // page of results. `isLoading` is only true on the very first fetch (later
-  // pages reuse placeholderData), so it's a safe gate for the skeleton.
+  // page of fresh results. `isLoading` is only true on the very first fetch
+  // (later pages reuse placeholderData), so it's a safe gate for the skeleton.
   const count = data?.jobs.length ?? 0;
-  const canNext = count === PAGE_SIZE;
+  const canNext = !isPlaceholderData && count === PAGE_SIZE;
   const canPrev = page > 0;
   const paginationLabel =
     count > 0
