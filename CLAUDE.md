@@ -74,8 +74,8 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `backend/src/ocr/`: PaddleOCR wrapper and OCR box consolidation.
 - `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer, including the `videos` registry used by the input picker.
 - `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests and Redis fallback.
-- `backend/src/utils/cancel.py`: Cooperative cancellation interface and null token used by CLI/tests and Redis fallback.
-- `backend/src/utils/video_storage.py`: Source-video storage seam. Local storage is implemented; GCS is a fail-fast reserved backend.
+- `backend/src/utils/clip_scribe_cancel.py`: Cooperative cancellation interface and null token used by CLI/tests and Redis fallback.
+- `backend/src/utils/clip_scribe_video_storage.py`: Source-video storage seam. Local storage is implemented; GCS is a fail-fast reserved backend.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
 - `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

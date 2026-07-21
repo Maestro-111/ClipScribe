@@ -41,11 +41,11 @@ carries over unchanged:
   every job a worker process handles. This is what makes a *warm* worker pool
   (below) worth it.
 - **Source-video storage seam already exists** (`web-app-plan` §9.1).
-  `backend/src/utils/video_storage.py` gives the API an ingest contract
+  `backend/src/utils/clip_scribe_video_storage.py` gives the API an ingest contract
   (stage/hash/commit) and the worker a materialization contract (key -> local
   path -> release). `LocalVideoStorage` backs today's upload registry; the GCS
   backend is a fail-fast stub documenting the drop-in contract.
-- **Artifact-upload seam already exists** (`web-app-plan` §9.2). `backend/src/utils/artifacts.py`
+- **Artifact-upload seam already exists** (`web-app-plan` §9.2). `backend/src/utils/clip_scribe_artifacts.py`
   has an `ArtifactUploader` with a `SimulatedGCSArtifactUploader` that currently
   logs the `gs://…/<run_id>/artifacts.tar.gz` it *would* push. Swapping in a real
   GCS client is a drop-in, no call-site change.

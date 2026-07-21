@@ -113,7 +113,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `POST /uploads` — upload one or more video files through the configured video storage backend; files are streamed to staging, hashed, deduplicated per user by SHA-256, and registered with their original filenames.
 - `GET /inputs` — list the user's registered videos after reconciling missing storage objects; returned `path` values are valid `videos[].video_path` keys.
 - `POST /jobs` — create a batch job from one or more `videos` sharing platform params and hints; parser-only `parse` is local/dev-only and rejected by the job API.
-- `GET /jobs` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
+- `GET /jobs?status=&limit=&offset=` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
 - `GET /jobs/{job_id}/export?format=xlsx|csv` — export all completed runs' ABCD results; XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
@@ -158,13 +158,13 @@ docker compose build
 docker compose up      # api :8000, frontend :5173, worker, postgres, redis
 ```
 
-The app is at `http://localhost:5173`. Model weights are fetched automatically: the one-shot `prewarm` service populates the shared `./backend/checkpoints` volume before the worker starts. The **first** `up` downloads several GB (the GroundingDINO/SAM2 `.pth` already on your host appear immediately); later `up`s short-circuit on a `.prewarm_complete` marker. Force a refetch with `docker compose run --rm prewarm python scripts/prewarm.py --force`.
+The app is at `http://localhost:5173`. Model weights are fetched automatically: the one-shot `prewarm` service populates the shared `./backend/checkpoints` volume before the worker starts. The **first** `up` downloads several GB (the GroundingDINO/SAM2 `.pth` already on your host appear immediately); later `up`s short-circuit on a `.prewarm_complete` marker. Force a refetch with `docker compose run --rm prewarm python scripts/prewarm.py --force`. Compose also bind-mounts `backend/app` and `backend/src` into the API and worker containers so local source edits are visible after process reload/restart; rebuild when dependencies or Dockerfiles change.
 
 The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has no arm64 wheel, and amd64 is the deploy target). On an **Apple Silicon** Mac they run under QEMU emulation — correct but slow, and `prewarm` loading models emulated can take a while. Mode 1 is best on a Linux/amd64 host or CI; on a Mac, use **Mode 2** for real work (native MPS worker) and treat Mode 1 as an end-to-end smoke test.
 
 ### Mode 2 — Hybrid local dev (MPS/CPU/GPU worker)
 
-Run only Postgres + Redis (note, you can spin just Redis and specify sqlite as db in backend/src/clip_scribe/configs/clip_scribe.yaml) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
+Run only Postgres + Redis (or just Redis with the default `CLIPSCRIBE_DB_BACKEND=sqlite`) in Compose and run the API, worker, and frontend natively so the worker gets MPS. Use separate shells:
 
 ```bash
 # shell 0 — infra only
@@ -269,7 +269,7 @@ clipscribe/
 │   ├── src/
 │   │   ├── routes/             Jobs list, new job, live job, run inspector
 │   │   ├── api/                Generated OpenAPI types + client/hooks
-│   │   ├── components/         ChatPanel, JobSidebar, PipelineAnimation, shared UI
+│   │   ├── components/         ChatPanel, Markdown, JobSidebar, PipelineAnimation, shared UI
 │   │   └── lib/                State, formatting, run types
 │   ├── Dockerfile, nginx.conf  Build + nginx-serve the SPA
 │   └── package.json

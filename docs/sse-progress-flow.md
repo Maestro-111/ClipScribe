@@ -18,8 +18,9 @@ Stream** named `job:{id}:stream`. The browser opens an `EventSource` to
 `GET /jobs/{id}/events`; that endpoint **replays the whole stream from the
 beginning, then blocks and tails it for new entries**, forwarding each one to the
 browser as an SSE `data:` frame. A React `useReducer` folds those frames into the
-live view. A Redis **Stream** (not pub/sub) is the key choice: it stores history,
-so a late subscriber still gets everything.
+live view. A Redis **Stream** (not pub/sub) is the key choice: it stores retained
+history, so a late subscriber still gets the events Redis has not trimmed or
+expired.
 
 ```
  PIPELINE  ──emit()──►  REDIS STREAM  ──XRANGE+XREAD──►  SSE ENDPOINT  ──data:──►  BROWSER

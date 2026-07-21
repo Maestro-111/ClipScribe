@@ -34,8 +34,9 @@ CSV/XLSX exports, artifact serving, health, and metadata endpoints.
 **A content-addressed video registry has landed**: uploads
 are deduplicated by SHA-256 and recorded in a new `videos` table that is the
 source of truth for the input picker, decoupling the opaque storage key from the
-filename the user picked. A `VideoStorage` seam (`backend/src/utils/video_storage.py`,
-`CLIPSCRIBE_VIDEO_STORAGE`) fronts local disk today with a GCS backend reserved,
+filename the user picked. A `VideoStorage` seam
+(`backend/src/utils/clip_scribe_video_storage.py`, `CLIPSCRIBE_VIDEO_STORAGE`)
+fronts local disk today with a GCS backend reserved,
 mirroring the artifact-upload seam. The new-job page queues local files without
 uploading until submit, supports folder selection, and includes the `JobSidebar`
 summary/cost panel plus a decorative `PipelineAnimation`.
@@ -594,7 +595,7 @@ ABCD exports, and advisory chat.
 1. **Jobs list** (`/`)
    - Table of jobs (video, status/progress, platform, mode, created time,
      duration, and lifecycle actions).
-   - Status filter.
+   - Status filter plus offset pagination using `GET /jobs?limit=&offset=`.
    - "New job" button.
 
 2. **New job** (`/jobs/new`)
@@ -618,7 +619,8 @@ ABCD exports, and advisory chat.
 
 3. **Live job** (`/jobs/{id}`)
    - Parent jobs render a batch panel with one row per child run, aggregated
-     status, and per-run inspect/cancel/retry/delete actions.
+     status, per-run inspect/cancel/retry/delete actions, and client-side
+     pagination for large batches.
    - Once any child completes, parent jobs expose an "Export all" CSV/XLSX menu
      and a job-level advisory chat that can compare the completed runs.
    - Child/leaf jobs render the SSE live page: top progress bar, cancel action,
@@ -840,6 +842,8 @@ worker:
     - ./backend/checkpoints:/app/backend/checkpoints   # persist weights
     - ./backend/artifacts:/app/backend/artifacts
     - ./backend/input:/app/backend/input
+    - ./backend/app:/app/backend/app                   # source bind mounts for local dev
+    - ./backend/src:/app/backend/src
 ```
 
 - First `docker compose up`: the `prewarm` service downloads several GB, then
@@ -916,7 +920,7 @@ These are decisions to make before the corresponding implementation step.
 
 1. **Video ingest.** **Resolved for the sync path, now content-addressed.**
    `POST /uploads` streams browser uploads through a `VideoStorage` backend
-   (`backend/src/utils/video_storage.py`), hashing each file as it stages it and
+   (`backend/src/utils/clip_scribe_video_storage.py`), hashing each file as it stages it and
    deduplicating on `(user_id, content_hash)` — identical bytes reuse the
    existing stored object. Every distinct video is recorded in the `videos`
    registry table (§4), which `GET /inputs` reads (reconciled against storage) as
@@ -934,7 +938,7 @@ These are decisions to make before the corresponding implementation step.
 2. **Artifact storage.** **Mostly resolved.**
    The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the
    video name — no more collisions). A `remote_artifact_write` config flag
-   (default `false`) selects an `ArtifactUploader` (`backend/src/utils/artifacts.py`):
+   (default `false`) selects an `ArtifactUploader` (`backend/src/utils/clip_scribe_artifacts.py`):
    `NullArtifactUploader` (local only) or `SimulatedGCSArtifactUploader`, which
    currently just **logs** the single bundle it would push
    (`gs://…/<run_id>/artifacts.tar.gz`) at the end of the run. Swapping in a
@@ -1010,7 +1014,7 @@ These are decisions to make before the corresponding implementation step.
 15. **Per-job artifact directory keying.** **Resolved.**
     Artifacts are written to `artifacts/<run_id>/` (ULID). The path convention
     lives in one place: `run_artifact_dir(run_id)` in
-    `backend/src/utils/artifacts.py`, used by both the extractor and the engine
+    `backend/src/utils/clip_scribe_artifacts.py`, used by both the extractor and the engine
     (for the upload call). Old `extractor_artifacts/<video_name>/` runs are left
     as-is.
 
@@ -1111,9 +1115,11 @@ Strictly ordered; each step is shippable on its own.
    builds the reporter, installs the log bridge, and sets the contextvar, so
    **both** the inline and celery paths publish. `GET /jobs/{id}/events` is an
    async SSE generator over `redis.asyncio` `XREAD BLOCK` from id `0`: it replays
-   the whole stream to a late subscriber, then tails; it closes on a terminal
-   event, with the job row's terminal status as a backstop for jobs that never
-   emit one (queued-then-canceled, or Redis down at run time). `/readyz` gained a
+   the retained stream to a late subscriber, re-emits the persisted
+   `job:{id}:started` snapshot when trimming dropped the original `job.started`
+   entry, then tails; it closes on a terminal event, with the job row's terminal
+   status as a backstop for jobs that never emit one (queued-then-canceled, or
+   Redis down at run time). `/readyz` gained a
    Redis ping and no longer requires a loaded builder in celery mode. Frontend:
    `jobs.$jobId.tsx` live page renders from a reducer keyed on `event.type`
    (progress bar, phase tree, current-shot panel, log tail) fed by an
@@ -1151,11 +1157,14 @@ Strictly ordered; each step is shippable on its own.
     Tested in `test/test_api_chat.py`.
 
 14. **Advisory chat agent — frontend (§13).** **DONE.** `ChatPanel`
-    (`frontend/src/components/ChatPanel.tsx`) mounted in the run inspector:
-    streams the answer token-by-token (POST + manual SSE parse over `fetch`),
-    shows tool-call chips, keeps a session id for multi-turn continuity, and
-    offers starter-prompt buttons. Follow-up: an "ask about this" shortcut on
-    failed criterion rows (needs lifting chat state above `ParserTable`).
+    (`frontend/src/components/ChatPanel.tsx`) is shared by the run inspector and
+    parent job page: it streams the answer token-by-token (POST + manual SSE
+    parse over `fetch`), renders assistant Markdown through
+    `frontend/src/components/Markdown.tsx`, shows tool-call chips and a thinking
+    indicator before the first token, keeps a session id for multi-turn
+    continuity, and offers starter-prompt buttons. Follow-up: an "ask about
+    this" shortcut on failed criterion rows (needs lifting chat state above
+    `ParserTable`).
 
 15. **Job-level reporting and analysis.** **DONE.** `backend/app/exports.py`
     builds CSV/XLSX bytes from persisted `parser_results`. Routes:
@@ -1179,7 +1188,8 @@ Strictly ordered; each step is shippable on its own.
 - **MPS in Docker on Mac.** Already flagged. Lots of dev pain if we forget.
 
 - **Live-progress replay depends on Redis Stream retention.** Streams solve the
-  subscriber-loss problem, but `MAXLEN` and terminal TTL still bound how much
+  subscriber-loss problem, and `job:{id}:started` preserves the phase seed after
+  `MAXLEN` trimming, but `MAXLEN` and terminal TTL still bound how much detailed
   history a late user can replay.
 
 - **OpenAI cost.** Adding a "Run job" button in a web UI makes it easy to
@@ -1365,8 +1375,12 @@ A shared `ChatPanel` is mounted in two places:
 
 Both panels:
 - Stream the assistant answer token-by-token.
+- Render assistant Markdown for headings, lists, emphasis, code, quotes, and
+  links without injecting HTML.
 - Render tool-call chips ("queried visual objects…", "read parser verdicts…")
   so the reasoning is transparent.
+- Show a thinking indicator while the agent is reasoning or calling tools before
+  answer tokens arrive.
 - Planned follow-up: each failed criterion row gets an **"ask about this"**
   shortcut that seeds a question like *"Criterion '{feature_name}' failed — what
   would fix it?"*.

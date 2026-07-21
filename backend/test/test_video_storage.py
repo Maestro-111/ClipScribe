@@ -1,4 +1,4 @@
-"""Unit tests for the local video storage backend (src/utils/video_storage.py)."""
+"""Unit tests for the local video storage backend."""
 
 import pytest
 

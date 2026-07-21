@@ -1,8 +1,8 @@
 """Video storage seam: where source videos live before extraction.
 
-This mirrors the :mod:`src.utils.artifacts` upload seam, but for the *input*
-side. The core never learns whether a video lives on a local disk or in a cloud
-bucket — it always receives a plain local filesystem path from
+This mirrors the :mod:`src.utils.clip_scribe_artifacts` upload seam, but for the
+*input* side. The core never learns whether a video lives on a local disk or in
+a cloud bucket — it always receives a plain local filesystem path from
 :meth:`VideoStorage.materialize` and hands it to OpenCV / SAM / Whisper, which
 all need a real seekable file.
 

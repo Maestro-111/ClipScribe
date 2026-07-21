@@ -107,7 +107,7 @@ class Settings:
             {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
         )
 
-        # Where source videos live (see src/utils/video_storage.py):
+        # Where source videos live (see src/utils/clip_scribe_video_storage.py):
         #   "local" — files under input_dir (the default; single-tenant dev).
         #   "gcs"   — a cloud bucket (reserved; not yet implemented).
         # The only selector; the local backend uses input_dir above as its root.
