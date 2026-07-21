@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import exports
 from app.deps import current_user_id, get_reader, get_writer
-from src.utils.video_storage import make_video_storage
+from src.utils.clip_scribe_video_storage import make_video_storage
 from app.errors import ProblemException
 from app.events import started_key, stream_key, summarize_progress
 from app.settings import get_settings

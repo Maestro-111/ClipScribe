@@ -20,7 +20,7 @@ from app.settings import Settings
 from src.db.reader import ClipScribeReaderDB
 from src.db.schema import metadata_obj
 from src.db.writer import ClipScribeWriterDB
-from src.utils.video_storage import LocalVideoStorage
+from src.utils.clip_scribe_video_storage import LocalVideoStorage
 
 
 class InlineExecutor:

@@ -74,8 +74,8 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
         make_reporter,
     )
     from app.settings import get_settings
-    from src.utils.cancel import JobCanceled
-    from src.utils.video_storage import make_video_storage
+    from src.utils.clip_scribe_cancel import JobCanceled
+    from src.utils.clip_scribe_video_storage import make_video_storage
 
     writer = builder.writer_db
     job_id = payload["job_id"]

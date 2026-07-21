@@ -82,7 +82,7 @@ class ChatService:
         agent_cfg = _load_agent_config()
         # Reusable across requests; scoped run/job agents are built per request.
         self.model = ChatOpenAI(
-            model=agent_cfg.get("llm", "gpt-4o-mini"),
+            model=agent_cfg.get("llm", "gpt-5.4"),
             temperature=agent_cfg.get("temperature", 0.2),
             timeout=60,
             max_completion_tokens=_CHAT_MAX_TOKENS,

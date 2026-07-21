@@ -70,7 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
 
         logger.info("Loading ClipScribeBuilder (this can take 30-60s)...")
+
         builder = ClipScribeBuilder(device=settings.clip_scribe_device)
+
         app.state.builder = builder
         app.state.reader_db = builder.reader_db
         app.state.writer_db = builder.writer_db
@@ -108,6 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+
     app = FastAPI(
         title="ClipScribe API",
         version="1.0.0",

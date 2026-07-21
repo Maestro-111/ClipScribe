@@ -137,7 +137,7 @@ def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
 
 def test_parser_report_path_stays_under_output_dir(tmp_path):
     from src.parser.parser_core import VideoInformationParser
-    from src.utils.cancel import NullCancellationToken
+    from src.utils.clip_scribe_cancel import NullCancellationToken
     from src.utils.progress import NullProgressReporter
 
     class DummyEvaluator:

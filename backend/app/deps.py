@@ -13,7 +13,7 @@ from fastapi import Depends, Request
 
 from app.errors import ProblemException
 from app.settings import Settings, get_settings
-from src.utils.video_storage import VideoStorage, make_video_storage
+from src.utils.clip_scribe_video_storage import VideoStorage, make_video_storage
 
 if TYPE_CHECKING:
     from concurrent.futures import Future, ThreadPoolExecutor

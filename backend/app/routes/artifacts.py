@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from app.deps import get_reader, settings_dep
 from app.errors import ProblemException
 from app.settings import PROJECT_ROOT, Settings
-from src.utils.artifacts import run_artifact_dir
+from src.utils.clip_scribe_artifacts import run_artifact_dir
 
 if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB

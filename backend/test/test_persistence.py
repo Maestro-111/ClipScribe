@@ -21,7 +21,7 @@ from src.db.schema import (
 )
 from src.db.writer import ClipScribeWriterDB
 from src.utils.ids import new_ulid
-from src.utils.artifacts import (
+from src.utils.clip_scribe_artifacts import (
     NullArtifactUploader,
     SimulatedGCSArtifactUploader,
     run_artifact_dir,

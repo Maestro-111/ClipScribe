@@ -14,8 +14,6 @@ from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 class JobMode(str, Enum):
     FULL = "full"
-    EXTRACT = "extract"
-    PARSE = "parse"
 
 
 class JobStatus(str, Enum):
@@ -116,21 +114,15 @@ class JobCreateRequest(BaseModel):
     platform_params: dict[str, Any] = Field(default_factory=dict)
     user_hints: list[str] | None = None
     generate_hint_from_name: bool = False
-    # Required for parse; must reference an existing run (checked in the service).
-    run_id: str | None = None
 
     _resolved_params: BasePlatformParams = PrivateAttr()
 
     @model_validator(mode="after")
     def _validate(self) -> "JobCreateRequest":
-        if self.mode == JobMode.PARSE:
-            if not self.run_id:
-                raise ValueError("run_id is required for mode 'parse'")
-        else:
-            if not self.videos:
-                raise ValueError(
-                    f"at least one video is required for mode '{self.mode.value}'"
-                )
+        if not self.videos:
+            raise ValueError(
+                f"at least one video is required for mode '{self.mode.value}'"
+            )
 
         model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
         if model_cls is None:

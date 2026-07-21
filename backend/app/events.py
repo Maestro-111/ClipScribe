@@ -24,7 +24,7 @@ from typing import Any, Mapping
 
 import redis
 
-from src.utils.cancel import CancellationToken, NullCancellationToken
+from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, ProgressReporter
 from .settings import get_settings
 

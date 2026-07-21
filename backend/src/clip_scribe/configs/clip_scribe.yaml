@@ -40,7 +40,7 @@ clip_scribe:
     # Number of frames to track detected objects before running detection again
     # Higher = faster processing but may miss new objects appearing mid-shot
     # Range: 1-30 frames. Default: 10
-    detection_interval: 8
+    detection_interval: 10
 
     # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
     # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes

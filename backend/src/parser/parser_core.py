@@ -8,7 +8,7 @@ from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 from src.parser.evaluator_base import BaseEvaluator
 from src.parser.youtube import *  # noqa ignore
 from src.clip_scribe.platform_configs import BasePlatformConf
-from src.utils.cancel import CancellationToken, NullCancellationToken
+from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 

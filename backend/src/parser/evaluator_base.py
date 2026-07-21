@@ -10,7 +10,11 @@ from src.parser.agent import build_agent, run_agent
 from src.parser.models import BaseFeatureResult, BaseAgentEvaluation
 
 from src.clip_scribe.platform_configs import BasePlatformConf
-from src.utils.cancel import CancellationToken, JobCanceled, NullCancellationToken
+from src.utils.clip_scribe_cancel import (
+    CancellationToken,
+    JobCanceled,
+    NullCancellationToken,
+)
 
 logger = logging.getLogger("clip_scribe")
 

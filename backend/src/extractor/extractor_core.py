@@ -28,14 +28,14 @@ from scenedetect import detect, ContentDetector
 from collections import defaultdict
 from nltk.corpus import wordnet as wn
 
-from src.utils.cancel import CancellationToken, NullCancellationToken
+from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import (
     NullProgressReporter,
     Phase,
     ProgressEvent,
     ProgressReporter,
 )
-from src.utils.artifacts import run_artifact_dir
+from src.utils.clip_scribe_artifacts import run_artifact_dir
 
 logger = logging.getLogger("clip_scribe")
 

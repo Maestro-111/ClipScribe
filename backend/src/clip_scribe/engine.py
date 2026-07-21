@@ -4,8 +4,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.utils.ids import new_ulid
-from src.utils.artifacts import ArtifactUploader, run_artifact_dir
-from src.utils.cancel import CancellationToken, JobCanceled
+from src.utils.clip_scribe_artifacts import ArtifactUploader, run_artifact_dir
+from src.utils.clip_scribe_cancel import CancellationToken, JobCanceled
 from src.utils.progress import Phase, ProgressEvent, ProgressReporter
 
 if TYPE_CHECKING:
@@ -112,7 +112,6 @@ class ClipScribeEngine:
                 self.extract()
             elif self.mode == "parse":
                 # only parse engine, i.e. we expect to have an existing run_id data in db
-
                 logger.warning(
                     "ClipScribe is running in parse mode only"
                     "This mode will only process existing artifacts of run_id"

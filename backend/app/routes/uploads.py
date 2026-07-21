@@ -29,7 +29,7 @@ from app.errors import ProblemException
 from app.models import UploadedVideo, UploadResponse
 from app.settings import Settings
 from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-from src.utils.video_storage import VideoStorage
+from src.utils.clip_scribe_video_storage import VideoStorage
 
 logger = logging.getLogger("clip_scribe")
 

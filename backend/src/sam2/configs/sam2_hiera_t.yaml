@@ -23,7 +23,7 @@ model:
       _target_: src.sam2.image.image_encoder.FpnNeck
       position_encoding:
         # CHANGE: Points to your new Position Encoding location
-        _target_: src.utils.position_encoding.PositionEmbeddingSine
+        _target_: src.utils.sam2_position_encoding.PositionEmbeddingSine
         num_pos_feats: 256
         normalize: true
         scale: null
@@ -73,7 +73,7 @@ model:
       _target_: src.sam2.memory.memory_encoder.MemoryEncoder
       out_dim: 64
       position_encoding:
-        _target_: src.utils.position_encoding.PositionEmbeddingSine
+        _target_: src.utils.sam2_position_encoding.PositionEmbeddingSine
         num_pos_feats: 64
         normalize: true
         scale: null

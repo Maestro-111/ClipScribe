@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.utils.video_storage import (
+from src.utils.clip_scribe_video_storage import (
     GCSVideoStorage,
     LocalVideoStorage,
     make_video_storage,

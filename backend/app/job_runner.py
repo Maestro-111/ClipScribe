@@ -25,7 +25,6 @@ from app.models import (
     JobChild,
     JobCreatedResponse,
     JobCreateRequest,
-    JobMode,
     JobResponse,
     JobStatus,
 )
@@ -39,7 +38,7 @@ if TYPE_CHECKING:
     from app.settings import Settings
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-    from src.utils.video_storage import VideoStorage
+    from src.utils.clip_scribe_video_storage import VideoStorage
 
 logger = logging.getLogger("clip_scribe")
 
@@ -137,15 +136,14 @@ class JobService:
         dispatched. Returns the parent job id (``run_id`` is null — children own
         the runs).
         """
-        if req.mode == JobMode.PARSE or not req.videos:
+        if not req.videos:
             # The web API always sends full/extract with >=1 video; parse is
             # dev-only and runs via main.py, not here. Fail loud rather than
             # persist an empty parent.
             raise ProblemException(
                 status=400,
                 title="Bad Request",
-                detail="a job requires at least one video "
-                "(parse mode is not supported via the job API)",
+                detail="a job requires at least one video ",
             )
         # Surface an unavailable backend once, before any rows are written, so a
         # failed request never leaves a half-created parent behind.
@@ -522,7 +520,7 @@ class JobService:
         import shutil
 
         from app.settings import PROJECT_ROOT
-        from src.utils.artifacts import run_artifact_dir
+        from src.utils.clip_scribe_artifacts import run_artifact_dir
 
         self.writer.delete_run(run_id)
         art_dir = (PROJECT_ROOT / run_artifact_dir(run_id)).resolve()
