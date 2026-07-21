@@ -82,6 +82,8 @@ services:
     volumes:
       - ./backend/artifacts:/app/backend/artifacts
       - ./backend/input:/app/backend/input
+      - ./backend/app:/app/backend/app
+      - ./backend/src:/app/backend/src
     ports:
       - "8000:8000"
     depends_on:
@@ -132,6 +134,8 @@ services:
       - ./backend/checkpoints:/app/backend/checkpoints
       - ./backend/artifacts:/app/backend/artifacts
       - ./backend/input:/app/backend/input
+      - ./backend/app:/app/backend/app
+      - ./backend/src:/app/backend/src
     depends_on:
       postgres:
         condition: service_healthy

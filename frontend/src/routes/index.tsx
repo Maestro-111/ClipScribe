@@ -19,21 +19,13 @@ const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
 const PAGE_SIZE = 20;
 
 // A job is a batch parent with one run per video. The list row shows how many
-// of those runs have finished; a single completed run links straight to its
-// inspector, otherwise the job name opens the per-run batch view.
+// of those runs have finished; a completed job links to the per-run batch view
+// regardless of run count.
 function runCounts(job: JobResponse) {
   const children = job.children ?? [];
   const total = children.length;
   const done = children.filter((c) => c.status === "completed").length;
   return { total, done };
-}
-
-// The lone completed run of a single-video job, for the direct "inspect" link.
-function soleCompletedRun(job: JobResponse): string | null {
-  const completed = (job.children ?? []).filter(
-    (c) => c.status === "completed" && c.run_id,
-  );
-  return completed.length === 1 ? completed[0]!.run_id! : null;
 }
 
 function JobsList() {
@@ -186,24 +178,15 @@ function JobsList() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      {job.status === "completed" &&
-                        (soleCompletedRun(job) ? (
-                          <Link
-                            to="/runs/$runId"
-                            params={{ runId: soleCompletedRun(job)! }}
-                            className="text-blue-600 hover:underline"
-                          >
-                            inspect →
-                          </Link>
-                        ) : (
-                          <Link
-                            to="/jobs/$jobId"
-                            params={{ jobId: job.job_id }}
-                            className="text-blue-600 hover:underline"
-                          >
-                            runs →
-                          </Link>
-                        ))}
+                      {job.status === "completed" && (
+                        <Link
+                          to="/jobs/$jobId"
+                          params={{ jobId: job.job_id }}
+                          className="text-blue-600 hover:underline"
+                        >
+                          runs →
+                        </Link>
+                      )}
                       {job.status === "queued" && (
                         <button
                           onClick={() => cancel.mutate(job.job_id)}

@@ -20,3 +20,6 @@
 # runs from backend/ still hit backend/.gitignore's copy.
 .coverage
 .coverage.*
+
+service_account.json
+*.png
