@@ -25,6 +25,7 @@ from app.models import (
     JobChild,
     JobCreatedResponse,
     JobCreateRequest,
+    JobMode,
     JobResponse,
     JobStatus,
 )
@@ -136,14 +137,15 @@ class JobService:
         dispatched. Returns the parent job id (``run_id`` is null — children own
         the runs).
         """
-        if not req.videos:
+        if req.mode == JobMode.PARSE or not req.videos:
             # The web API always sends full/extract with >=1 video; parse is
             # dev-only and runs via main.py, not here. Fail loud rather than
             # persist an empty parent.
             raise ProblemException(
                 status=400,
                 title="Bad Request",
-                detail="a job requires at least one video ",
+                detail="a job requires at least one video "
+                "(parse mode is not supported via the job API)",
             )
         # Surface an unavailable backend once, before any rows are written, so a
         # failed request never leaves a half-created parent behind.

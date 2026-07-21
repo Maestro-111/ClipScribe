@@ -42,6 +42,10 @@ function JobsList() {
   const count = data?.jobs.length ?? 0;
   const canNext = count === PAGE_SIZE;
   const canPrev = page > 0;
+  const paginationLabel =
+    count > 0
+      ? `Showing ${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + count}`
+      : `No jobs on page ${page + 1}`;
   const retry = useRetryJob();
   const cancel = useCancelJob();
   const del = useDeleteJob();
@@ -110,15 +114,21 @@ function JobsList() {
                 <path d="M9 9l1.5-3M15 9l1.5-3M21 9l1.5-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             }
-            title="No jobs yet"
-            description="Create a job to process a video through the ClipScribe pipeline and watch it run live."
+            title={canPrev ? "No jobs on this page" : "No jobs yet"}
+            description={
+              canPrev
+                ? "Go back to see earlier jobs."
+                : "Create a job to process a video through the ClipScribe pipeline and watch it run live."
+            }
             action={
-              <Link
-                to="/jobs/new"
-                className="inline-block rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
-              >
-                Create your first job →
-              </Link>
+              canPrev ? undefined : (
+                <Link
+                  to="/jobs/new"
+                  className="inline-block rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
+                >
+                  Create your first job →
+                </Link>
+              )
             }
           />
         </div>
@@ -236,14 +246,14 @@ function JobsList() {
         </div>
       )}
 
-      {data && count > 0 && (canPrev || canNext) && (
+      {data && (canPrev || canNext) && (
         <div className="mt-4">
           <Pagination
             canPrev={canPrev}
             canNext={canNext}
             onPrev={() => setPage((p) => Math.max(0, p - 1))}
             onNext={() => setPage((p) => p + 1)}
-            label={`Showing ${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + count}`}
+            label={paginationLabel}
           />
         </div>
       )}
