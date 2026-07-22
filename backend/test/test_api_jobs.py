@@ -4,6 +4,7 @@ No models are loaded: a fake builder (real reader/writer over temp SQLite, a
 stub engine) and an inline executor stand in, wired via dependency_overrides.
 """
 
+import hashlib
 import os
 from types import SimpleNamespace
 
@@ -81,6 +82,13 @@ def ctx(tmp_path):
     settings = Settings()
     settings.input_dir = input_dir.resolve()
     storage = LocalVideoStorage(settings.input_dir)
+    writer.insert_video(
+        user_id="local",
+        content_hash=hashlib.sha256(b"video-bytes").hexdigest(),
+        stored_key="ad.mp4",
+        original_name="ad.mp4",
+        size_bytes=len(b"video-bytes"),
+    )
 
     state = SimpleNamespace(
         reader=reader,
@@ -351,6 +359,28 @@ def test_create_job_path_traversal_is_400(ctx):
     assert resp.status_code == 400
 
 
+def test_create_job_rejects_video_registered_to_another_user(ctx):
+    client, state = ctx
+    (state.input_dir / "other.mp4").write_bytes(b"other")
+    state.writer.insert_video(
+        user_id="other",
+        content_hash=hashlib.sha256(b"other").hexdigest(),
+        stored_key="other.mp4",
+        original_name="other.mp4",
+        size_bytes=len(b"other"),
+    )
+
+    resp = client.post(
+        "/jobs",
+        json=_full_body(
+            videos=[{"video_path": "other.mp4", "video_name": "other.mp4"}]
+        ),
+    )
+
+    assert resp.status_code == 404
+    assert state.reader.list_jobs() == []
+
+
 def test_create_job_requires_a_video_422(ctx):
     client, state = ctx
     resp = client.post("/jobs", json=_full_body(videos=[]))
@@ -451,6 +481,33 @@ def test_delete_job_purges_child_runs(ctx):
     assert state.reader.get_job(parent_id) is None
     assert state.reader.get_child_jobs(parent_id) == []
     assert state.reader.get_run(rid) is None  # run purged with the job
+
+
+def test_delete_job_purges_remote_artifacts(ctx, monkeypatch):
+    client, state = ctx
+    state.install_service(run=False)
+    state.settings.storage_backend = "gcs"
+    state.settings.gcs_bucket = "clipscribe"
+    deleted: list[str] = []
+
+    class FakeUploader:
+        def delete_run_artifacts(self, run_id):
+            deleted.append(run_id)
+
+    import src.utils.clip_scribe_artifacts as artifacts_mod
+
+    monkeypatch.setattr(
+        artifacts_mod,
+        "make_artifact_uploader",
+        lambda backend, bucket: FakeUploader(),
+    )
+    parent_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+    rid = state.reader.get_child_jobs(parent_id)[0]["run_id"]
+
+    resp = client.delete(f"/jobs/{parent_id}")
+
+    assert resp.status_code == 204
+    assert deleted == [rid]
 
 
 def test_run_siblings_resolve_before_runs_exist(ctx):

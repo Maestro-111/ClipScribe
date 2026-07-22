@@ -522,7 +522,10 @@ class JobService:
         import shutil
 
         from app.settings import PROJECT_ROOT
-        from src.utils.clip_scribe_artifacts import run_artifact_dir
+        from src.utils.clip_scribe_artifacts import (
+            make_artifact_uploader,
+            run_artifact_dir,
+        )
 
         self.writer.delete_run(run_id)
         art_dir = (PROJECT_ROOT / run_artifact_dir(run_id)).resolve()
@@ -533,6 +536,9 @@ class JobService:
             logger.warning(
                 "Failed to remove artifact dir for run %s", run_id, exc_info=True
             )
+        make_artifact_uploader(
+            self.settings.storage_backend, self.settings.gcs_bucket
+        ).delete_run_artifacts(run_id)
 
     def _validate_input(self, key: str | None) -> str:
         """Validate a job's video storage key and return it unchanged.
@@ -555,6 +561,10 @@ class JobService:
                 status=400,
                 title="Bad Request",
                 detail="video_path is not a valid storage key",
+            )
+        if self.reader.get_video_by_key(self.user_id, key) is None:
+            raise ProblemException(
+                status=404, title="Not Found", detail=f"video not found: {key}"
             )
         if not self.storage.exists(key):
             raise ProblemException(

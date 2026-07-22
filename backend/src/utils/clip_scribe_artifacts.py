@@ -71,6 +71,10 @@ class ArtifactUploader(ABC):
         can 302-redirect and the browser streams straight from the bucket.
         """
 
+    @abstractmethod
+    def delete_run_artifacts(self, run_id: str) -> None:
+        """Delete stored artifacts for a run. Best-effort — must not raise."""
+
 
 class NullArtifactUploader(ArtifactUploader):
     """No-op uploader: artifacts stay local only. The default (local backend)."""
@@ -79,6 +83,9 @@ class NullArtifactUploader(ArtifactUploader):
         return None
 
     def tracked_video_url(self, run_id: str) -> str | None:
+        return None
+
+    def delete_run_artifacts(self, run_id: str) -> None:
         return None
 
 
@@ -152,6 +159,22 @@ class GCSArtifactUploader(ArtifactUploader):
                 self._blob_name(run_id, TRACKED_VIDEO_NAME)
             ).generate_signed_url(version="v4", expiration=SIGNED_URL_TTL, method="GET")
         )
+
+    def delete_run_artifacts(self, run_id: str) -> None:
+        try:
+            prefix = f"{self._PREFIX}/{run_id}/"
+            for blob in self._client.list_blobs(self._bucket_name, prefix=prefix):
+                blob.delete()
+            logger.info(
+                "Deleted run %s artifacts from gs://%s/%s",
+                run_id,
+                self._bucket_name,
+                prefix,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to delete artifacts for run %s", run_id, exc_info=True
+            )
 
 
 def make_artifact_uploader(backend: str, bucket: str | None = None) -> ArtifactUploader:

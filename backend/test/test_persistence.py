@@ -21,6 +21,7 @@ from src.db.schema import (
 from src.db.writer import ClipScribeWriterDB
 from src.utils.ids import new_ulid
 from src.utils.clip_scribe_artifacts import (
+    GCSArtifactUploader,
     NullArtifactUploader,
     make_artifact_uploader,
     run_artifact_dir,
@@ -202,6 +203,7 @@ def test_null_artifact_uploader_is_noop():
     up = NullArtifactUploader()
     up.upload_run_artifacts("rid", "artifacts/rid")  # must not raise
     assert up.tracked_video_url("rid") is None
+    up.delete_run_artifacts("rid")
 
 
 def test_make_artifact_uploader_selects_backend():
@@ -209,3 +211,38 @@ def test_make_artifact_uploader_selects_backend():
     # gcs requires a bucket; a missing one is a fail-fast config error.
     with pytest.raises(ValueError):
         make_artifact_uploader("gcs")
+
+
+def test_gcs_artifact_uploader_deletes_run_prefix():
+    class FakeBlob:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.deleted = False
+
+        def delete(self) -> None:
+            self.deleted = True
+
+    class FakeBucket:
+        def blob(self, name: str):
+            raise AssertionError(name)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.blobs = [
+                FakeBlob("artifacts/rid/tracked_output.mp4"),
+                FakeBlob("artifacts/rid/artifacts.tar.gz"),
+                FakeBlob("artifacts/other/artifacts.tar.gz"),
+            ]
+
+        def bucket(self, name: str) -> FakeBucket:
+            return FakeBucket()
+
+        def list_blobs(self, bucket: str, *, prefix: str):
+            assert bucket == "clipscribe"
+            return [b for b in self.blobs if b.name.startswith(prefix)]
+
+    client = FakeClient()
+
+    GCSArtifactUploader("clipscribe", client=client).delete_run_artifacts("rid")
+
+    assert [b.deleted for b in client.blobs] == [True, True, False]

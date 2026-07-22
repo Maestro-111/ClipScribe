@@ -432,6 +432,16 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             row = result.mappings().fetchone()
             return dict(row) if row else None
 
+    def get_video_by_key(self, user_id: str, stored_key: str) -> dict | None:
+        """Look up a registered video by its storage key."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM videos WHERE user_id = :uid AND stored_key = :k"),
+                {"uid": user_id, "k": stored_key},
+            )
+            row = result.mappings().fetchone()
+            return dict(row) if row else None
+
     def list_videos(self, user_id: str) -> list[dict]:
         """All registered videos for a user, newest first (input picker)."""
         with self._engine.connect() as conn:
