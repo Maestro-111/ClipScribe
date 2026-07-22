@@ -80,29 +80,43 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     writer = builder.writer_db
     job_id = payload["job_id"]
     run_id = payload["run_id"]
-    req = JobCreateRequest.model_validate(payload["req"])
 
-    settings = get_settings()
-    redis_url = settings.redis_url
-    # The payload carries a logical storage key, not a local path: the API and
-    # worker may not share a filesystem (a cloud bucket + remote worker). Bring
-    # the bytes local here, right before extraction, and release after.
-    storage = make_video_storage(settings.video_storage_backend, settings.input_dir)
-    reporter = make_reporter(redis_url, job_id)
-    canceller = make_canceller(redis_url, job_id)
-    install_job_log_bridge(redis_url)
-    token = current_job_id.set(job_id)
+    # Set once the log bridge is installed; reset in the finally. None until then
+    # so a setup failure before that point doesn't try to reset an unset token.
+    token = None
 
     try:
+        # Mark the job running FIRST, using only payload fields that can't fail,
+        # so any error while building the per-job dependencies below is recorded
+        # as a failure on a RUNNING row instead of leaving the job stuck QUEUED
+        # (the failure handler is guarded to RUNNING). A queued job canceled or
+        # deleted in the meantime is not RUNNING-eligible, so this returns.
         started = writer.update_job_if_status(
             job_id,
             allowed_statuses=(JobStatus.QUEUED.value, JobStatus.RUNNING.value),
             status=JobStatus.RUNNING.value,
             started_at=now_iso(),
         )
+
         if not started:
             logger.info("Job %s was not startable; skipping execution", job_id)
             return
+
+        req = JobCreateRequest.model_validate(payload["req"])
+        settings = get_settings()
+        redis_url = settings.redis_url
+        # The payload carries a logical storage key, not a local path: the API
+        # and worker may not share a filesystem (a cloud bucket + remote
+        # worker). Bring the bytes local here, right before extraction, and
+        # release after. Constructing the storage client can fail (e.g. bad GCS
+        # credentials) — kept inside the try so that surfaces as a failed job.
+        storage = make_video_storage(
+            settings.storage_backend, settings.input_dir, settings.gcs_bucket
+        )
+        reporter = make_reporter(redis_url, job_id)
+        canceller = make_canceller(redis_url, job_id)
+        install_job_log_bridge(redis_url)
+        token = current_job_id.set(job_id)
 
         platform_conf = build_platform(
             req.platform.value, **req.resolved_params.to_build_kwargs()
@@ -115,6 +129,9 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
             engine = builder.build_clip_scribe(
                 video_name=payload["video_name"] or "",
                 video_path=str(local_video),
+                # Persist the logical storage key (not the ephemeral scratch
+                # path) so the run can be served after the scratch is released.
+                video_key=payload["video_path"] or "",
                 video_type=payload["video_type"],
                 clib_scribe_mode=req.mode.value,
                 clib_scribe_platform_name=req.platform.value,
@@ -159,4 +176,6 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
             finished_at=now_iso(),
         )
     finally:
-        current_job_id.reset(token)
+        # token is None only if setup failed before the contextvar was set.
+        if token is not None:
+            current_job_id.reset(token)

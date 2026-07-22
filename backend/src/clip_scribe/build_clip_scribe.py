@@ -14,6 +14,7 @@ from src.extractor.scene_describer import GPTSceneDescriber
 from torchvision import transforms
 from facenet_pytorch import MTCNN
 import logging
+import os
 import torch
 import whisper
 
@@ -29,10 +30,7 @@ from src.db import (
 )
 from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, ProgressReporter
-from src.utils.clip_scribe_artifacts import (
-    NullArtifactUploader,
-    SimulatedGCSArtifactUploader,
-)
+from src.utils.clip_scribe_artifacts import make_artifact_uploader
 
 from .engine import ClipScribeEngine
 from .platform_configs import BasePlatformConf
@@ -110,8 +108,8 @@ class ClipScribeBuilder:
         self.db_params = _cfg.get("database", {})
         self.db_backend = self.db_params.get("backend", "sqlite")
 
-        # Artifact handling: cap on per-frame viz PNGs and the (simulated for
-        # now) remote-upload toggle. See docs/web-app-plan.md §8.
+        # Artifact handling: cap on per-frame viz PNGs. Remote upload is chosen
+        # by the CLIPSCRIBE_STORAGE_BACKEND selector, not config. See §8.
         self.artifacts_params = _cfg.get("artifacts", {})
 
         if device is None:
@@ -407,6 +405,7 @@ class ClipScribeBuilder:
         clib_scribe_mode: str,
         clib_scribe_platform_name: str,
         clib_scribe_platform_conf: BasePlatformConf,
+        video_key: str | None = None,
         user_hints: list[str] | None = None,
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
@@ -458,17 +457,22 @@ class ClipScribeBuilder:
                 )
 
             # Same shape as the reporter default above: the builder resolves the
-            # concrete dependency (from config) so the engine takes it as given.
-            artifact_uploader = (
-                SimulatedGCSArtifactUploader()
-                if self.artifacts_params.get("remote_artifact_write", False)
-                else NullArtifactUploader()
+            # concrete dependency so the engine takes it as given. Backend comes
+            # from the single storage selector (the same env the API/worker
+            # settings read): gcs uploads the run bundle + signs the tracked
+            # video; local is a no-op (artifacts served from disk).
+            artifact_uploader = make_artifact_uploader(
+                os.environ.get("CLIPSCRIBE_STORAGE_BACKEND", "local").strip().lower(),
+                os.environ.get("CLIPSCRIBE_GCS_BUCKET"),
             )
 
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
                 video_name=video_name,
                 video_path=video_path,
+                # The durable storage key; defaults to the local path for the CLI
+                # where there is no separate key.
+                video_key=video_key or video_path,
                 video_type=video_type,
                 extractor=info_extractor,
                 parser=info_parser,

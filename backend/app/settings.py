@@ -27,6 +27,26 @@ load_dotenv(find_dotenv(filename=".env"), override=False)
 
 # backend/ — app/ is a top-level package sibling of src/.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Repo root: where .env and the dev service_account.json live.
+REPO_ROOT = PROJECT_ROOT.parent
+
+
+def _absolutize_gcs_credentials() -> None:
+    """Anchor a relative GOOGLE_APPLICATION_CREDENTIALS at the repo root.
+
+    The google SDK resolves this env var against the process CWD, but the API
+    and worker run from ``backend/`` while the file (and the repo-root ``.env``
+    that points at it) live at the repo root. A bare ``service_account.json``
+    would therefore be looked up at ``backend/service_account.json`` and miss.
+    Rewriting a relative value to an absolute path makes it CWD-independent;
+    absolute paths (e.g. a container-mounted secret) are left untouched.
+    """
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if raw and not Path(raw).is_absolute():
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str((REPO_ROOT / raw).resolve())
+
+
+_absolutize_gcs_credentials()
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -61,8 +81,8 @@ class Settings:
 
     def __init__(self) -> None:
         # Local source-video storage root. The API stores opaque keys here when
-        # CLIPSCRIBE_VIDEO_STORAGE=local; cloud backends use it only for local
-        # staging/materialization.
+        # CLIPSCRIBE_STORAGE_BACKEND=local; the gcs backend uses it only for
+        # local staging/materialization scratch.
         self.input_dir: Path = (
             PROJECT_ROOT / os.environ.get("CLIPSCRIBE_INPUT_DIR", "input")
         ).resolve()
@@ -107,17 +127,29 @@ class Settings:
             {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
         )
 
-        # Where source videos live (see src/utils/clip_scribe_video_storage.py):
-        #   "local" — files under input_dir (the default; single-tenant dev).
-        #   "gcs"   — a cloud bucket (reserved; not yet implemented).
-        # The only selector; the local backend uses input_dir above as its root.
-        self.video_storage_backend: str = (
-            os.environ.get("CLIPSCRIBE_VIDEO_STORAGE", "local").strip().lower()
+        # The single storage selector, governing BOTH source videos and run
+        # artifacts (see src/utils/clip_scribe_video_storage.py and
+        # clip_scribe_artifacts.py):
+        #   "local" — files under input_dir / artifacts_dir (default; dev).
+        #   "gcs"   — a cloud bucket; videos and artifacts share one bucket,
+        #             separated by the videos/ and artifacts/ prefixes.
+        self.storage_backend: str = (
+            os.environ.get("CLIPSCRIBE_STORAGE_BACKEND", "local").strip().lower()
         )
-        if self.video_storage_backend not in ("local", "gcs"):
+        if self.storage_backend not in ("local", "gcs"):
             raise ValueError(
-                f"CLIPSCRIBE_VIDEO_STORAGE must be 'local' or 'gcs', "
-                f"got {self.video_storage_backend!r}"
+                f"CLIPSCRIBE_STORAGE_BACKEND must be 'local' or 'gcs', "
+                f"got {self.storage_backend!r}"
+            )
+
+        # The GCS bucket for videos + artifacts. Required when the backend is
+        # gcs; unused for local. Credentials come from the environment
+        # (GOOGLE_APPLICATION_CREDENTIALS in dev; attached identity in prod).
+        self.gcs_bucket: str | None = os.environ.get("CLIPSCRIBE_GCS_BUCKET")
+        if self.storage_backend == "gcs" and not self.gcs_bucket:
+            raise ValueError(
+                "CLIPSCRIBE_GCS_BUCKET is required when "
+                "CLIPSCRIBE_STORAGE_BACKEND=gcs"
             )
 
 

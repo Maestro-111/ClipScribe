@@ -13,6 +13,7 @@ from fastapi import Depends, Request
 
 from app.errors import ProblemException
 from app.settings import Settings, get_settings
+from src.utils.clip_scribe_artifacts import ArtifactUploader, make_artifact_uploader
 from src.utils.clip_scribe_video_storage import VideoStorage, make_video_storage
 
 if TYPE_CHECKING:
@@ -37,8 +38,21 @@ def current_user_id() -> str:
 
 
 def video_storage_dep(settings: Settings = Depends(settings_dep)) -> VideoStorage:
-    """The configured video storage backend (local disk or, later, a bucket)."""
-    return make_video_storage(settings.video_storage_backend, settings.input_dir)
+    """The configured video storage backend (local disk or a GCS bucket)."""
+    return make_video_storage(
+        settings.storage_backend, settings.input_dir, settings.gcs_bucket
+    )
+
+
+def artifact_storage_dep(
+    settings: Settings = Depends(settings_dep),
+) -> ArtifactUploader:
+    """The configured artifact storage backend, used to sign served artifacts.
+
+    Same selector as video storage; only the read side (``tracked_video_url``)
+    is exercised by the API — the write side runs in the worker's engine.
+    """
+    return make_artifact_uploader(settings.storage_backend, settings.gcs_bucket)
 
 
 def get_builder(request: Request) -> "ClipScribeBuilder":

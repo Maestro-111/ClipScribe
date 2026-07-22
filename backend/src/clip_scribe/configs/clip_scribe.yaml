@@ -176,10 +176,9 @@ artifacts:
   # kept. Keeps the per-run artifact directory bounded for long videos.
   max_artifact_files: 350
 
-  # When true, the finished run's artifact directory is bundled and uploaded to
-  # remote storage (GCS) at the end of the pipeline. Currently SIMULATED (logs
-  # the upload it would perform); flip to true to exercise the call site.
-  remote_artifact_write: false
+  # NOTE: remote artifact upload is not a config toggle — it follows the single
+  # CLIPSCRIBE_STORAGE_BACKEND selector (gcs -> upload, local -> keep on disk),
+  # the same env var that selects video storage.
 
 # ============================================================================
 # Database Storage

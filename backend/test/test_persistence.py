@@ -6,7 +6,6 @@ uploader factory. The extractor's collection logic needs models to run, so it
 is exercised end-to-end via main.py rather than here.
 """
 
-import logging
 import types
 
 import pytest
@@ -23,7 +22,7 @@ from src.db.writer import ClipScribeWriterDB
 from src.utils.ids import new_ulid
 from src.utils.clip_scribe_artifacts import (
     NullArtifactUploader,
-    SimulatedGCSArtifactUploader,
+    make_artifact_uploader,
     run_artifact_dir,
 )
 
@@ -198,11 +197,15 @@ def test_run_artifact_dir_keys_by_run_id():
     assert run_artifact_dir("01ABC") == "artifacts/01ABC"
 
 
-def test_artifact_uploaders(caplog):
-    # No-op uploader logs nothing; simulated one logs the bundle it would push.
-    with caplog.at_level(logging.INFO, logger="clip_scribe"):
-        NullArtifactUploader().upload_run_artifacts("rid", "artifacts/rid")
-        assert "would bundle" not in caplog.text
-        SimulatedGCSArtifactUploader().upload_run_artifacts("rid", "artifacts/rid")
-    assert "would bundle" in caplog.text
-    assert "gs://clipscribe-artifacts/rid/artifacts.tar.gz" in caplog.text
+def test_null_artifact_uploader_is_noop():
+    # The local backend's uploader stores nothing and serves from disk (no URL).
+    up = NullArtifactUploader()
+    up.upload_run_artifacts("rid", "artifacts/rid")  # must not raise
+    assert up.tracked_video_url("rid") is None
+
+
+def test_make_artifact_uploader_selects_backend():
+    assert isinstance(make_artifact_uploader("local"), NullArtifactUploader)
+    # gcs requires a bucket; a missing one is a fail-fast config error.
+    with pytest.raises(ValueError):
+        make_artifact_uploader("gcs")

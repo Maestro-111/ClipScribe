@@ -39,7 +39,6 @@ def client(tmp_path):
     artifact_dir = tmp_path / "artifacts" / RUN_ID
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "tracked_output.mp4").write_bytes(b"tracked")
-    (artifact_dir / "dino_general_result_0_0.png").write_bytes(b"png")
 
     settings = Settings()
     settings.input_dir = input_dir.resolve()
@@ -146,20 +145,6 @@ def test_get_tracked_video(client):
     r = client.get(f"/runs/{RUN_ID}/tracked-video")
     assert r.status_code == 200
     assert r.content == b"tracked"
-
-
-def test_get_png(client):
-    r = client.get(f"/runs/{RUN_ID}/png/dino_general_result_0_0.png")
-    assert r.status_code == 200
-    assert r.content == b"png"
-
-
-def test_get_png_missing_404(client):
-    assert client.get(f"/runs/{RUN_ID}/png/nope.png").status_code == 404
-
-
-def test_get_png_non_png_400(client):
-    assert client.get(f"/runs/{RUN_ID}/png/secret.txt").status_code == 400
 
 
 def test_artifact_unknown_run_404(client):

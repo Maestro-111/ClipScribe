@@ -42,10 +42,11 @@ dependencies = [
     "celery>=5.3.0",
     "redis>=5.0.0",
     "openpyxl>=3.1.0",
+    "psycopg2-binary>=2.9.0",
+    "google-cloud-storage>=2.18.0",
 ]
 
 [project.optional-dependencies]
-postgres = ["psycopg2-binary>=2.9.0"]
 dev = [
     "mypy>=1.11.0",
     "pandas-stubs>=2.2.0",
@@ -114,6 +115,7 @@ worker = [
     "celery>=5.3.0",
     "redis>=5.0.0",
     "psycopg2-binary>=2.9.0",
+    "google-cloud-storage>=2.18.0",
 ]
 
 api = [

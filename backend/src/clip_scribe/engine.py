@@ -30,6 +30,7 @@ class ClipScribeEngine:
         mode: str,
         video_name: str,
         video_path: str,
+        video_key: str,
         video_type: str | None,
         extractor: VideoInformationExtractor | None,
         parser: VideoInformationParser | None,
@@ -42,7 +43,13 @@ class ClipScribeEngine:
         self.mode = mode
 
         self.video_name = video_name
+        # Local filesystem path the extractor opens (a materialized scratch copy
+        # for cloud backends). Ephemeral: released after the run.
         self.video_path = video_path
+        # Durable storage key persisted to the run row so serving can re-resolve
+        # the source later (a local filename, or a GCS object key). For the CLI
+        # this is just the local path again.
+        self.video_key = video_key
         self.video_type = video_type
 
         self.extractor = extractor
@@ -140,8 +147,9 @@ class ClipScribeEngine:
 
         video_metadata = self._run_extractor()
 
-        # Artifacts (mp4, viz PNGs, summary json) are fully written by now;
-        # push the run's bundle (no-op unless remote_artifact_write=true).
+        # Artifacts (mp4, viz PNGs, summary json) are fully written by now; push
+        # the run's bundle (no-op for the local backend; uploads to GCS when
+        # CLIPSCRIBE_STORAGE_BACKEND=gcs).
         self.artifact_uploader.upload_run_artifacts(
             self.run_id, run_artifact_dir(self.run_id)
         )
@@ -230,7 +238,9 @@ class ClipScribeEngine:
         self.writer_db.save_run(
             run_id=self.run_id,
             video_name=self.video_name,
-            video_path=self.video_path,
+            # Persist the durable key, not the ephemeral materialized path — the
+            # scratch copy is deleted after the run, so serving needs the key.
+            video_path=self.video_key,
             video_type=self.video_type,
             video_metadata=video_metadata,
             field_descriptions=field_descriptions,

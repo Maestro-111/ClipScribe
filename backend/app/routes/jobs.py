@@ -53,7 +53,9 @@ def get_job_service(request: Request) -> JobService:
     """
     state = request.app.state
     storage = make_video_storage(
-        state.settings.video_storage_backend, state.settings.input_dir
+        state.settings.storage_backend,
+        state.settings.input_dir,
+        state.settings.gcs_bucket,
     )
     return JobService(
         get_reader(request),
