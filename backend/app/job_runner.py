@@ -518,7 +518,7 @@ class JobService:
         )
 
     def _purge_run(self, run_id: str) -> None:
-        """Delete a superseded run's DB rows and artifact directory (best-effort)."""
+        """Delete a superseded run's DB rows and artifacts (best-effort)."""
         import shutil
 
         from app.settings import PROJECT_ROOT
@@ -536,9 +536,14 @@ class JobService:
             logger.warning(
                 "Failed to remove artifact dir for run %s", run_id, exc_info=True
             )
-        make_artifact_uploader(
-            self.settings.storage_backend, self.settings.gcs_bucket
-        ).delete_run_artifacts(run_id)
+        try:
+            make_artifact_uploader(
+                self.settings.storage_backend, self.settings.gcs_bucket
+            ).delete_run_artifacts(run_id)
+        except Exception:  # noqa: BLE001 - purge must not block delete/retry
+            logger.warning(
+                "Failed to remove remote artifacts for run %s", run_id, exc_info=True
+            )
 
     def _validate_input(self, key: str | None) -> str:
         """Validate a job's video storage key and return it unchanged.

@@ -461,6 +461,28 @@ def test_retry_child_runs_in_place(ctx):
     assert len(state.reader.list_parent_jobs()) == 1
 
 
+def test_retry_child_ignores_remote_artifact_factory_errors(ctx, monkeypatch):
+    client, state = ctx
+    state.install_service(fake_engine=FakeEngine(fail=True), run=True)
+    state.settings.storage_backend = "gcs"
+    state.settings.gcs_bucket = "clipscribe"
+    parent_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+    child = state.reader.get_child_jobs(parent_id)[0]
+    old_run = child["run_id"]
+
+    import src.utils.clip_scribe_artifacts as artifacts_mod
+
+    def fail_factory(_backend, _bucket):
+        raise RuntimeError("gcs unavailable")
+
+    monkeypatch.setattr(artifacts_mod, "make_artifact_uploader", fail_factory)
+
+    r = client.post(f"/jobs/{child['job_id']}/retry")
+
+    assert r.status_code == 202
+    assert r.json()["run_id"] != old_run
+
+
 def test_delete_job_purges_child_runs(ctx):
     # Deleting a job must take its runs' data with it, not orphan them.
     client, state = ctx
@@ -508,6 +530,27 @@ def test_delete_job_purges_remote_artifacts(ctx, monkeypatch):
 
     assert resp.status_code == 204
     assert deleted == [rid]
+
+
+def test_delete_job_ignores_remote_artifact_factory_errors(ctx, monkeypatch):
+    client, state = ctx
+    state.install_service(run=False)
+    state.settings.storage_backend = "gcs"
+    state.settings.gcs_bucket = "clipscribe"
+
+    import src.utils.clip_scribe_artifacts as artifacts_mod
+
+    def fail_factory(_backend, _bucket):
+        raise RuntimeError("gcs unavailable")
+
+    monkeypatch.setattr(artifacts_mod, "make_artifact_uploader", fail_factory)
+    parent_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+
+    resp = client.delete(f"/jobs/{parent_id}")
+
+    assert resp.status_code == 204
+    assert state.reader.get_job(parent_id) is None
+    assert state.reader.get_child_jobs(parent_id) == []
 
 
 def test_run_siblings_resolve_before_runs_exist(ctx):
