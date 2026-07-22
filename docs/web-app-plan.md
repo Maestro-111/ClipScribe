@@ -35,11 +35,11 @@ CSV/XLSX exports, artifact serving, health, and metadata endpoints.
 are deduplicated by SHA-256 and recorded in a new `videos` table that is the
 source of truth for the input picker, decoupling the opaque storage key from the
 filename the user picked. A `VideoStorage` seam
-(`backend/src/utils/clip_scribe_video_storage.py`, `CLIPSCRIBE_VIDEO_STORAGE`)
-fronts local disk today with a GCS backend reserved,
-mirroring the artifact-upload seam. The new-job page queues local files without
-uploading until submit, supports folder selection, and includes the `JobSidebar`
-summary/cost panel plus a decorative `PipelineAnimation`.
+(`backend/src/utils/clip_scribe_video_storage.py`, `CLIPSCRIBE_STORAGE_BACKEND`)
+fronts local disk or GCS; the same selector also controls artifact storage.
+The new-job page queues local files without uploading until submit, supports
+folder selection, shows real upload progress during submit, and includes the
+`JobSidebar` summary/cost panel plus a decorative `PipelineAnimation`.
 
 ---
 
@@ -109,7 +109,7 @@ clipscribe/
       job_execution.py            # run_job_core — lifecycle shared by inline + celery
       main.py                     # FastAPI app + lifespan; builder inline / DB-only for celery
       job_runner.py               # JobService: validate, persist, dispatch (inline|celery)
-      settings.py                 # CLIPSCRIBE_* API env settings (job, Redis, video storage)
+      settings.py                 # CLIPSCRIBE_* API env settings (job, Redis, DB, storage)
       errors.py                   # RFC7807 problem+json handlers
       routes/                     # jobs, runs, artifacts, chat, health, meta, uploads
       models.py                   # Pydantic request/response schemas
@@ -536,7 +536,7 @@ ABCD exports, and advisory chat.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
 - `POST   /jobs/{id}/cancel`           — cancel a queued/running child job, or every queued/running child under a parent batch. Running pipelines stop cooperatively at safe checkpoints.
 - `POST   /jobs/{id}/retry`            — retry a terminal parent as a fresh batch, or retry a terminal child in place with a fresh `run_id` after purging the superseded run data/artifacts.
-- `DELETE /jobs/{id}`                  — cancel if active, then delete the job row(s), run-keyed DB rows, and local artifact directory.
+- `DELETE /jobs/{id}`                  — cancel if active, then delete the job row(s), run-keyed DB rows, local artifact directory, and remote run artifacts when configured.
 
 ### Runs (read-only views of extractor + parser output)
 - `GET /runs/{id}`                     — `runs` row + summary.
@@ -550,10 +550,9 @@ ABCD exports, and advisory chat.
 - `GET /runs/{id}/parser`              — `parser_results`.
 - `GET /runs/{id}/parser/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
 
-### Artifacts (filesystem-backed)
-- `GET /runs/{id}/video`               — original input, `Range`-aware.
-- `GET /runs/{id}/tracked-video`       — `tracked_output.mp4`, `Range`-aware.
-- `GET /runs/{id}/png/{filename}`      — DINO/OCR/face viz PNGs (fallback only).
+### Artifacts (local or signed-URL backed)
+- `GET /runs/{id}/video`               — original input; local streams a `Range`-aware file, GCS redirects to a short-lived signed URL.
+- `GET /runs/{id}/tracked-video`       — `tracked_output.mp4`; local streams a `Range`-aware file, GCS redirects to the loose tracked-video object.
 
 ### Health
 - `GET /healthz`                       — liveness.
@@ -741,7 +740,9 @@ Backend vars (current):
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
 | `CLIPSCRIBE_DEVICE` | builder device (web app) | `cpu` default; set `mps` for native GPU | `cpu` (Mac) / `cuda` (GPU box) |
-| `CLIPSCRIBE_VIDEO_STORAGE` | source-video backend (`local` \| `gcs`) | `local` | `local` (`gcs` reserved) |
+| `CLIPSCRIBE_STORAGE_BACKEND` | source-video + run-artifact backend (`local` \| `gcs`) | `local` | `local` or `gcs` via `docker-compose.gcs.yml` |
+| `CLIPSCRIBE_GCS_BUCKET` | required when `CLIPSCRIBE_STORAGE_BACKEND=gcs` | bucket name | bucket name |
+| `GOOGLE_APPLICATION_CREDENTIALS` | dev service-account key for GCS signed URLs | `service_account.json` | `/app/service_account.json` from the GCS overlay |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | LLM + tracing | secret | secret |
 
 **Device precedence.** `settings.clip_scribe_device` reads `CLIPSCRIBE_DEVICE`
@@ -930,21 +931,22 @@ These are decisions to make before the corresponding implementation step.
    `commit`) and a materialize half (worker: `job_execution.py` calls
    `storage.materialize(key)` to get a local path for the extractor, then
    `storage.release(...)` after the run — a no-op for the local backend, a
-   scratch-file delete for cloud). `LocalVideoStorage` (files under `input_dir`)
-   is the only implementation; `GCSVideoStorage` is a fail-fast stub documenting
-   the drop-in contract. Still open for cloud/multi-user: implement the GCS
-   backend and pre-signed direct-to-bucket upload so large files skip the API.
+   scratch-file delete for cloud). `LocalVideoStorage` stores files under
+   `input_dir`; `GCSVideoStorage` stores objects under `videos/<user_id>/...`,
+   checks blob existence, signs GET URLs for media serving, and downloads
+   scratch copies for workers. Still open for cloud scale: pre-signed or
+   resumable direct-to-bucket browser upload so large files skip the API.
 
-2. **Artifact storage.** **Mostly resolved.**
+2. **Artifact storage.** **Resolved.**
    The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the
-   video name — no more collisions). A `remote_artifact_write` config flag
-   (default `false`) selects an `ArtifactUploader` (`backend/src/utils/clip_scribe_artifacts.py`):
-   `NullArtifactUploader` (local only) or `SimulatedGCSArtifactUploader`, which
-   currently just **logs** the single bundle it would push
-   (`gs://…/<run_id>/artifacts.tar.gz`) at the end of the run. Swapping in a
-   real GCS uploader later is a drop-in replacement — flip the flag, implement
-   the body, no call-site changes. Still open: whether the real backend is GCS
-   vs a shared filesystem volume for the local/compose case.
+   video name — no more collisions). `ArtifactUploader`
+   (`backend/src/utils/clip_scribe_artifacts.py`) follows the single
+   `CLIPSCRIBE_STORAGE_BACKEND` selector: local is a no-op with artifacts served
+   from disk; GCS uploads `tracked_output.mp4` as a loose object, bundles the
+   remaining debug artifacts into `artifacts.tar.gz`, signs the tracked video
+   for serving, and deletes the run prefix best-effort during job delete/retry.
+   The per-frame PNG HTTP route is gone because the inspector draws overlays
+   from DB detections and treats PNGs as archival/debug artifacts.
 
 3. **Authentication / multi-user.**
    None today. Likely deferred to post-MVP. If we add it, keep `created_by` on
@@ -1007,9 +1009,9 @@ These are decisions to make before the corresponding implementation step.
     A `max_artifact_files` config cap (default 350) now bounds the per-frame
     visualization PNGs written per run (the unbounded growth source); the
     tracked mp4 and `extraction_summary.json` are always kept. `DELETE
-    /jobs/{id}` now removes the associated run-keyed DB rows and local artifact
-    directories. Still open: an automatic retention policy (delete after N days
-    / keep last K).
+    /jobs/{id}` now removes the associated run-keyed DB rows, local artifact
+    directories, and remote `artifacts/<run_id>/` objects best-effort. Still
+    open: an automatic retention policy (delete after N days / keep last K).
 
 15. **Per-job artifact directory keying.** **Resolved.**
     Artifacts are written to `artifacts/<run_id>/` (ULID). The path convention
@@ -1064,23 +1066,24 @@ Strictly ordered; each step is shippable on its own.
    (feature fields read by `getattr`, so non-YouTube platforms still persist the
    common columns). Also landed here: run_id-up-front ULID (§4), artifact dir
    keyed by run_id (§9.15), the `max_artifact_files` PNG cap (§9.14), and the
-   `remote_artifact_write` `ArtifactUploader` seam (§9.2). Unit-tested with an
-   in-memory DB; full end-to-end proof is the first real `main.py` run.
+   `CLIPSCRIBE_STORAGE_BACKEND` `ArtifactUploader` seam (§9.2). Unit-tested with
+   an in-memory DB; full end-to-end proof is the first real `main.py` run.
 
 5. **FastAPI app, inline path.** **DONE.** `POST /jobs` writes a queued
    parent job plus one child run per video and submits each child to a single-slot
    in-process executor in `inline` mode, so the HTTP contract is asynchronous
    from the client's perspective.
    Implemented routes include deduplicated uploads, registry-backed input
-   listing, job list/get, read-only `/runs/*`, filesystem artifacts, health,
-   and metadata; errors use RFC7807.
+   listing, job list/get, read-only `/runs/*`, local/GCS artifact serving,
+   health, and metadata; errors use RFC7807.
    Request shape intentionally omits device, using process configuration
    (`CLIPSCRIBE_DEVICE` in web mode) instead.
 
 6. **Frontend bootstrap.** **DONE.** Vite + React + TS + Tailwind + TanStack Router /
    Query. Pages: Jobs list, New job, live Job page, and Run inspector against
    existing DB data. The new-job page now queues local files until submit,
-   supports folder selection, and renders the `JobSidebar` plus
+   supports folder selection, shows XHR upload progress while submitting, and
+   renders the `JobSidebar` plus
    `PipelineAnimation` companion panels.
 
 7. **Inspector overlay.** **DONE (first pass).** Uses `frame_detections` to draw
@@ -1196,9 +1199,10 @@ Strictly ordered; each step is shippable on its own.
   burn through credits. Cost cap or per-user budget should exist before
   this is anything but internal.
 
-- **Disk usage.** `backend/artifacts/` is now run-id keyed and per-frame PNGs
-  are capped, but run-level retention still needs to
-  exist before turning the app on for more than one person.
+- **Disk/storage usage.** `backend/artifacts/` is now run-id keyed, per-frame
+  PNGs are capped, and GCS artifacts are deleted best-effort with job cleanup,
+  but bucket/local lifecycle retention still needs to exist before turning the
+  app on for more than one person.
 
 - **Cancellation correctness.** Hard-killing a worker mid-job still risks OpenCV
   file handles, partial mp4s, and GPU state, so the code uses cooperative

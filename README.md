@@ -131,7 +131,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 `backend/main.py` is a temporary, hardcoded entry point (not a stable CLI) for local experiments — video name, mode, run id, platform params, and device are edited in the file. Modes:
 
-- `extract` — run extraction and write local artifacts only (no DB run row); local dev only.
+- `extract` — run extraction and write per-run artifacts (no DB run row); local dev only.
 - `parse` — evaluate an existing persisted `run_id`.
 - `full` — run extraction, then parse the saved run.
 
@@ -301,6 +301,7 @@ clipscribe/
 │   └── package.json
 ├── docs/                       web-app-plan.md, deployment.md, deep-dive docs
 ├── docker-compose.yml          Full local stack (postgres, redis, migrate, prewarm, api, worker, frontend)
+├── docker-compose.gcs.yml      GCS storage overlay with service-account bind mount
 └── Makefile                    setup, migrate, revision helpers
 ```
 

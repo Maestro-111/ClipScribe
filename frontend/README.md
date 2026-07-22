@@ -61,14 +61,16 @@ replays and tails Redis Stream progress events through the same Vite proxy.
   models into a TS `paths` type. `openapi-fetch` is generic over it, so typed
   API calls reject wrong endpoints or malformed request bodies at compile time.
   Re-run `gen:api` after any backend API change (this is the anti-drift step,
-  plan §9.12). Multipart uploads and a few lifecycle calls use plain `fetch`
+  plan §9.12). Multipart uploads use `XMLHttpRequest` so the new-job form can
+  show byte-level upload progress; a few lifecycle calls use plain `fetch`
   where it is simpler than wrapping them in `openapi-fetch`.
 - **Data fetching:** ordinary JSON API reads/writes use the hooks in
   `src/api/hooks.ts` (`useJobs`, `useJob`, `useCreateJob`, …). Reads are
   `useQuery` (cached); writes are `useMutation` (invalidate the cache on
   success). Streaming chat uses `fetch` directly so it can read the POST response
-  body as SSE frames, uploads use multipart `fetch`, lifecycle shortcuts use
-  plain `fetch`, and export downloads are plain anchors.
+  body as SSE frames, uploads use multipart `XMLHttpRequest` for progress
+  events, lifecycle shortcuts use plain `fetch`, and export downloads are plain
+  anchors.
 
 ## Layout
 
@@ -99,7 +101,7 @@ src/
 ## Current UI scope
 
 - Jobs list: status filter, polling, server-side offset pagination, parent batch rows with child summaries, running-run progress bars, links to completed jobs' batch/run view, cancel/retry actions, and job deletion.
-- New job: create user-facing `full` jobs from picked registry videos and/or locally queued files. Files are not uploaded until "Create job"; folder selection queues every allowed video in the folder, then submit uploads them, merges returned storage keys, and creates the batch. `extract` and parser-only `parse` stay developer paths outside the form. Brand and call-to-action fields are optional, with warnings when omitted because the matching criteria have no terms to check.
+- New job: create user-facing `full` jobs from picked registry videos and/or locally queued files. Files are not uploaded until "Create job"; folder selection queues every allowed video in the folder, then submit uploads them with a byte-progress stepper, merges returned storage keys, and creates the batch. `extract` and parser-only `parse` stay developer paths outside the form. Brand and call-to-action fields are optional, with warnings when omitted because the matching criteria have no terms to check.
 - Job pages: parent jobs show the batch's child runs with client-side pagination, job-level advisory chat, and an "Export all" CSV/XLSX menu once at least one child completes; child/leaf jobs show the SSE-driven progress bar, phase tree, current-shot panel, and log tail from `GET /jobs/{job_id}/events`.
 - Run inspector: raw video playback with SVG boxes for tracked objects and OCR text, batch sibling navigation, back-to-batch navigation, shot/audio timeline, parser criteria table with CSV/XLSX export, tracked video download, and run-scoped advisory chat.
 - Not yet built: the fuller inspector layer controls from the plan and failed-criterion "ask about this" shortcuts.

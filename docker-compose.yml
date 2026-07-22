@@ -80,9 +80,10 @@ services:
       POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
       REDIS_URL: redis://redis:6379/0
       CLIPSCRIBE_CORS_ORIGINS: http://localhost:5173
-    # Share the artifact + input directories with the worker so the API can serve
-    # run videos/artifacts the worker wrote (local-disk coupling; deployment.md
-    # replaces this with GCS).
+    # Share artifact + input directories with the worker for local storage. With
+    # CLIPSCRIBE_STORAGE_BACKEND=gcs, media serving redirects to signed bucket
+    # URLs, but the worker still uses these mounts for staging/scratch and local
+    # extraction output before upload.
     volumes:
       - ./backend/artifacts:/app/backend/artifacts
       - ./backend/input:/app/backend/input
