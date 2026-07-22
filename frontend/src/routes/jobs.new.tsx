@@ -61,6 +61,8 @@ function NewJob() {
   const [videoTab, setVideoTab] = useState<"pick" | "upload">("pick");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadVideos();
+  // Aggregate upload completion in [0, 1], driven by XHR progress events.
+  const [uploadPct, setUploadPct] = useState(0);
 
   const addVideos = (videos: SelectedVideo[]) =>
     setSelected((prev) => {
@@ -114,7 +116,11 @@ function NewJob() {
     if (pending.length) {
       let uploaded;
       try {
-        uploaded = await upload.mutateAsync(pending.map((v) => v.file!));
+        setUploadPct(0);
+        uploaded = await upload.mutateAsync({
+          files: pending.map((v) => v.file!),
+          onProgress: setUploadPct,
+        });
       } catch {
         return;
       }
@@ -451,6 +457,16 @@ function NewJob() {
           </p>
         )}
 
+        {(upload.isPending || createJob.isPending || createJob.isSuccess) && (
+          <SubmitProgress
+            uploadCount={selected.filter((v) => v.file).length}
+            uploadPct={uploadPct}
+            uploading={upload.isPending}
+            creating={createJob.isPending}
+            created={createJob.isSuccess}
+          />
+        )}
+
         <button
           type="submit"
           disabled={!canSubmit || upload.isPending || createJob.isPending}
@@ -484,6 +500,91 @@ function NewJob() {
         <RunOutputs />
       </aside>
     </div>
+  );
+}
+
+// Submit-time progress: a small stepper that makes the upload → create → open
+// sequence legible. The upload step shows a real byte-progress bar (the actual
+// wait); create + open are near-instant but shown so the transition isn't a
+// mysterious freeze. The upload step is omitted entirely when every video was
+// picked from existing storage (nothing to upload).
+type StepState = "pending" | "active" | "done";
+
+function SubmitProgress({
+  uploadCount,
+  uploadPct,
+  uploading,
+  creating,
+  created,
+}: {
+  uploadCount: number;
+  uploadPct: number;
+  uploading: boolean;
+  creating: boolean;
+  created: boolean;
+}) {
+  const steps: { key: string; label: string; state: StepState; pct?: number }[] =
+    [];
+
+  if (uploadCount > 0) {
+    steps.push({
+      key: "upload",
+      label: `Uploading ${uploadCount} video${uploadCount > 1 ? "s" : ""}`,
+      // Once we've moved past uploading, this step is done (create/open follow).
+      state: uploading ? "active" : "done",
+      pct: uploadPct,
+    });
+  }
+  steps.push({
+    key: "create",
+    label: "Creating job",
+    state: creating ? "active" : created ? "done" : "pending",
+  });
+  steps.push({
+    key: "open",
+    label: "Opening job",
+    state: created ? "active" : "pending",
+  });
+
+  return (
+    <div className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      {steps.map((s) => (
+        <div key={s.key} className="space-y-1">
+          <div className="flex items-center gap-2 text-sm">
+            <StepIcon state={s.state} />
+            <span
+              className={
+                s.state === "pending" ? "text-neutral-400" : "text-neutral-700"
+              }
+            >
+              {s.label}
+              {s.key === "upload" && s.state === "active" && s.pct != null
+                ? ` — ${Math.round(s.pct * 100)}%`
+                : ""}
+            </span>
+          </div>
+          {s.key === "upload" && s.state === "active" && (
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+              <div
+                className="h-full rounded-full bg-blue-500 transition-[width] duration-150"
+                style={{ width: `${Math.round((s.pct ?? 0) * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StepIcon({ state }: { state: StepState }) {
+  if (state === "done") return <span className="text-green-600">✓</span>;
+  if (state === "active")
+    return (
+      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+    );
+  return (
+    <span className="inline-block h-3 w-3 rounded-full border border-neutral-300" />
   );
 }
 

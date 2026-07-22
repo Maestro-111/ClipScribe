@@ -73,8 +73,10 @@ Common environment variables:
 - `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
 - `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` does not carry a backend key, only pool settings.
-- `CLIPSCRIBE_INPUT_DIR` - local source-video storage root relative to `backend/`; defaults to `input` and backs `CLIPSCRIBE_VIDEO_STORAGE=local`.
-- `CLIPSCRIBE_VIDEO_STORAGE` - source-video storage backend (`local` | `gcs`); defaults to `local`. `gcs` is reserved and fails fast until implemented.
+- `CLIPSCRIBE_INPUT_DIR` - local source-video storage root relative to `backend/`; defaults to `input`. Backs the `local` backend, and is the staging/scratch dir the `gcs` backend downloads into.
+- `CLIPSCRIBE_STORAGE_BACKEND` - the single selector for BOTH source-video and run-artifact storage (`local` | `gcs`); defaults to `local`. `gcs` uploads videos and artifacts to one bucket and serves them to the browser via signed-URL redirects.
+- `CLIPSCRIBE_GCS_BUCKET` - required when `CLIPSCRIBE_STORAGE_BACKEND=gcs`; one bucket holds videos under the `videos/` prefix and artifacts under `artifacts/`.
+- `GOOGLE_APPLICATION_CREDENTIALS` - service-account JSON for the `gcs` backend in dev. A repo-root-relative path (e.g. `service_account.json`) is resolved against the repo root, so it works even though the API/worker run from `backend/`. In prod, omit it and rely on the workload identity attached to the API/worker — which needs `roles/iam.serviceAccountTokenCreator` to sign video/artifact URLs (Bucket Admin alone lacks `iam.serviceAccounts.signBlob`).
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
 - `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
@@ -137,6 +139,8 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 cd backend && uv run python main.py
 ```
 
+> **Storage backend must be `local`.** `main.py` sets `video_path = "input/<name>"` — a direct path to a file already on the host, not an opaque storage key. It bypasses the upload → materialize seam the web app uses (there is no upload step and no bucket download), so it only works with `CLIPSCRIBE_STORAGE_BACKEND=local` (the default). Under `gcs` the path would be treated as a bucket object key and the run would fail to find the video. Unset `CLIPSCRIBE_STORAGE_BACKEND` (or set it to `local`) before running — even if the web app is otherwise configured for GCS.
+
 Prefer changing existing builder/engine code over adding one-off run scripts.
 
 ## Running with Docker
@@ -196,10 +200,32 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | `CLIPSCRIBE_DB_BACKEND` | unset (`sqlite`) or `postgresql` | `postgresql` | `postgresql` |
 | `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
-| `CLIPSCRIBE_VIDEO_STORAGE` | `local` | `local` | `gcs` once implemented |
+| `CLIPSCRIBE_STORAGE_BACKEND` | `local` | `local` (or `gcs` via the overlay) | `gcs` |
+| `CLIPSCRIBE_GCS_BUCKET` | unset for `local` | set when using `gcs` | bucket name |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `service_account.json` for `gcs` | mounted by `docker-compose.gcs.yml` | unset (workload identity) |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |
 
 The container-column values live in each service's `environment:` block in `docker-compose.yml` and win over `env_file`.
+
+### GCS storage (Compose overlay)
+
+Both modes above default to `local` storage (videos in `backend/input`, artifacts in `backend/artifacts`, served from disk). To run the **full Compose stack against GCS** — videos and artifacts in a bucket, served to the browser via signed-URL redirects — layer the `docker-compose.gcs.yml` overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
+```
+
+Set these in the repo-root `.env` first:
+
+```bash
+CLIPSCRIBE_STORAGE_BACKEND=gcs
+CLIPSCRIBE_GCS_BUCKET=your-bucket
+GOOGLE_APPLICATION_CREDENTIALS=service_account.json   # repo-root file, gitignored
+```
+
+Passing multiple `-f` files makes Compose deep-merge them: the overlay only **adds** a read-only bind mount of the repo-root `service_account.json` into the `api` and `worker` containers (at `/app/service_account.json`) and pins `GOOGLE_APPLICATION_CREDENTIALS` to that absolute path — every other service field from the base file is left intact. It is kept out of the base `docker-compose.yml` on purpose: the default `local` stack must not require a credentials file, and an unconditional bind mount to a missing host file would be silently created by Docker as an empty directory.
+
+In **prod** (GKE/Cloud Run) you drop the overlay entirely — the api/worker run under an attached workload identity with no key file, which needs `roles/iam.serviceAccountTokenCreator` to sign URLs.
 
 ### How imports resolve in the containers
 
@@ -283,12 +309,12 @@ clipscribe/
 Generated artifacts are intentionally kept out of the core source tree:
 
 - `backend/artifacts/<run_id>/` - tracked videos, extraction summaries, and capped per-frame visualization PNGs.
-- `backend/input/` - local source-video storage for `CLIPSCRIBE_VIDEO_STORAGE=local`; uploaded objects are named by opaque storage keys and tracked in the `videos` registry.
+- `backend/input/` - local source-video storage for `CLIPSCRIBE_STORAGE_BACKEND=local` (and the download scratch dir under `gcs`); uploaded objects are named by opaque storage keys and tracked in the `videos` registry.
 - `backend/parser_artifacts/` - generated parser reports and scores.
 - `backend/data/` - local database files.
 - `backend/logs/` - runtime logs.
 
-Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values. The `artifacts.max_artifact_files` setting caps per-frame PNGs only; `tracked_output.mp4` and `extraction_summary.json` are always kept. `artifacts.remote_artifact_write` defaults to `false` and currently only logs a simulated GCS bundle upload.
+Do not hardcode absolute paths to these directories. Use project-relative paths or configuration values. The `artifacts.max_artifact_files` setting caps per-frame PNGs only; `tracked_output.mp4` and `extraction_summary.json` are always kept. Remote upload is not a config flag — it follows `CLIPSCRIBE_STORAGE_BACKEND`: under `gcs`, a finished run's `tracked_output.mp4` is uploaded loose (served via signed URL) and the remaining debug artifacts are bundled into `artifacts.tar.gz`, both under `artifacts/<run_id>/` in the bucket; under `local` everything stays on disk.
 
 ## Important
 - `main.py` is hardcoded. it's not a real cli, this script is intend to be an entry point for local runs.

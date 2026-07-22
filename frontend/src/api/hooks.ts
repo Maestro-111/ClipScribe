@@ -321,31 +321,73 @@ export function useRetryJob() {
 
 export type UploadedVideo = { name: string; path: string; size_bytes: number };
 
+export interface UploadVars {
+  files: File[];
+  // Called with upload completion in [0, 1] as bytes stream out. Fires only when
+  // the browser reports a computable length; guaranteed to reach 1 on success.
+  onProgress?: (fraction: number) => void;
+}
+
 // Upload one or more video files through the server's video-storage backend in
-// a single request (POST /uploads accepts a list). openapi-fetch can't represent
-// File in the generated schema (it emits string[]), so we use plain fetch +
-// FormData.
+// a single request (POST /uploads accepts a list). We use XMLHttpRequest rather
+// than fetch because fetch exposes no upload-progress events — XHR's
+// `upload.onprogress` is the only way to drive a real progress bar. (openapi-fetch
+// also can't represent File in the schema, so this endpoint is hand-rolled.)
+function uploadWithProgress(vars: UploadVars): Promise<UploadedVideo[]> {
+  const { files, onProgress } = vars;
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/uploads");
+
+    // Bytes-sent progress. This is aggregate across all files in the one request.
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const body = JSON.parse(xhr.responseText) as {
+            uploaded: UploadedVideo[];
+          };
+          onProgress?.(1);
+          resolve(body.uploaded);
+        } catch {
+          reject(
+            new ApiError(xhr.status, "Upload failed", "Malformed server response"),
+          );
+        }
+        return;
+      }
+      let p: { title?: string; detail?: string } = {};
+      try {
+        p = JSON.parse(xhr.responseText);
+      } catch {
+        /* non-JSON error body; fall through to defaults */
+      }
+      reject(
+        new ApiError(
+          xhr.status,
+          p.title ?? "Upload failed",
+          p.detail ?? "Server returned an error",
+        ),
+      );
+    };
+
+    xhr.onerror = () =>
+      reject(new ApiError(0, "Upload failed", "Network error during upload"));
+
+    xhr.send(form);
+  });
+}
+
 export function useUploadVideos() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (files: File[]) => {
-      const form = new FormData();
-      for (const file of files) form.append("files", file);
-      const resp = await fetch("/api/uploads", { method: "POST", body: form });
-      if (!resp.ok) {
-        const p = (await resp.json().catch(() => ({}))) as {
-          title?: string;
-          detail?: string;
-        };
-        throw new ApiError(
-          resp.status,
-          p.title ?? "Upload failed",
-          p.detail ?? "Server returned an error",
-        );
-      }
-      const body = (await resp.json()) as { uploaded: UploadedVideo[] };
-      return body.uploaded;
-    },
+    mutationFn: uploadWithProgress,
     // Refresh the input picker after a successful upload.
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.inputs() });
