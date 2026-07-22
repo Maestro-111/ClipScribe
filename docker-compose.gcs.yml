@@ -1,0 +1,34 @@
+# GCS storage overlay for the local stack.
+#
+# Layer this on top of docker-compose.yml when CLIPSCRIBE_STORAGE_BACKEND=gcs,
+# to give the api + worker the service-account key they need to sign URLs and
+# read/write the bucket:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
+#
+# Kept separate from the base file so the default (local storage) stack never
+# requires a service_account.json — a missing bind source would otherwise be
+# silently created as an empty directory on the host.
+#
+# Requires ./service_account.json at the repo root (gitignored). It is mounted
+# read-only, and GOOGLE_APPLICATION_CREDENTIALS is pinned to the absolute
+# in-container path so it resolves regardless of the process working directory
+# (this overrides the repo-root-relative value in .env). Set
+# CLIPSCRIBE_STORAGE_BACKEND=gcs and CLIPSCRIBE_GCS_BUCKET=<bucket> in .env.
+#
+# Prod note: on GKE/Cloud Run the workload identity replaces this file entirely
+# (no key mounted); that identity needs roles/iam.serviceAccountTokenCreator to
+# sign URLs (Bucket Admin alone lacks iam.serviceAccounts.signBlob).
+
+services:
+  api:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /app/service_account.json
+    volumes:
+      - ./service_account.json:/app/service_account.json:ro
+
+  worker:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /app/service_account.json
+    volumes:
+      - ./service_account.json:/app/service_account.json:ro

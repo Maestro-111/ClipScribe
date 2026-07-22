@@ -44,7 +44,8 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
   - `CLIPSCRIBE_DB_BACKEND` selects the database backend (`sqlite` or `postgresql`); default is `sqlite`. This is the only selector — `clip_scribe.yaml` carries no backend key, just the pool knobs (`pool_size`, `max_overflow`).
   - `POSTGRESQL_URL` when `CLIPSCRIBE_DB_BACKEND=postgresql`.
   - `SQLITE_URL` is optional when the backend is `sqlite`; default is `sqlite:///data/clip_scribe.db`.
-  - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_VIDEO_STORAGE`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.
+  - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.
+  - `CLIPSCRIBE_STORAGE_BACKEND` selects storage for BOTH source videos and run artifacts (`local` or `gcs`; default `local`). When `gcs`, `CLIPSCRIBE_GCS_BUCKET` is required (videos and artifacts share one bucket under the `videos/` and `artifacts/` prefixes) and credentials come from `GOOGLE_APPLICATION_CREDENTIALS` (a `service_account.json` in dev) or the worker's attached identity in prod. Signing artifact/video URLs in prod needs `roles/iam.serviceAccountTokenCreator` on that identity (Bucket Admin alone lacks `iam.serviceAccounts.signBlob`).
 - Main configuration is `backend/src/clip_scribe/configs/clip_scribe.yaml`.
 
 ## Commands
@@ -75,7 +76,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - `backend/src/db/`: SQLAlchemy schema, engine creation, reader, and writer, including the `videos` registry used by the input picker.
 - `backend/src/utils/progress.py`: Progress event interface and null reporter used by CLI/tests and Redis fallback.
 - `backend/src/utils/clip_scribe_cancel.py`: Cooperative cancellation interface and null token used by CLI/tests and Redis fallback.
-- `backend/src/utils/clip_scribe_video_storage.py`: Source-video storage seam. Local storage is implemented; GCS is a fail-fast reserved backend.
+- `backend/src/utils/clip_scribe_video_storage.py`: Source-video storage seam. Both `LocalVideoStorage` and `GCSVideoStorage` (signed-URL serving, scratch materialization) are implemented, selected by `CLIPSCRIBE_STORAGE_BACKEND`.
 - `backend/src/dino/dino_wrapper.py`: Safe wrapper around GroundingDINO.
 - `backend/src/utils/`: Shared utility code. Treat SAM2-derived utility files cautiously and avoid refactors unless directly needed.
 - `frontend/`: Vite/React dashboard, route files, API client/hooks, and generated OpenAPI TypeScript types.

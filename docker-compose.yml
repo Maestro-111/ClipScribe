@@ -8,6 +8,10 @@
 #   the API + worker + frontend natively — `docker compose up postgres redis`.
 #   See README "Running with Docker".
 #
+#   GCS storage (CLIPSCRIBE_STORAGE_BACKEND=gcs): layer the overlay that mounts
+#   the service-account key —
+#     docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
+#
 # Every build uses the repository root as context so the Dockerfiles can COPY
 # both backend/ and frontend/. Secrets + non-network knobs come from the
 # repo-root .env via `env_file`; the network-sensitive vars (POSTGRESQL_URL,

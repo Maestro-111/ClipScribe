@@ -29,6 +29,10 @@ backend/checkpoints/
 frontend/dist/
 frontend/.tanstack/
 
-# Secrets — provided at runtime via env_file / Secret Manager, not build args
+# Secrets — provided at runtime via env_file / bind mount / Secret Manager, not
+# build args. The GCS key is bind-mounted read-only (docker-compose.gcs.yml) in
+# dev and replaced by workload identity in prod; it must never enter an image.
 .env
 **/*.env
+service_account.json
+**/service_account*.json
