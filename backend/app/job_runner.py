@@ -16,6 +16,7 @@ with a job id and clients poll ``GET /jobs/{id}``. Both paths converge on
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ from app.models import (
     JobResponse,
     JobStatus,
 )
+from src.utils.clip_scribe_video_storage import VideoStorage
 from src.utils.ids import new_ulid
 
 if TYPE_CHECKING:
@@ -39,7 +41,6 @@ if TYPE_CHECKING:
     from app.settings import Settings
     from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
     from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-    from src.utils.clip_scribe_video_storage import VideoStorage
 
 logger = logging.getLogger("clip_scribe")
 
@@ -107,7 +108,7 @@ class JobService:
         reader: "ClipScribeReaderDB",
         writer: "ClipScribeWriterDB",
         settings: "Settings",
-        storage: "VideoStorage",
+        storage: VideoStorage | Callable[[], VideoStorage],
         user_id: str,
         *,
         builder: "ClipScribeBuilder | None" = None,
@@ -117,15 +118,24 @@ class JobService:
         self.reader = reader
         self.writer = writer
         self.settings = settings
-        # Source-video storage backend + requesting user, for validating that a
-        # job's video keys still resolve to stored objects at dispatch time.
-        self.storage = storage
+        if isinstance(storage, VideoStorage):
+            self._storage = storage
+            self._storage_factory: Callable[[], VideoStorage] = lambda: storage
+        else:
+            self._storage = None
+            self._storage_factory = storage
         self.user_id = user_id
         # Inline-mode only: the model-loaded builder + single-slot executor that
         # run the engine in-process. Both are None in celery mode.
         self.builder = builder
         self.executor = executor
         self.futures = futures if futures is not None else {}
+
+    @property
+    def storage(self) -> VideoStorage:
+        if self._storage is None:
+            self._storage = self._storage_factory()
+        return self._storage
 
     def create_job(self, req: JobCreateRequest) -> JobCreatedResponse:
         """Fan a batch request out to a parent job + one child run per video.

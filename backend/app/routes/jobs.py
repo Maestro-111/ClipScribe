@@ -19,10 +19,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app import exports
 from app.deps import current_user_id, get_reader, get_writer
-from src.utils.clip_scribe_video_storage import make_video_storage
 from app.errors import ProblemException
 from app.events import started_key, stream_key, summarize_progress
-from app.settings import get_settings
 from app.job_runner import JobService, build_job_response
 from app.models import (
     JobCreatedResponse,
@@ -31,6 +29,8 @@ from app.models import (
     JobProgressResponse,
     JobResponse,
 )
+from app.settings import get_settings
+from src.utils.clip_scribe_video_storage import make_video_storage
 
 if TYPE_CHECKING:
     from src.db import ClipScribeReaderDB
@@ -52,16 +52,15 @@ def get_job_service(request: Request) -> JobService:
     executor, and futures are inline-only and stay ``None`` under celery.
     """
     state = request.app.state
-    storage = make_video_storage(
-        state.settings.storage_backend,
-        state.settings.input_dir,
-        state.settings.gcs_bucket,
-    )
     return JobService(
         get_reader(request),
         get_writer(request),
         state.settings,
-        storage,
+        lambda: make_video_storage(
+            state.settings.storage_backend,
+            state.settings.input_dir,
+            state.settings.gcs_bucket,
+        ),
         current_user_id(),
         builder=getattr(state, "builder", None),
         executor=getattr(state, "executor", None),

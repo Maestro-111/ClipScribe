@@ -553,6 +553,32 @@ def test_delete_job_ignores_remote_artifact_factory_errors(ctx, monkeypatch):
     assert state.reader.get_child_jobs(parent_id) == []
 
 
+def test_delete_job_does_not_construct_source_storage(ctx, monkeypatch):
+    client, state = ctx
+    state.install_service(run=False)
+    parent_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+
+    import app.routes.jobs as jobs_routes
+
+    def fail_storage_factory(_backend, _local_root, _bucket):
+        raise RuntimeError("gcs unavailable")
+
+    monkeypatch.setattr(jobs_routes, "make_video_storage", fail_storage_factory)
+    app.dependency_overrides.pop(get_job_service)
+    app.state.reader_db = state.reader
+    app.state.writer_db = state.writer
+    app.state.settings = state.settings
+    app.state.builder = None
+    app.state.executor = None
+    app.state.futures = {}
+
+    resp = client.delete(f"/jobs/{parent_id}")
+
+    assert resp.status_code == 204
+    assert state.reader.get_job(parent_id) is None
+    assert state.reader.get_child_jobs(parent_id) == []
+
+
 def test_run_siblings_resolve_before_runs_exist(ctx):
     # The inspector's run switcher must work while siblings are still
     # processing (their runs rows aren't written yet); siblings come from the
