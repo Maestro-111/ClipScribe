@@ -141,11 +141,19 @@ def test_gcs_materialize_downloads_scratch_and_release_deletes_it(gcs):
 
 
 def test_gcs_signed_url_is_a_get_url(gcs):
-    storage, _ = gcs
+    storage, client = gcs
+    client.bucket("clipscribe").objects["videos/user42/x.mp4"] = b"payload"
+
     url = storage.signed_url("videos/user42/x.mp4")
+
     assert url is not None
     assert "videos/user42/x.mp4" in url
     assert "m=GET" in url
+
+
+def test_gcs_signed_url_missing_object_is_none(gcs):
+    storage, _ = gcs
+    assert storage.signed_url("videos/user42/missing.mp4") is None
 
 
 def test_factory_selects_gcs(tmp_path, monkeypatch):

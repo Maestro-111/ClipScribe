@@ -7,7 +7,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from app import settings as settings_mod
-from app.deps import get_reader, get_writer, settings_dep
+from app.deps import (
+    artifact_storage_dep,
+    get_reader,
+    get_writer,
+    settings_dep,
+    video_storage_dep,
+)
 from app.main import app
 from app.settings import Settings
 from src.db.reader import ClipScribeReaderDB
@@ -150,3 +156,31 @@ def test_get_tracked_video(client):
 def test_artifact_unknown_run_404(client):
     assert client.get("/runs/missing/tracked-video").status_code == 404
     assert client.get("/runs/missing/video").status_code == 404
+
+
+def test_gcs_missing_source_video_404s_without_local_fallback(client):
+    class MissingSignedUrlStorage:
+        def signed_url(self, key: str) -> None:
+            return None
+
+    settings = client.app.dependency_overrides[settings_dep]()
+    settings.storage_backend = "gcs"
+    client.app.dependency_overrides[video_storage_dep] = (
+        lambda: MissingSignedUrlStorage()
+    )
+
+    assert client.get(f"/runs/{RUN_ID}/video").status_code == 404
+
+
+def test_gcs_missing_tracked_video_404s_without_local_fallback(client):
+    class MissingTrackedArtifactStorage:
+        def tracked_video_url(self, run_id: str) -> None:
+            return None
+
+    settings = client.app.dependency_overrides[settings_dep]()
+    settings.storage_backend = "gcs"
+    client.app.dependency_overrides[artifact_storage_dep] = (
+        lambda: MissingTrackedArtifactStorage()
+    )
+
+    assert client.get(f"/runs/{RUN_ID}/tracked-video").status_code == 404

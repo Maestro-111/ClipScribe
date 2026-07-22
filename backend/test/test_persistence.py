@@ -213,6 +213,46 @@ def test_make_artifact_uploader_selects_backend():
         make_artifact_uploader("gcs")
 
 
+def test_gcs_artifact_tracked_video_url_checks_object_exists():
+    class FakeBlob:
+        def __init__(self, bucket: "FakeBucket", name: str) -> None:
+            self._bucket = bucket
+            self.name = name
+
+        def exists(self) -> bool:
+            return self.name in self._bucket.objects
+
+        def generate_signed_url(self, *, version, expiration, method) -> str:
+            return f"https://signed.example/{self.name}?m={method}"
+
+    class FakeBucket:
+        def __init__(self) -> None:
+            self.objects: set[str] = set()
+
+        def blob(self, name: str) -> FakeBlob:
+            return FakeBlob(self, name)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.bucket_obj = FakeBucket()
+
+        def bucket(self, name: str) -> FakeBucket:
+            assert name == "clipscribe"
+            return self.bucket_obj
+
+    client = FakeClient()
+    uploader = GCSArtifactUploader("clipscribe", client=client)
+
+    assert uploader.tracked_video_url("rid") is None
+
+    client.bucket_obj.objects.add("artifacts/rid/tracked_output.mp4")
+    url = uploader.tracked_video_url("rid")
+
+    assert url is not None
+    assert "artifacts/rid/tracked_output.mp4" in url
+    assert "m=GET" in url
+
+
 def test_gcs_artifact_uploader_deletes_run_prefix():
     class FakeBlob:
         def __init__(self, name: str) -> None:

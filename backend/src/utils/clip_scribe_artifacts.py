@@ -154,10 +154,13 @@ class GCSArtifactUploader(ArtifactUploader):
             tar_path.unlink(missing_ok=True)
 
     def tracked_video_url(self, run_id: str) -> str | None:
+        blob = self._bucket.blob(self._blob_name(run_id, TRACKED_VIDEO_NAME))
+        if not blob.exists():
+            return None
         return str(
-            self._bucket.blob(
-                self._blob_name(run_id, TRACKED_VIDEO_NAME)
-            ).generate_signed_url(version="v4", expiration=SIGNED_URL_TTL, method="GET")
+            blob.generate_signed_url(
+                version="v4", expiration=SIGNED_URL_TTL, method="GET"
+            )
         )
 
     def delete_run_artifacts(self, run_id: str) -> None:

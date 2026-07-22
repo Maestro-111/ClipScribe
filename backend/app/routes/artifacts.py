@@ -79,6 +79,10 @@ def get_video(
     url = storage.signed_url(stored)
     if url is not None:
         return RedirectResponse(url)
+    if settings.storage_backend == "gcs":
+        raise ProblemException(
+            status=404, title="Not Found", detail="input video not found"
+        )
     # Local: stored paths may be "input/<name>" (CLI) or "<name>" (API); resolve
     # the basename under INPUT_DIR so both work and traversal is impossible.
     name = Path(stored).name
@@ -97,6 +101,7 @@ def get_video(
 def get_tracked_video(
     run_id: str,
     reader: "ClipScribeReaderDB" = Depends(get_reader),
+    settings: Settings = Depends(settings_dep),
     artifacts: ArtifactUploader = Depends(artifact_storage_dep),
 ) -> FileResponse | RedirectResponse:
     _require_run(reader, run_id)
@@ -104,4 +109,8 @@ def get_tracked_video(
     url = artifacts.tracked_video_url(run_id)
     if url is not None:
         return RedirectResponse(url)
+    if settings.storage_backend == "gcs":
+        raise ProblemException(
+            status=404, title="Not Found", detail="tracked video not found"
+        )
     return _file_or_404(_artifact_dir(run_id) / "tracked_output.mp4", "tracked video")

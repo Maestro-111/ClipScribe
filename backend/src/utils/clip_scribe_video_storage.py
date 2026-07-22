@@ -199,8 +199,11 @@ class GCSVideoStorage(VideoStorage):
         local.unlink(missing_ok=True)
 
     def signed_url(self, key: str) -> str | None:
+        blob = self._bucket.blob(key)
+        if not blob.exists():
+            return None
         return str(
-            self._bucket.blob(key).generate_signed_url(
+            blob.generate_signed_url(
                 version="v4", expiration=SIGNED_URL_TTL, method="GET"
             )
         )
