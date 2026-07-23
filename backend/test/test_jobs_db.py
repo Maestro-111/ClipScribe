@@ -172,6 +172,50 @@ def test_parent_children_and_siblings(db):
     assert reader.get_run_siblings("orphan") == []
 
 
+def test_effective_status_matches_aggregate_status(db):
+    """SQL effective_status must agree with Python aggregate_status.
+
+    The parent-status aggregation rule is encoded twice: the ``CASE`` in the
+    reader's ``effective_parent_jobs`` view (used to filter/paginate the list in
+    SQL) and ``aggregate_status`` in ``app.job_runner`` (used to assemble the
+    response body). If they ever drift, a job could be filtered into one bucket
+    by SQL yet rendered with a different status. This pins them together over
+    every multiset of child statuses.
+    """
+    from itertools import combinations_with_replacement
+
+    from app.job_runner import aggregate_status
+
+    writer, reader, _ = db
+    child_states = ["queued", "running", "completed", "failed", "canceled"]
+
+    # One parent per distinct multiset of child statuses. Order doesn't matter:
+    # aggregate_status reduces over a set and the SQL view over counts.
+    expected: dict[str, str] = {}  # parent_job_id -> Python-aggregated status
+    for size in (1, 2, 3):
+        for combo in combinations_with_replacement(child_states, size):
+            parent = new_ulid()
+            writer.create_job(job_id=parent, mode="full", status="queued")
+            for child_status in combo:
+                writer.create_job(
+                    job_id=new_ulid(),
+                    mode="full",
+                    parent_job_id=parent,
+                    run_id=new_ulid(),
+                    status=child_status,
+                )
+            expected[parent] = aggregate_status(list(combo))
+
+    # For every filter value, the parents the SQL view returns must be exactly
+    # those whose Python-aggregated status matches.
+    for status in child_states:
+        sql_ids = {
+            p["job_id"] for p in reader.list_parent_jobs(status=status, limit=500)
+        }
+        python_ids = {pid for pid, s in expected.items() if s == status}
+        assert sql_ids == python_ids, f"status={status!r}: {sql_ids} != {python_ids}"
+
+
 def test_list_runs_most_recent_first(db):
     writer, reader, engine = db
     with engine.begin() as conn:

@@ -9,6 +9,7 @@ import {
 } from "../api/hooks";
 import { ChatPanel } from "../components/ChatPanel";
 import { ExportMenu, Pagination, Spinner, StatusPill } from "../components/ui";
+import { formatDuration, formatMergedDuration } from "../lib/format";
 
 // Per-run table page size for batch jobs with many videos.
 const RUNS_PAGE_SIZE = 8;
@@ -522,6 +523,9 @@ function BatchJob() {
   const canceled = children.filter((c) => c.status === "canceled").length;
   const isActive = status === "queued" || status === "running";
   const pct = total ? Math.round((done / total) * 100) : 0;
+  // Batch duration = merged union of the child run intervals, shown only once
+  // the batch has stopped (see formatMergedDuration).
+  const batchDuration = isActive ? "—" : formatMergedDuration(children);
 
   // Client-side pagination over the already-loaded children. Clamp the page in
   // case the list shrinks (e.g. a run is deleted) while we're on a later page.
@@ -565,6 +569,7 @@ function BatchJob() {
             {done}/{total} complete
             {failed ? ` · ${failed} failed` : ""}
             {canceled ? ` · ${canceled} canceled` : ""}
+            {batchDuration !== "—" ? ` · ${batchDuration} total` : ""}
           </span>
           {isActive && (
             <button
@@ -585,6 +590,7 @@ function BatchJob() {
             <tr>
               <th className="px-3 py-2 font-medium">Video</th>
               <th className="px-3 py-2 font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Duration</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -662,6 +668,9 @@ function ChildRow({ child }: { child: JobChild }) {
             </div>
           </div>
         )}
+      </td>
+      <td className="px-3 py-2 text-neutral-600">
+        {formatDuration(child.started_at, child.finished_at)}
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-3">

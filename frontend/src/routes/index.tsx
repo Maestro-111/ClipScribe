@@ -7,7 +7,7 @@ import {
   useRetryJob,
   type JobResponse,
 } from "../api/hooks";
-import { formatDateTime, formatDuration } from "../lib/format";
+import { formatDateTime, formatMergedDuration } from "../lib/format";
 import { EmptyState, Pagination, Skeleton, StatusPill } from "../components/ui";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
@@ -17,6 +17,10 @@ export const Route = createFileRoute("/")({
 
 const STATUSES = ["", "queued", "running", "completed", "failed", "canceled"];
 const PAGE_SIZE = 20;
+
+// A batch's total duration is only meaningful once every run has stopped, so it
+// is shown only after the (aggregated) parent status is terminal.
+const TERMINAL_STATUSES = new Set(["completed", "failed", "canceled"]);
 
 // A job is a batch parent with one run per video. The list row shows how many
 // of those runs have finished; a completed job links to the per-run batch view
@@ -184,7 +188,9 @@ function JobsList() {
                     {formatDateTime(job.created_at)}
                   </td>
                   <td className="px-4 py-3 text-neutral-600">
-                    {formatDuration(job.started_at, job.finished_at)}
+                    {TERMINAL_STATUSES.has(job.status)
+                      ? formatMergedDuration(job.children ?? [])
+                      : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
