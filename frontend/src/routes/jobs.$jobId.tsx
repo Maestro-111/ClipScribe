@@ -8,6 +8,8 @@ import {
   type JobChild,
 } from "../api/hooks";
 import { ChatPanel } from "../components/ChatPanel";
+import { FloatingScribe } from "../components/FloatingScribe";
+import { type ScribeMood } from "../components/Scribe";
 import { ExportMenu, Pagination, Spinner, StatusPill } from "../components/ui";
 import { formatDuration, formatMergedDuration } from "../lib/format";
 
@@ -62,6 +64,17 @@ const PHASE_LABELS: Record<PhaseName, string> = {
   shot_processing: "Shots",
   finalize: "Finalize",
   parse: "Parse",
+};
+
+// What Scribe says while narrating each phase of a live run. Keyed by the
+// phase that's currently running; stable per phase so the line only re-fades
+// when the pipeline actually advances (not on every shot).
+const PHASE_NARRATION: Record<PhaseName, string> = {
+  scene_detection: "Spotting the scene cuts…",
+  audio: "Listening to the audio track…",
+  shot_processing: "Digging through the shots…",
+  finalize: "Tidying everything up…",
+  parse: "Scoring against the platform…",
 };
 
 // Weights approximate observed wall-clock share (web-app-plan §7); normalized
@@ -291,6 +304,20 @@ function LeafJob() {
   const isActive = status === "queued" || status === "running";
   const pct = Math.round(overallProgress(state) * 100);
 
+  // Scribe narrates the run: it announces the phase in progress while working,
+  // then reacts to the terminal outcome.
+  const runningPhase = state.phaseOrder.find((p) => state.phases[p] === "running");
+  const scribeMood: ScribeMood =
+    status === "failed" ? "lost" : status === "completed" ? "done" : "working";
+  const scribeLine =
+    status === "failed"
+      ? "Hit a snag on this one."
+      : status === "completed"
+        ? "All done — go take a look!"
+        : runningPhase
+          ? PHASE_NARRATION[runningPhase]
+          : "Warming up…";
+
   return (
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -299,12 +326,15 @@ function LeafJob() {
             <Link
               to="/jobs/$jobId"
               params={{ jobId: parentJobId }}
-              className="text-sm text-blue-600 hover:underline"
+              className="inline-flex items-center rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-neutral-400 hover:bg-neutral-50"
             >
               ← Batch
             </Link>
           ) : (
-            <Link to="/" className="text-sm text-blue-600 hover:underline">
+            <Link
+              to="/"
+              className="inline-flex items-center rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-neutral-400 hover:bg-neutral-50"
+            >
               ← Jobs
             </Link>
           )}
@@ -314,6 +344,15 @@ function LeafJob() {
         </div>
         <StatusPill status={status} />
       </div>
+
+      {/* Scribe hovers over the page (drag it anywhere), narrating the live
+          run and reacting to the outcome. */}
+      <FloatingScribe
+        mood={scribeMood}
+        speech={scribeLine}
+        scale={0.8}
+        className="hidden lg:block"
+      />
 
       {/* progress bar + actions */}
       <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
@@ -538,7 +577,10 @@ function BatchJob() {
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/" className="text-sm text-blue-600 hover:underline">
+          <Link
+            to="/"
+            className="inline-flex items-center rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-neutral-400 hover:bg-neutral-50"
+          >
             ← Jobs
           </Link>
           <h1 className="mt-1 text-2xl font-semibold">
@@ -678,7 +720,7 @@ function ChildRow({ child }: { child: JobChild }) {
             <Link
               to="/runs/$runId"
               params={{ runId: child.run_id }}
-              className="text-blue-600 hover:underline"
+              className="rounded border border-blue-300 bg-white px-2 py-0.5 text-xs font-medium text-blue-600 hover:border-blue-400 hover:bg-blue-50"
             >
               inspect →
             </Link>

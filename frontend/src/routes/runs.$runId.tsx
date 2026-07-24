@@ -599,7 +599,7 @@ function RunInspector({ runId }: { runId: string }) {
           <Link
             to="/jobs/$jobId"
             params={{ jobId: parentJobId }}
-            className="text-sm text-blue-600 hover:underline"
+            className="inline-flex items-center rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-neutral-400 hover:bg-neutral-50"
           >
             ← Batch
           </Link>
@@ -745,9 +745,9 @@ function RunInspector({ runId }: { runId: string }) {
 
         <a
           href={`/api/runs/${runId}/tracked-video`}
-          className="inline-block text-sm text-blue-600 hover:underline"
+          className="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-white px-3 py-1.5 text-sm font-medium text-blue-600 shadow-sm hover:border-blue-400 hover:bg-blue-50"
         >
-          Download tracked_output.mp4
+          ↓ Download tracked_output.mp4
         </a>
       </section>
 

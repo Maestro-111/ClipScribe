@@ -41,7 +41,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - Install development dependencies with `uv sync --extra dev`.
 - Required environment variables depend on the mode and database backend:
   - `OPENAI_API_KEY` for scene analysis, taxonomy generation, and parser agents.
-  - `CLIPSCRIBE_DB_BACKEND` selects the database backend (`sqlite` or `postgresql`); default is `sqlite`. This is the only selector — `clip_scribe.yaml` carries no backend key, just the pool knobs (`pool_size`, `max_overflow`).
+  - `CLIPSCRIBE_DB_BACKEND` selects the database backend (`sqlite` or `postgresql`); default is `sqlite`. All DB config is env-driven — `clip_scribe.yaml` carries no database section. Connection-pool sizing is `CLIPSCRIBE_DB_POOL_SIZE` (default 5) and `CLIPSCRIBE_DB_MAX_OVERFLOW` (default 10), applied to PostgreSQL only (SQLite ignores them); see `src/db/engine.py::resolve_pool_settings`.
   - `POSTGRESQL_URL` when `CLIPSCRIBE_DB_BACKEND=postgresql`.
   - `SQLITE_URL` is optional when the backend is `sqlite`; default is `sqlite:///data/clip_scribe.db`.
   - `CLIPSCRIBE_JOB_BACKEND`, `REDIS_URL`, `CLIPSCRIBE_DEVICE`, `CLIPSCRIBE_INPUT_DIR`, `CLIPSCRIBE_API_LOAD_MODELS`, and `CLIPSCRIBE_CORS_ORIGINS` for the FastAPI process and Celery worker.

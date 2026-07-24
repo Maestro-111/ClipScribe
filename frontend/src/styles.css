@@ -129,6 +129,38 @@ body {
   }
 }
 
+/* "Scribe" mascot: the ClipScribe mark, anthropomorphized as an eager little
+   assistant. It only gently floats up and down (deliberately calm — no tilt or
+   fidget, which read as jittery) over a soft breathing shadow, and can be
+   dragged anywhere on screen. Its size is set by the caller (grows with the
+   number of queued videos). Animations run continuously and never swap their
+   animation-name, so nothing restarts/flickers as form state changes. Purely
+   decorative. */
+@keyframes scribe-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes scribe-shadow {
+  0%, 100% { transform: scaleX(1); opacity: 0.22; }
+  50% { transform: scaleX(0.7); opacity: 0.12; }
+}
+@keyframes scribe-halo {
+  0%, 100% { transform: scale(0.9); }
+  50% { transform: scale(1.15); }
+}
+/* Phrase swap: a soft fade+rise so lines don't pop in harshly. */
+@keyframes scribe-say {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.scribe-bob { animation: scribe-float 3.4s ease-in-out infinite; }
+.scribe-shadow { animation: scribe-shadow 3.4s ease-in-out infinite; }
+.scribe-halo { animation: scribe-halo 1.7s ease-in-out infinite; }
+.scribe-say { animation: scribe-say 320ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .scribe-bob, .scribe-shadow, .scribe-halo, .scribe-say { animation: none; }
+}
+
 /* Run-inspector video: fullscreen the wrapper (video + SVG overlay) as one
    element so the detection boxes stay visible. When fullscreen, center the
    video and letterbox it with object-contain; the overlay SVG (absolute

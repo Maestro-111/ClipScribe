@@ -9,6 +9,7 @@ import {
 } from "../api/hooks";
 import { formatDateTime, formatMergedDuration } from "../lib/format";
 import { EmptyState, Pagination, Skeleton, StatusPill } from "../components/ui";
+import { Scribe } from "../components/Scribe";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
 export const Route = createFileRoute("/")({
@@ -60,12 +61,12 @@ function JobsList() {
     // page gutter so content isn't glued to the screen edges.
     <div className="full-bleed px-6 lg:px-10">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Jobs</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Jobs</h1>
         <Link
           to="/jobs/new"
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-neutral-800"
+          className="rounded-lg bg-neutral-900 px-5 py-2.5 text-base font-semibold text-white shadow-sm hover:bg-neutral-800"
         >
-          New job
+          + New job
         </Link>
       </div>
 
@@ -111,13 +112,7 @@ function JobsList() {
       {data && data.jobs.length === 0 && (
         <div className="rounded-lg border border-neutral-200 bg-white shadow-sm">
           <EmptyState
-            icon={
-              <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
-                <rect x="4" y="9" width="24" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M4 13h24" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M9 9l1.5-3M15 9l1.5-3M21 9l1.5-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            }
+            icon={<Scribe mood="bored" scale={0.8} />}
             title={canPrev ? "No jobs on this page" : "No jobs yet"}
             description={
               canPrev
@@ -198,7 +193,7 @@ function JobsList() {
                         <Link
                           to="/jobs/$jobId"
                           params={{ jobId: job.job_id }}
-                          className="text-blue-600 hover:underline"
+                          className="rounded border border-blue-300 bg-white px-2 py-0.5 text-xs font-medium text-blue-600 hover:border-blue-400 hover:bg-blue-50"
                         >
                           runs →
                         </Link>

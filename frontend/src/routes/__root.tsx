@@ -23,8 +23,8 @@ function RootLayout() {
     <div className="min-h-screen overflow-x-hidden bg-neutral-100 text-neutral-900">
       <header className="sticky top-0 z-20 border-b border-neutral-200 bg-white/85 backdrop-blur">
         <nav className="flex w-full items-center gap-6 px-6 py-3 lg:px-10">
-          <Link to="/" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-            <Logo size={22} />
+          <Link to="/" className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
+            <Logo size={30} />
             ClipScribe
           </Link>
           {/* activeProps styles the link when its route is active. `to` is
@@ -32,15 +32,15 @@ function RootLayout() {
               to compile. */}
           <Link
             to="/"
-            activeProps={{ className: "font-medium text-blue-600" }}
-            className="text-sm text-neutral-600 hover:text-neutral-900"
+            activeProps={{ className: "font-semibold text-blue-600" }}
+            className="text-base font-medium text-neutral-600 hover:text-neutral-900"
           >
             Jobs
           </Link>
           <Link
             to="/jobs/new"
-            activeProps={{ className: "font-medium text-blue-600" }}
-            className="text-sm text-neutral-600 hover:text-neutral-900"
+            activeProps={{ className: "font-semibold text-blue-600" }}
+            className="text-base font-medium text-neutral-600 hover:text-neutral-900"
           >
             New job
           </Link>

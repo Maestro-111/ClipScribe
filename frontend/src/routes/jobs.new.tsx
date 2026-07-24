@@ -8,6 +8,7 @@ import {
   type JobCreateRequest,
 } from "../api/hooks";
 import { PipelineAnimation } from "../components/PipelineAnimation";
+import { ScribeMascot, type ScribeState } from "../components/ScribeMascot";
 import { JobSummary, RunOutputs } from "../components/JobSidebar";
 
 // "/jobs/new" — the create-job form (web-app-plan §7, page 2).
@@ -103,6 +104,16 @@ function NewJob() {
   const [generateHintFromName, setGenerateHintFromName] = useState(false);
 
   const canSubmit = selected.length > 0;
+
+  // Scribe's mood: working once the job is being uploaded/created (through the
+  // brief success window before we navigate away), excited while videos are
+  // queued, otherwise bored.
+  const scribeState: ScribeState =
+    upload.isPending || createJob.isPending || createJob.isSuccess
+      ? "working"
+      : selected.length > 0
+        ? "excited"
+        : "bored";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -488,6 +499,10 @@ function NewJob() {
           of the current form state, and a preview of the run's outputs. Dropped
           entirely below lg where the form goes full width. */}
       <aside className="hidden space-y-8 lg:block">
+        {/* Scribe hovers at the top-right (drag it anywhere), impatiently
+            waiting to dig into the queued videos — grows and turns eager as
+            videos are added. Fixed-positioned, so it self-places. */}
+        <ScribeMascot state={scribeState} videoCount={selected.length} />
         <PipelineAnimation />
         <JobSummary
           videoCount={selected.length}
