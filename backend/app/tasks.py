@@ -20,7 +20,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from celery.signals import worker_process_init
-
+from src.utils.clip_scribe_logging import configure_logging
 from app.celery_app import celery_app
 from app.job_execution import run_job_core
 
@@ -42,6 +42,7 @@ def get_builder() -> "ClipScribeBuilder":
     process at import, so ``os.environ`` (and thus the cached settings) already
     hold the value by the time a task runs.
     """
+    configure_logging()
     global _BUILDER
     if _BUILDER is None:
         from app.settings import get_settings

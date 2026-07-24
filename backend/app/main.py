@@ -21,6 +21,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.utils.clip_scribe_logging import configure_logging
+
 from app.errors import register_error_handlers
 from app.routes import artifacts, chat, health, jobs, meta, runs, uploads
 from app.settings import get_settings
@@ -30,6 +32,7 @@ logger = logging.getLogger("clip_scribe")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    configure_logging()
     settings = get_settings()
     app.state.settings = settings
     app.state.builder = None
