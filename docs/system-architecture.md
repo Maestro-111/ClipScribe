@@ -261,9 +261,11 @@ Configuration is split by concern:
 
 - `clip_scribe.yaml` configures core model/extractor/parser behavior and
   project-relative paths.
-- Environment variables choose execution mode, device, DB backend, Redis,
-  storage backend, CORS, and cloud credentials.
+- Environment variables choose execution mode, device, DB backend and pool
+  sizing, Redis, storage backend, CORS, and cloud credentials.
 - `CLIPSCRIBE_DB_BACKEND` chooses SQLite (default) or PostgreSQL.
+- `CLIPSCRIBE_DB_POOL_SIZE` and `CLIPSCRIBE_DB_MAX_OVERFLOW` tune PostgreSQL
+  connection pooling; SQLite ignores them.
 - `CLIPSCRIBE_STORAGE_BACKEND` chooses local files (default) or GCS for both
   source videos and run artifacts.
 

@@ -72,7 +72,9 @@ Common environment variables:
 - `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
 - `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
 - `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
-- `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` does not carry a backend key, only pool settings.
+- `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` carries no database section.
+- `CLIPSCRIBE_DB_POOL_SIZE` - PostgreSQL connection-pool size; defaults to `5` and is ignored by SQLite.
+- `CLIPSCRIBE_DB_MAX_OVERFLOW` - PostgreSQL burst connections above the pool; defaults to `10` and is ignored by SQLite.
 - `CLIPSCRIBE_INPUT_DIR` - local source-video storage root relative to `backend/`; defaults to `input`. Backs the `local` backend, and is the staging/scratch dir the `gcs` backend downloads into.
 - `CLIPSCRIBE_STORAGE_BACKEND` - the single selector for BOTH source-video and run-artifact storage (`local` | `gcs`); defaults to `local`. `gcs` uploads videos and artifacts to one bucket and serves them to the browser via signed-URL redirects.
 - `CLIPSCRIBE_GCS_BUCKET` - required when `CLIPSCRIBE_STORAGE_BACKEND=gcs`; one bucket holds videos under the `videos/` prefix and artifacts under `artifacts/`.
@@ -198,6 +200,8 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | `POSTGRESQL_URL` | `…@localhost:5433/clipscribe` | `…@postgres:5432/clipscribe` | Secret Manager |
 | `REDIS_URL` | `redis://localhost:6379/0` | `redis://redis:6379/0` | Memorystore URL |
 | `CLIPSCRIBE_DB_BACKEND` | unset (`sqlite`) or `postgresql` | `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DB_POOL_SIZE` | optional; PostgreSQL only | optional; PostgreSQL only | tuned per DB capacity |
+| `CLIPSCRIBE_DB_MAX_OVERFLOW` | optional; PostgreSQL only | optional; PostgreSQL only | tuned per DB capacity |
 | `CLIPSCRIBE_DEVICE` | `mps` | `cpu` | `cuda` |
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
 | `CLIPSCRIBE_STORAGE_BACKEND` | `local` | `local` (or `gcs` via the overlay) | `gcs` |
@@ -341,5 +345,6 @@ Their respective licenses are included in the source tree.
 
 ### Deep-Dive Docs (`docs/`)
 Diagram-rich explanations of the core mechanics:
+- [System architecture](docs/system-architecture.md) - Current implementation-grounded map of the web app, pipeline, storage, and runtime boundaries
 - [SAM2 tracking mechanism](docs/sam2-tracking-and-identity.md) - Explains how SAM2 tracks the objects and how ClipScribe merges similar objects across the scenes
 - [Extractor core algorithm](docs/extractor-core-algorithm.md) - ClipScribe extractor core algorithm

@@ -192,8 +192,9 @@ the Celery queue.
 
 `ClipScribeBuilder.__init__` now calls two private setup methods:
 
-- `_assemble_db()` — builds the SQLAlchemy engine + reader + writer; stored
-  on `self.writer_db` / `self.reader_db`.
+- `_assemble_db()` — resolves the env-driven DB URL and PostgreSQL pool
+  settings, then builds the SQLAlchemy engine + reader + writer; stored on
+  `self.writer_db` / `self.reader_db`.
 - `_assemble_heavy_extractor_utils()` — loads every heavy model and stores
   it on `self` (`self.dino`, `self.sam2`, `self.ocr`, `self.reid_model`,
   `self.audio_model`, `self.embedding_transform`, `self.face_detection`,
@@ -230,7 +231,7 @@ Key consequences:
 
 - Read `clip_scribe.yaml`.
 - Resolve `models_weights_dir` and all yaml param dicts.
-- `_assemble_db()` → DB engine + reader + writer.
+- `_assemble_db()` → env-driven DB engine + reader + writer.
 - `_assemble_heavy_extractor_utils()` →
   GroundingDINO, SAM2, PaddleOCR, DINOv2 (reid), Whisper,
   MTCNN, `embedding_transform`, `ProfilesPile`, `TaxonomyResolver` (SBERT),
@@ -395,14 +396,15 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 
 - Alembic is adopted under `backend/alembic/`. SQLite + Postgres both use the
   same SQLAlchemy metadata from `backend/src/db/schema.py`. `env.py` resolves
-  the DB URL via `resolve_database_url()` (config + env), never the static
+  the DB URL via the env-driven `resolve_database_url()`, never the static
   `alembic.ini` placeholder — so migrations always target the app's DB.
 - Current revisions, in order: a baseline migration for the existing schema; a
   migration adding `jobs`, `frame_detections`, `parser_results`, and
   `shot_boundaries`; a chat migration adding `chat_messages`; a `parent_job_id`
   migration for batch fan-out; a `job_id` chat migration for job-level advisory
-  transcripts; and a `videos` registry migration (`f3a1c9d2b7e5`) for the
-  content-addressed input picker.
+  transcripts; a `videos` registry migration (`f3a1c9d2b7e5`) for the
+  content-addressed input picker; and a hot-path index migration
+  (`b8e4f2a1c6d3`) for run inspection and job orchestration queries.
 - Runtime DB setup no longer calls `metadata.create_all`; run
   `uv run alembic upgrade head` from `backend/` (or `make migrate` from the
   repository root). `make migrate` applies SQLite always and then attempts
@@ -593,7 +595,8 @@ ABCD exports, and advisory chat.
 
 1. **Jobs list** (`/`)
    - Table of jobs (video, status/progress, platform, mode, created time,
-     duration, and lifecycle actions).
+     terminal batch duration from merged child run intervals, and lifecycle
+     actions).
    - Status filter plus offset pagination using `GET /jobs?limit=&offset=`.
    - "New job" button.
 
@@ -618,8 +621,9 @@ ABCD exports, and advisory chat.
 
 3. **Live job** (`/jobs/{id}`)
    - Parent jobs render a batch panel with one row per child run, aggregated
-     status, per-run inspect/cancel/retry/delete actions, and client-side
-     pagination for large batches.
+     status, merged active duration once stopped, per-child durations,
+     per-run inspect/cancel/retry/delete actions, and client-side pagination
+     for large batches.
    - Once any child completes, parent jobs expose an "Export all" CSV/XLSX menu
      and a job-level advisory chat that can compare the completed runs.
    - Child/leaf jobs render the SSE live page: top progress bar, cancel action,
@@ -660,10 +664,11 @@ finalizePct` — weights based on observed wall-clock distribution; tune later.
 
 ### Inspector overlay (SVG on `<video>`)
 
-`useFramesForRun(runId)` pulls all `frame_detections` once on mount (small) and
-caches. On `timeupdate`, find the most recent frame ≤ current playback time and
-render its boxes as SVG over the video. See chat for the reference component
-sketch.
+`useRunFrames(runId, window)` fetches a small `frame_detections` time window
+around the current playback position, backed by the `(run_id, timestamp_sec)`
+index. On `timeupdate`, the window follows the playhead; the inspector finds
+the most recent frame per source within that slice and renders its boxes as SVG
+over the video.
 
 ---
 
@@ -736,6 +741,8 @@ Backend vars (current):
 |---|---|---|---|
 | `CLIPSCRIBE_JOB_BACKEND` | `inline` \| `celery` dispatch | `celery` | `celery` |
 | `CLIPSCRIBE_DB_BACKEND` | selects `sqlite` or `postgresql` | unset/`sqlite` or `postgresql` | `postgresql` |
+| `CLIPSCRIBE_DB_POOL_SIZE` | PostgreSQL pool size | optional; default `5` | optional; default `5` |
+| `CLIPSCRIBE_DB_MAX_OVERFLOW` | PostgreSQL burst connections above the pool | optional; default `10` | optional; default `10` |
 | `REDIS_URL` | broker + Redis Streams | `redis://localhost:6379/0` | `redis://redis:6379/0` |
 | `POSTGRESQL_URL` | DB (when backend=postgresql) | `…@localhost:5433/…` | `…@postgres:5432/…` |
 | `SQLITE_URL` | DB (when backend=sqlite) | `sqlite:///data/…` | (needs shared volume; prefer PG) |
@@ -1046,8 +1053,9 @@ These are decisions to make before the corresponding implementation step.
 Strictly ordered; each step is shippable on its own.
 
 1. **DB migrations: `jobs`, `frame_detections`, `parser_results`,
-   `shot_boundaries`.** **DONE.** Alembic baseline + second migration are in
-   `backend/alembic/versions/`; schema creation is migration-owned.
+   `shot_boundaries`, and hot-path indexes.** **DONE.** Alembic baseline and
+   follow-up migrations are in `backend/alembic/versions/`; schema creation is
+   migration-owned.
 
 2. **Builder refactor: load-once via `ClipScribeBuilder.__init__`.**
    **DONE.** Heavy assembly moved into `__init__` (`_assemble_db`,
