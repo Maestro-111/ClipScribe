@@ -27,6 +27,7 @@ from src.db import (
     ClipScribeReaderDB,
     create_db_engine,
     resolve_database_url,
+    resolve_pool_settings,
 )
 from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
 from src.utils.progress import NullProgressReporter, ProgressReporter
@@ -104,9 +105,6 @@ class ClipScribeBuilder:
 
         self.clib_scribe_parser_params = self.clip_scribe_params.get("parser", {})
         self.parser_agent_params = self.clib_scribe_parser_params.get("agent", {})
-
-        self.db_params = _cfg.get("database", {})
-        self.db_backend = self.db_params.get("backend", "sqlite")
 
         # Artifact handling: cap on per-frame viz PNGs. Remote upload is chosen
         # by the CLIPSCRIBE_STORAGE_BACKEND selector, not config. See §8.
@@ -283,11 +281,12 @@ class ClipScribeBuilder:
     def _assemble_db(self) -> None:
         try:
             db_url = resolve_database_url()
+            pool_size, max_overflow = resolve_pool_settings()
 
             db_engine = create_db_engine(
                 database_url=db_url,
-                pool_size=self.db_params.get("pool_size", 5),
-                max_overflow=self.db_params.get("max_overflow", 10),
+                pool_size=pool_size,
+                max_overflow=max_overflow,
             )
 
             writer_db = ClipScribeWriterDB(engine=db_engine)

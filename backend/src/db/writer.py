@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import Engine
 
-from .engine import ClipScribeBaseDB, _upsert_ignore
+from .engine import ClipScribeBaseDB, _upsert_ignore, retry_transient
 from .schema import (
     runs_table,
     global_stats_table,
@@ -41,6 +41,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         super().__init__(engine)
         logger.info("ClipScribeWriterDB ready.")
 
+    @retry_transient
     def save_run(
         self,
         run_id: str,
@@ -247,6 +248,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             conn.execute(frame_detections_table.insert(), rows)
 
     # ------------------------------------------------------------------ videos
+    @retry_transient
     def insert_video(
         self,
         *,
@@ -273,6 +275,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
         logger.info("Registered video %s (%s)", stored_key, original_name)
 
+    @retry_transient
     def touch_video(self, user_id: str, content_hash: str) -> None:
         """Refresh ``last_seen_at`` when a re-upload dedups to an existing row."""
         from datetime import datetime, timezone
@@ -287,6 +290,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 .values(last_seen_at=datetime.now(timezone.utc).isoformat())
             )
 
+    @retry_transient
     def delete_video(self, user_id: str, stored_key: str) -> None:
         """Remove a registry row (input reconcile: object gone from storage)."""
         with self._engine.begin() as conn:
@@ -298,6 +302,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
         logger.info("Pruned orphaned video registry row %s", stored_key)
 
+    @retry_transient
     def create_job(
         self,
         *,
@@ -341,6 +346,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
         logger.info(f"Created job {job_id} (mode={mode}, status={status})")
 
+    @retry_transient
     def update_job(
         self,
         job_id: str,
@@ -380,6 +386,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 .values(**values)
             )
 
+    @retry_transient
     def update_job_if_status(
         self,
         job_id: str,
@@ -416,6 +423,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
             return result.rowcount > 0
 
+    @retry_transient
     def delete_job(self, job_id: str) -> bool:
         """Delete a job row and its job-scoped chat transcript."""
         with self._engine.begin() as conn:
@@ -430,6 +438,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 )
             return result.rowcount > 0
 
+    @retry_transient
     def delete_run(self, run_id: str) -> None:
         """Delete all persisted data for a run across every run-keyed table.
 
@@ -455,6 +464,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             for table in run_keyed:
                 conn.execute(table.delete().where(table.c.run_id == run_id))
 
+    @retry_transient
     def reset_job_for_retry(self, job_id: str, *, run_id: str) -> bool:
         """Reset a terminal job back to ``queued`` for an in-place retry.
 
@@ -480,6 +490,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
             return result.rowcount > 0
 
+    @retry_transient
     def add_chat_message(
         self,
         *,
@@ -508,6 +519,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 },
             )
 
+    @retry_transient
     def delete_chat_session(self, run_id: str, session_id: str) -> int:
         """Delete all messages in one per-run chat session. Returns rows removed."""
         with self._engine.begin() as conn:
@@ -518,6 +530,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
             return result.rowcount
 
+    @retry_transient
     def delete_job_chat_session(self, job_id: str, session_id: str) -> int:
         """Delete all messages in one job-level chat session. Returns rows removed."""
         with self._engine.begin() as conn:
@@ -528,6 +541,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             )
             return result.rowcount
 
+    @retry_transient
     def save_parser_results(self, run_id: str, platform: str, results: list) -> None:
         """Persist per-criterion parser evaluations for a run.
 

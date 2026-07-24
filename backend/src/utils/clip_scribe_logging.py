@@ -64,6 +64,3 @@ def configure_logging() -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
     logging.config.dictConfig(GENERAL_LOGGING_CONFIG)
     _CONFIGURED = True
-
-
-logger = logging.getLogger("clip_scribe")

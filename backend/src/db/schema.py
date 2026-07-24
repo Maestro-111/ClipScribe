@@ -44,6 +44,7 @@ global_stats_table = Table(
     Column("qp_general_detected", Integer),
     Column("qp_general_rapid_fire_segments", Text),
     Column("qp_general_criteria", Text),
+    Index("ix_global_stats_run_id", "run_id"),
 )
 
 visual_object_occurrences_table = Table(
@@ -63,6 +64,7 @@ visual_object_occurrences_table = Table(
     Column("centrality_score", Float),
     Column("screen_time_ratio", Float),
     Column("quadrant", Text),
+    Index("ix_visual_object_occurrences_run_id", "run_id"),
 )
 
 text_events_table = Table(
@@ -73,6 +75,7 @@ text_events_table = Table(
     Column("second", Integer),
     Column("line_index", Integer),
     Column("text", Text),
+    Index("ix_text_events_run_id", "run_id"),
 )
 
 audio_segments_table = Table(
@@ -84,6 +87,7 @@ audio_segments_table = Table(
     Column("end_time", Float),
     Column("text", Text),
     Column("confidence", Float),
+    Index("ix_audio_segments_run_id", "run_id"),
 )
 
 scene_descriptions_table = Table(
@@ -95,6 +99,7 @@ scene_descriptions_table = Table(
     Column("start_time", Float),
     Column("end_time", Float),
     Column("description", Text),
+    Index("ix_scene_descriptions_run_id", "run_id"),
 )
 
 field_descriptions_table = Table(
@@ -172,6 +177,11 @@ jobs_table = Table(
     Column("created_by", Text),
     # Fetch a parent's children (batch fan-out) in one indexed lookup.
     Index("ix_jobs_parent_job_id", "parent_job_id"),
+    # Status is filtered by the job-list queries, the parent-aggregate CTE, and
+    # the guarded status transitions (update_job_if_status/reset_job_for_retry).
+    Index("ix_jobs_status", "status"),
+    # Resolve a run's sibling jobs (get_run_siblings) without a scan.
+    Index("ix_jobs_run_id", "run_id"),
 )
 
 frame_detections_table = Table(
@@ -197,6 +207,9 @@ frame_detections_table = Table(
     Column("object_id", Integer),
     Index("ix_frame_detections_run_frame", "run_id", "frame_idx"),
     Index("ix_frame_detections_run_object", "run_id", "object_id"),
+    # Backs the time-windowed overlay read (WHERE run_id=? AND timestamp_sec
+    # BETWEEN ? AND ?) fired once per playback bucket in the run inspector.
+    Index("ix_frame_detections_run_ts", "run_id", "timestamp_sec"),
 )
 
 parser_results_table = Table(
@@ -214,6 +227,7 @@ parser_results_table = Table(
     # Link to LangSmith trace.
     Column("langsmith_run_id", Text),
     Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    Index("ix_parser_results_run_id", "run_id"),
 )
 
 shot_boundaries_table = Table(
@@ -225,6 +239,7 @@ shot_boundaries_table = Table(
     Column("start_sec", Float),
     Column("end_sec", Float),
     Column("duration_sec", Float),
+    Index("ix_shot_boundaries_run_id", "run_id"),
 )
 
 # User-facing transcript for the advisory chat agent (web-app-plan §13). The
