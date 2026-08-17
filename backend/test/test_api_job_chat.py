@@ -75,7 +75,9 @@ def ctx(tmp_path):
             [*_parser_rows(RUN1, True), *_parser_rows(RUN2, False)],
         )
 
-    writer.create_job(job_id=PARENT, mode="full", video_name="batch")
+    writer.create_job(
+        job_id=PARENT, mode="full", video_name="batch", created_by="local"
+    )
     writer.create_job(
         job_id=CHILD1,
         mode="full",
@@ -83,6 +85,7 @@ def ctx(tmp_path):
         run_id=RUN1,
         video_name="first.mp4",
         status="completed",
+        created_by="local",
     )
     writer.create_job(
         job_id=CHILD2,
@@ -91,6 +94,7 @@ def ctx(tmp_path):
         run_id=RUN2,
         video_name="second.mp4",
         status="completed",
+        created_by="local",
     )
 
     # Fake chat service so the GET/DELETE/POST-guard routes need no LLM client.
@@ -239,8 +243,14 @@ def test_job_chat_409_when_no_completed_runs(ctx, tmp_path):
     metadata_obj.create_all(engine)
     reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
-    writer.create_job(job_id="p2", mode="full", video_name="batch")
-    writer.create_job(job_id="c2", mode="full", parent_job_id="p2", status="running")
+    writer.create_job(job_id="p2", mode="full", video_name="batch", created_by="local")
+    writer.create_job(
+        job_id="c2",
+        mode="full",
+        parent_job_id="p2",
+        status="running",
+        created_by="local",
+    )
     app.dependency_overrides[get_reader] = lambda: reader
 
     class Svc:

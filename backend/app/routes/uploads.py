@@ -22,12 +22,11 @@ from app.deps import (
     current_user_id,
     get_reader,
     get_writer,
-    settings_dep,
     video_storage_dep,
 )
 from app.errors import ProblemException
 from app.models import UploadedVideo, UploadResponse
-from app.settings import Settings
+from app.settings import Settings, get_settings
 from src.db import ClipScribeReaderDB, ClipScribeWriterDB
 from src.utils.clip_scribe_video_storage import VideoStorage
 
@@ -42,13 +41,14 @@ _CHUNK = 1024 * 1024
 @router.post("/uploads", response_model=UploadResponse, summary="Upload video(s)")
 def upload_videos(
     files: list[UploadFile] = File(...),
-    settings: Settings = Depends(settings_dep),
     storage: VideoStorage = Depends(video_storage_dep),
     reader: ClipScribeReaderDB = Depends(get_reader),
     writer: ClipScribeWriterDB = Depends(get_writer),
     user_id: str = Depends(current_user_id),
 ) -> UploadResponse:
     uploaded: list[UploadedVideo] = []
+
+    settings: Settings = get_settings()
 
     for file in files:
         # Strip any client-supplied path; keep only a bare filename.

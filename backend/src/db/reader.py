@@ -292,14 +292,23 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             return self._decode_job(dict(row)) if row else None
 
     def list_jobs(
-        self, status: str | None = None, limit: int = 50, offset: int = 0
+        self,
+        user_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
-        """List jobs, most recent first, optionally filtered by status."""
-        query = "SELECT * FROM jobs"
-        params: dict = {"limit": limit, "offset": offset}
+        """List a user's jobs, most recent first, optionally filtered by status.
+
+        Scoped to ``user_id`` (``jobs.created_by``): a caller only ever sees the
+        jobs they own. The owner filter is applied in SQL so it precedes
+        ``LIMIT``/``OFFSET`` and pagination stays correct.
+        """
+        query = "SELECT * FROM jobs WHERE created_by = :user_id"
+        params: dict = {"user_id": user_id, "limit": limit, "offset": offset}
 
         if status is not None:
-            query += " WHERE status = :status"
+            query += " AND status = :status"
             params["status"] = status
 
         query += " ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
@@ -309,14 +318,23 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
 
     def list_parent_jobs(
-        self, limit: int = 50, offset: int = 0, status: str | None = None
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
     ) -> list[dict]:
-        """Top-level (parent/standalone) jobs, most recent first.
+        """A user's top-level (parent/standalone) jobs, most recent first.
 
-        Excludes child runs (``parent_job_id`` set). When ``status`` is provided,
-        filter by the same effective status exposed by the API: batch parents
-        aggregate their children, while standalone rows keep their own status.
+        Excludes child runs (``parent_job_id`` set). Scoped to ``user_id``
+        (``jobs.created_by``) so a caller only sees jobs they own. When
+        ``status`` is provided, filter by the same effective status exposed by
+        the API: batch parents aggregate their children, while standalone rows
+        keep their own status.
         """
+
+        # left join in query is equal to inner join anyway. keep as defense
+
         query = """
             WITH child_status AS (
                 SELECT
@@ -361,11 +379,11 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
                     END AS effective_status
                 FROM jobs AS p
                 LEFT JOIN child_status ON child_status.parent_job_id = p.job_id
-                WHERE p.parent_job_id IS NULL
+                WHERE p.parent_job_id IS NULL AND p.created_by = :user_id
             )
             SELECT * FROM effective_parent_jobs
             """
-        params: dict = {"limit": limit, "offset": offset}
+        params: dict = {"user_id": user_id, "limit": limit, "offset": offset}
         if status is not None:
             query += " WHERE effective_status = :status"
             params["status"] = status
@@ -391,19 +409,24 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             )
             return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
 
-    def get_run_siblings(self, run_id: str) -> list[dict]:
+    def get_run_siblings(self, run_id: str, user_id: str) -> list[dict]:
         """Sibling runs that share the batch parent of ``run_id``'s child job.
 
         Returns ``{job_id, run_id, status, video_name}`` in submission order,
-        including the run itself. Empty when the run has no child job row (e.g. a
-        CLI run written outside the job API), which the caller treats as a
-        standalone run with no siblings.
+        including the run itself. Scoped to ``user_id`` (``jobs.created_by``):
+        the run must belong to the caller, and only the caller's siblings are
+        returned. Empty when the run has no child job row (e.g. a CLI run written
+        outside the job API) or is owned by someone else, which the caller treats
+        as a standalone run with no siblings.
         """
         with self._engine.connect() as conn:
             child = (
                 conn.execute(
-                    text("SELECT parent_job_id FROM jobs WHERE run_id = :rid LIMIT 1"),
-                    {"rid": run_id},
+                    text(
+                        "SELECT parent_job_id FROM jobs "
+                        "WHERE run_id = :rid AND created_by = :uid LIMIT 1"
+                    ),
+                    {"rid": run_id, "uid": user_id},
                 )
                 .mappings()
                 .fetchone()
@@ -414,11 +437,32 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
                 text(
                     "SELECT job_id, parent_job_id, run_id, status, video_name "
                     "FROM jobs WHERE parent_job_id = :pid AND run_id IS NOT NULL "
+                    "AND created_by = :uid "
                     "ORDER BY created_at ASC, job_id ASC"
                 ),
-                {"pid": child["parent_job_id"]},
+                {"pid": child["parent_job_id"], "uid": user_id},
             )
             return [dict(row) for row in result.mappings().fetchall()]
+
+    def run_owner(self, run_id: str) -> str | None:
+        """The ``created_by`` of the job that produced ``run_id``, else ``None``.
+
+        Run-scoped tables carry no user column; ownership lives on the ``jobs``
+        row that minted the run (``jobs.run_id``, indexed). This single lookup is
+        the seam the API's ownership guard uses to authorize by-run-id reads —
+        ``None`` means the run has no owning job (a CLI run, or absent), which the
+        guard treats as "not accessible".
+        """
+        with self._engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT created_by FROM jobs " "WHERE run_id = :rid LIMIT 1"),
+                    {"rid": run_id},
+                )
+                .mappings()
+                .fetchone()
+            )
+            return row["created_by"] if row else None
 
     def get_video_by_hash(self, user_id: str, content_hash: str) -> dict | None:
         """Look up a registered video by its content hash (dedup check)."""

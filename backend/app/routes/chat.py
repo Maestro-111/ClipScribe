@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
-from app.deps import get_reader, get_writer
+from app.deps import get_reader, get_writer, require_owned_job, require_owned_run
 from app.errors import ProblemException
 from app.models import (
     ChatHistoryResponse,
@@ -29,7 +29,6 @@ from src.utils.ids import new_ulid
 
 if TYPE_CHECKING:
     from app.chat import ChatService
-    from src.db import ClipScribeReaderDB
 
 router = APIRouter(prefix="/runs", tags=["chat"])
 job_router = APIRouter(prefix="/jobs", tags=["chat"])
@@ -46,21 +45,13 @@ def get_chat_service(request: Request) -> "ChatService":
     return ChatService(get_reader(request), get_writer(request), state.settings)
 
 
-def _require_run(reader: "ClipScribeReaderDB", run_id: str) -> None:
-    if reader.get_run(run_id) is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"run '{run_id}' not found"
-        )
-
-
 @router.post("/{run_id}/chat", summary="Ask the agent about the run (SSE stream)")
 def post_run_chat(
     run_id: str,
     req: ChatRequest,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _run: dict = Depends(require_owned_run),
 ) -> StreamingResponse:
-    _require_run(reader, run_id)
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
         service.stream_run(run_id, session_id, req.message),
@@ -76,10 +67,9 @@ def post_run_chat(
 )
 def list_sessions(
     run_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _run: dict = Depends(require_owned_run),
 ) -> ChatSessionsResponse:
-    _require_run(reader, run_id)
     sessions = [ChatSession(**s) for s in service.list_sessions(run_id)]
     return ChatSessionsResponse(run_id=run_id, sessions=sessions)
 
@@ -92,10 +82,9 @@ def list_sessions(
 def get_session(
     run_id: str,
     session_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _run: dict = Depends(require_owned_run),
 ) -> ChatHistoryResponse:
-    _require_run(reader, run_id)
     messages = [ChatMessage(**m) for m in service.get_history(run_id, session_id)]
     return ChatHistoryResponse(run_id=run_id, session_id=session_id, messages=messages)
 
@@ -108,31 +97,22 @@ def get_session(
 def delete_session(
     run_id: str,
     session_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _run: dict = Depends(require_owned_run),
 ) -> None:
-    _require_run(reader, run_id)
     service.delete_session(run_id, session_id)
 
 
 # ── Job-level advisory chat (spans every completed run in a batch job) ───────
 
 
-def _require_job(reader: "ClipScribeReaderDB", job_id: str) -> None:
-    if reader.get_job(job_id) is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
-        )
-
-
 @job_router.post("/{job_id}/chat", summary="Ask the agent about the job (SSE)")
 def post_job_chat(
     job_id: str,
     req: ChatRequest,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_owned_job),
 ) -> StreamingResponse:
-    _require_job(reader, job_id)
     runs = service.resolve_job_runs(job_id)
     if not runs:
         raise ProblemException(
@@ -155,10 +135,9 @@ def post_job_chat(
 )
 def list_job_sessions(
     job_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_owned_job),
 ) -> JobChatSessionsResponse:
-    _require_job(reader, job_id)
     sessions = [ChatSession(**s) for s in service.list_job_sessions(job_id)]
     return JobChatSessionsResponse(job_id=job_id, sessions=sessions)
 
@@ -171,10 +150,9 @@ def list_job_sessions(
 def get_job_session(
     job_id: str,
     session_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_owned_job),
 ) -> JobChatHistoryResponse:
-    _require_job(reader, job_id)
     messages = [ChatMessage(**m) for m in service.get_job_history(job_id, session_id)]
     return JobChatHistoryResponse(
         job_id=job_id, session_id=session_id, messages=messages
@@ -189,8 +167,7 @@ def get_job_session(
 def delete_job_session(
     job_id: str,
     session_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
     service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_owned_job),
 ) -> None:
-    _require_job(reader, job_id)
     service.delete_job_session(job_id, session_id)

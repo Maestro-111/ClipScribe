@@ -3,14 +3,19 @@ name = "clip_scribe"
 version = "1.0.0"
 requires-python = ">=3.12"
 
-# main project dependencies are for the developer to run the core pipeline locally. each part has its own dependency-group
+# Main project dependencies: the full stack a developer needs to run the core
+# pipeline locally (`uv sync`). The container images install narrower slices of
+# this set — the slim API image via the `[dependency-groups].api` group
+# (`--only-group api`, which EXCLUDES these base deps), and the heavy Celery
+# worker images by reusing these base deps plus exactly one torch selector extra
+# (`worker-cpu`/`worker-gpu`) to pick the CPU or CUDA wheel source.
 dependencies = [
     "colorlog>=6.10.1",
     "hydra-core>=1.3.2",
     "iopath>=0.1.10",
     "opencv-python>=4.13.0.90",
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
     "transformers",
     "supervision>=0.22.0",
     "paddleocr>=2.0.1",
@@ -28,6 +33,9 @@ dependencies = [
     "addict",
     "langgraph>=0.2.0",
     "langchain-openai>=0.2.0",
+    # yapf IS a runtime dep, not formatter-only tooling: the vendored
+    # GroundingDINO code imports it (src/dino/groundingdino/util/slconfig.py).
+    # Do not move it to the dev extra — model loading would break.
     "yapf",
     "pycocotools",
     "timm",
@@ -56,6 +64,49 @@ dev = [
     "httpx>=0.27.0",
     "fakeredis>=2.20.0"
 ]
+# Torch selector extras for the Celery worker container images
+# (backend/docker/core/{cpu,gpu}). Each pins the linux/x86_64 CPU or CUDA-12.6
+# Torch/Torchvision wheels; combined with `[tool.uv.sources]` below, enabling one
+# extra redirects the base-dep torch to the matching index. The worker Dockerfiles
+# install `uv sync --no-install-project --extra worker-cpu` (or `worker-gpu`),
+# i.e. the base deps above with one of these extras layered on. The two extras are
+# mutually exclusive (see `[tool.uv].conflicts`).
+worker-cpu = [
+    "torch==2.9.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.24.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+worker-gpu = [
+    "torch==2.9.1+cu126; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.24.1+cu126; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "worker-cpu" },
+        { extra = "worker-gpu" },
+    ],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "worker-cpu" },
+    { index = "pytorch-cu126", extra = "worker-gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "worker-cpu" },
+    { index = "pytorch-cu126", extra = "worker-gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 # Dependency set for the slim API container image (backend/docker/api, web-app-plan §8).
 # Install with `uv sync --only-group api` — unlike an extra, --only-group
@@ -64,60 +115,6 @@ dev = [
 # advisory-chat LLM libraries (`langgraph`, `langchain-openai`) plus `openpyxl`
 # so the API can serve chat and ABCD export routes.
 [dependency-groups]
-# Runtime dependency set for the heavy Celery worker container images
-# (backend/docker/core/{cpu,gpu}). It is a dependency-group (not an extra) for
-# the same reason as `api`: groups install in ISOLATION via
-# `uv pip install --group worker`, so the
-# image gets exactly this curated set and NOT the base `[project.dependencies]`
-# superset. It is the full pipeline ML stack plus `psycopg2-binary` for Postgres
-# writes. The only base dep intentionally omitted is `types-PyYAML` (a mypy stub,
-# not needed at runtime). NOTE: `yapf` IS required at runtime — the vendored
-# GroundingDINO code imports it
-# (backend/src/dino/groundingdino/util/slconfig.py), so it stays here despite
-# looking like formatter-only tooling. The CPU worker Dockerfile exports this
-# locked group, strips torch/torchvision, installs those from the CPU torch wheel
-# index, then installs the remaining pinned requirements; the GPU variant swaps
-# the base image and torch wheel index for CUDA.
-worker = [
-    "colorlog>=6.10.1",
-    "hydra-core>=1.3.2",
-    "iopath>=0.1.10",
-    "opencv-python>=4.13.0.90",
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
-    "transformers",
-    "supervision>=0.22.0",
-    "paddleocr>=2.0.1",
-    "scikit-learn>=1.8.0",
-    "spacy>=3.8.11",
-    "scenedetect>=0.6.7.1",
-    "python-dotenv>=1.2.1",
-    "openai-agents>=0.7.0",
-    "pydantic>=2.12.5",
-    "nltk>=3.9.2",
-    "sentence-transformers>=5.2.2",
-    "facenet-pytorch>=2.5.3",
-    "openai-whisper>=20250625",
-    "paddlepaddle",
-    "addict",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "yapf",
-    "pycocotools",
-    "timm",
-    "PyYAML==6.0.3",
-    "sqlalchemy>=2.0.0",
-    "alembic>=1.18.5",
-    "python-ulid>=3.1.0",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "python-multipart>=0.0.9",
-    "celery>=5.3.0",
-    "redis>=5.0.0",
-    "psycopg2-binary>=2.9.0",
-    "google-cloud-storage>=2.18.0",
-]
-
 api = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",

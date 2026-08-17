@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPBearer
 
 from app.errors import ProblemException
 from app.settings import Settings, get_settings
@@ -26,32 +27,44 @@ if TYPE_CHECKING:
 # the videos registry, the input picker) reads this, so wiring in real auth is
 # "make current_user_id return the authenticated id" rather than a refactor.
 DEFAULT_USER_ID = "local"
+_bearer = HTTPBearer(
+    auto_error=False
+)  # auto_error=False → no creds isn't an instant 403
 
 
-def settings_dep() -> Settings:
-    return get_settings()
+def current_user_id(creds=Depends(_bearer)) -> str:
+    settings: Settings = get_settings()
+
+    if creds is None:
+        if settings.allow_anonymous_local:  # true in dev, false in prod
+            return DEFAULT_USER_ID
+        raise ProblemException(
+            status=401, title="Unauthorized", detail="authentication required"
+        )
+    return _verify_and_extract_sub(creds.credentials)
 
 
-def current_user_id() -> str:
-    """The requesting user's id. Constant until auth is added."""
-    return DEFAULT_USER_ID
+def _verify_and_extract_sub(credentials):
+    pass
 
 
-def video_storage_dep(settings: Settings = Depends(settings_dep)) -> VideoStorage:
+def video_storage_dep() -> VideoStorage:
     """The configured video storage backend (local disk or a GCS bucket)."""
+
+    settings: Settings = get_settings()
     return make_video_storage(
         settings.storage_backend, settings.input_dir, settings.gcs_bucket
     )
 
 
-def artifact_storage_dep(
-    settings: Settings = Depends(settings_dep),
-) -> ArtifactUploader:
+def artifact_storage_dep() -> ArtifactUploader:
     """The configured artifact storage backend, used to sign served artifacts.
 
     Same selector as video storage; only the read side (``tracked_video_url``)
     is exercised by the API — the write side runs in the worker's engine.
     """
+
+    settings: Settings = get_settings()
     return make_artifact_uploader(settings.storage_backend, settings.gcs_bucket)
 
 
@@ -104,3 +117,43 @@ def get_executor(request: Request) -> "ThreadPoolExecutor":
 
 def get_futures(request: Request) -> "dict[str, Future[None]]":
     return getattr(request.app.state, "futures", {})
+
+
+def require_owned_run(
+    run_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    user_id: str = Depends(current_user_id),
+) -> dict:
+    """Authorize a by-run-id read and return the run row.
+
+    Run-scoped tables have no user column; ownership is derived by resolving the
+    run to the job that produced it (``reader.run_owner``). A missing run *or* one
+    owned by another user both 404 — returning 403 for the latter would leak the
+    run's existence and let ids be enumerated. Depend on this in place of a bare
+    existence check; the leaf reads that follow are then safe because the caller
+    is known to own the run.
+    """
+    run = reader.get_run(run_id)
+    if run is None or reader.run_owner(run_id) != user_id:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"run '{run_id}' not found"
+        )
+    return run
+
+
+def require_owned_job(
+    job_id: str,
+    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    user_id: str = Depends(current_user_id),
+) -> dict:
+    """Authorize a by-job-id read and return the job row.
+
+    Ownership lives directly on ``jobs.created_by``. As with runs, a job the
+    caller doesn't own 404s rather than 403s so existence isn't leaked.
+    """
+    job = reader.get_job(job_id)
+    if job is None or job.get("created_by") != user_id:
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"job '{job_id}' not found"
+        )
+    return job

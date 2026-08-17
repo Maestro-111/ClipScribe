@@ -28,18 +28,10 @@ WORKDIR /app/backend
 
 RUN uv venv --python python3.12 "$VIRTUAL_ENV"
 
-# CUDA torch first (from the CUDA wheel index; it pulls its own nvidia-* deps),
-# then the rest of the LOCKED worker group. We export from uv.lock rather than
-# `uv pip install --group worker` because a fresh resolve backtracks numba to an
-# ancient version whose llvmlite can't build on Python 3.12. Strip the torch/CUDA
-# lines from the export (already installed above) and install the rest pinned.
+# Install the locked worker runtime. The worker-gpu extra selects the CUDA 12.6
+# Torch and Torchvision wheels.
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv pip install --no-cache torch torchvision \
-        --index-url https://download.pytorch.org/whl/cu126
-RUN uv export --frozen --no-emit-project --no-hashes --only-group worker \
-        -o /tmp/worker-reqs.txt && \
-    sed -i '/^torch==/d; /^torchvision==/d; /^nvidia-/d' /tmp/worker-reqs.txt && \
-    uv pip install --no-cache -r /tmp/worker-reqs.txt
+RUN uv sync --frozen --no-install-project --no-dev --extra worker-gpu
 RUN uv pip install --no-cache \
         "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 
@@ -52,7 +44,7 @@ COPY --from=python:3.12-slim /usr/lib /usr/lib
 COPY --from=python:3.12-slim /lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg libgl1 libglib2.0-0 ca-certificates \
+        build-essential ffmpeg libgl1 libglib2.0-0 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \

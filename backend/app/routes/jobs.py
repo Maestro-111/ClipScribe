@@ -18,7 +18,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app import exports
-from app.deps import current_user_id, get_reader, get_writer
+from app.deps import current_user_id, get_reader, get_writer, require_owned_job
 from app.errors import ProblemException
 from app.events import started_key, stream_key, summarize_progress
 from app.job_runner import JobService, build_job_response
@@ -44,12 +44,17 @@ _TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "canceled"})
 _XREAD_BLOCK_MS = 15000
 
 
-def get_job_service(request: Request) -> JobService:
+def get_job_service(
+    request: Request,
+    user_id: str = Depends(current_user_id),
+) -> JobService:
     """Assemble the job service from process-wide state (overridable in tests).
 
     DB reader/writer come from ``app.state`` (populated in lifespan from the
     builder inline, or a standalone engine in celery mode). The builder,
     executor, and futures are inline-only and stay ``None`` under celery.
+    ``user_id`` is injected (not called) so the real auth dependency resolves
+    the bearer token; the service scopes every job it writes to it.
     """
     state = request.app.state
     return JobService(
@@ -61,7 +66,7 @@ def get_job_service(request: Request) -> JobService:
             state.settings.input_dir,
             state.settings.gcs_bucket,
         ),
-        current_user_id(),
+        user_id,
         builder=getattr(state, "builder", None),
         executor=getattr(state, "executor", None),
         futures=getattr(state, "futures", None),
@@ -87,25 +92,24 @@ def list_jobs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     reader: "ClipScribeReaderDB" = Depends(get_reader),
+    user_id: str = Depends(current_user_id),
 ) -> JobListResponse:
     # Only top-level (parent/standalone) jobs are listed; each carries its
-    # children and an aggregated status. The reader applies any status filter
-    # before pagination using the same effective parent status.
-    parents = reader.list_parent_jobs(limit=limit, offset=offset, status=job_status)
+    # children and an aggregated status. Scoped to the caller (created_by) and
+    # the reader applies any status filter before pagination using the same
+    # effective parent status.
+    parents = reader.list_parent_jobs(
+        user_id, limit=limit, offset=offset, status=job_status
+    )
     jobs = [build_job_response(reader, p) for p in parents]
     return JobListResponse(jobs=jobs, limit=limit, offset=offset)
 
 
 @router.get("/{job_id}", response_model=JobResponse, summary="Get a job")
 def get_job(
-    job_id: str,
     reader: "ClipScribeReaderDB" = Depends(get_reader),
+    job: dict = Depends(require_owned_job),
 ) -> JobResponse:
-    job = reader.get_job(job_id)
-    if job is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
-        )
     return build_job_response(reader, job)
 
 
@@ -140,6 +144,7 @@ def export_job(
     job_id: str,
     fmt: str = Query(default="xlsx", alias="format"),
     reader: "ClipScribeReaderDB" = Depends(get_reader),
+    job: dict = Depends(require_owned_job),
 ) -> Response:
     """Export all completed runs in a job as one CSV or XLSX download.
 
@@ -149,11 +154,6 @@ def export_job(
     if fmt not in exports.VALID_FORMATS:
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
-        )
-    job = reader.get_job(job_id)
-    if job is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
     reports = _job_run_reports(reader, job)
     if not reports:
@@ -282,12 +282,9 @@ async def job_events(
     job_id: str,
     request: Request,
     reader: "ClipScribeReaderDB" = Depends(get_reader),
+    _job: dict = Depends(require_owned_job),
 ) -> StreamingResponse:
     """Stream a job's progress + log events as Server-Sent Events."""
-    if reader.get_job(job_id) is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
-        )
     redis_url = request.app.state.settings.redis_url
     return StreamingResponse(
         _job_event_stream(redis_url, job_id, reader),
@@ -304,7 +301,7 @@ async def job_events(
 def job_progress(
     job_id: str,
     request: Request,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    job: dict = Depends(require_owned_job),
 ) -> JobProgressResponse:
     """One-shot progress percent from the job's Redis stream (no SSE).
 
@@ -312,11 +309,6 @@ def job_progress(
     A completed job reports 100 without touching Redis; if the stream is gone or
     Redis is down, percent falls back to 0 (or 100 when already completed).
     """
-    job = reader.get_job(job_id)
-    if job is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"job '{job_id}' not found"
-        )
     job_status = job.get("status", "queued")
     if job_status == "completed":
         return JobProgressResponse(job_id=job_id, status=job_status, percent=100.0)

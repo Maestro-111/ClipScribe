@@ -17,7 +17,12 @@ from app.deps import get_reader, get_writer
 from app.main import app
 from app.routes.chat import get_chat_service
 from src.db.reader import ClipScribeReaderDB
-from src.db.schema import metadata_obj, parser_results_table, runs_table
+from src.db.schema import (
+    jobs_table,
+    metadata_obj,
+    parser_results_table,
+    runs_table,
+)
 from src.db.writer import ClipScribeWriterDB
 from src.parser.tools import build_tools
 
@@ -34,6 +39,17 @@ def ctx(tmp_path):
     reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
     with engine.begin() as conn:
+        # Owning job so run_owner() resolves to the test user ("local") and the
+        # ownership guard admits the run-scoped chat routes.
+        conn.execute(
+            jobs_table.insert(),
+            {
+                "job_id": "j1",
+                "run_id": RUN_ID,
+                "status": "completed",
+                "created_by": "local",
+            },
+        )
         conn.execute(runs_table.insert(), {"run_id": RUN_ID, "video_name": "ad.mp4"})
         conn.execute(
             parser_results_table.insert(),

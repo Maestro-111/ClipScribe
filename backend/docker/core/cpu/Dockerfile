@@ -46,19 +46,10 @@ WORKDIR /app/backend
 
 RUN uv venv "$VIRTUAL_ENV"
 
-# Install the LOCKED `worker` group. We export the group from uv.lock rather
-# than `uv pip install --group worker` because a fresh resolve backtracks numba
-# to an ancient version whose llvmlite can't build on Python 3.12. Exporting
-# pins the same 3.12-compatible versions the repo already resolved. Then: strip
-# the CUDA torch stack from the export, install torch/torchvision from the CPU
-# wheel index, and install the rest pinned.
+# Install the locked worker runtime. The worker-cpu extra selects the CPU Torch
+# and Torchvision wheels.
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv export --frozen --no-emit-project --no-hashes --only-group worker \
-        -o /tmp/worker-reqs.txt && \
-    sed -i '/^torch==/d; /^torchvision==/d; /^nvidia-/d' /tmp/worker-reqs.txt && \
-    uv pip install --no-cache torch==2.9.1 torchvision==0.24.1 \
-        --index-url https://download.pytorch.org/whl/cpu && \
-    uv pip install --no-cache -r /tmp/worker-reqs.txt
+RUN uv sync --frozen --no-install-project --no-dev --extra worker-cpu
 
 # spaCy's en_core_web_sm is a pip wheel (not a cache download) — bake it into the
 # venv so it never needs fetching at runtime (mirrors `make spacy`).

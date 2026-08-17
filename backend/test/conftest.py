@@ -18,6 +18,11 @@ def _pin_local_storage(monkeypatch):
     monkeypatch.setenv("CLIPSCRIBE_STORAGE_BACKEND", "local")
     monkeypatch.delenv("CLIPSCRIBE_GCS_BUCKET", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    # Auth is user-scoped (jobs.created_by), but the suite sends no bearer
+    # token. Enable the dev anonymous-local fallback so current_user_id resolves
+    # every request to DEFAULT_USER_ID ("local") — exercising the real auth
+    # dependency rather than stubbing it. Seeds therefore use created_by="local".
+    monkeypatch.setenv("CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL", "true")
     settings_mod.get_settings.cache_clear()
     yield
     settings_mod.get_settings.cache_clear()

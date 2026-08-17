@@ -123,17 +123,17 @@ def test_list_jobs_orders_recent_first_and_filters_status(db):
     # ULIDs are monotonic, so a later create sorts first under DESC ordering.
     old = new_ulid()
     new = new_ulid()
-    writer.create_job(job_id=old, mode="full", status="completed")
-    writer.create_job(job_id=new, mode="full", status="queued")
+    writer.create_job(job_id=old, mode="full", status="completed", created_by="u1")
+    writer.create_job(job_id=new, mode="full", status="queued", created_by="u1")
 
-    ids = [j["job_id"] for j in reader.list_jobs()]
+    ids = [j["job_id"] for j in reader.list_jobs("u1")]
     assert ids.index(new) < ids.index(old)
 
-    queued = reader.list_jobs(status="queued")
+    queued = reader.list_jobs("u1", status="queued")
     assert [j["job_id"] for j in queued] == [new]
 
-    assert reader.list_jobs(limit=1) == reader.list_jobs(limit=1, offset=0)
-    assert len(reader.list_jobs(limit=1)) == 1
+    assert reader.list_jobs("u1", limit=1) == reader.list_jobs("u1", limit=1, offset=0)
+    assert len(reader.list_jobs("u1", limit=1)) == 1
 
 
 def test_parent_children_and_siblings(db):
@@ -141,13 +141,14 @@ def test_parent_children_and_siblings(db):
     parent = new_ulid()
     child_a = new_ulid()
     child_b = new_ulid()
-    writer.create_job(job_id=parent, mode="full", status="queued")
+    writer.create_job(job_id=parent, mode="full", status="queued", created_by="u1")
     writer.create_job(
         job_id=child_a,
         mode="full",
         parent_job_id=parent,
         run_id="run-a",
         video_name="a.mp4",
+        created_by="u1",
     )
     writer.create_job(
         job_id=child_b,
@@ -155,10 +156,11 @@ def test_parent_children_and_siblings(db):
         parent_job_id=parent,
         run_id="run-b",
         video_name="b.mp4",
+        created_by="u1",
     )
 
     # Only the parent is top-level; children are excluded from the list.
-    parents = reader.list_parent_jobs()
+    parents = reader.list_parent_jobs("u1")
     assert [p["job_id"] for p in parents] == [parent]
 
     children = reader.get_child_jobs(parent)
@@ -166,10 +168,12 @@ def test_parent_children_and_siblings(db):
     assert children[0]["parent_job_id"] == parent
 
     # A run resolves to its siblings (both children), including itself.
-    siblings = reader.get_run_siblings("run-a")
+    siblings = reader.get_run_siblings("run-a", "u1")
     assert {s["run_id"] for s in siblings} == {"run-a", "run-b"}
     # A run with no batch job has no siblings.
-    assert reader.get_run_siblings("orphan") == []
+    assert reader.get_run_siblings("orphan", "u1") == []
+    # Another user sees no siblings for a run they don't own.
+    assert reader.get_run_siblings("run-a", "u2") == []
 
 
 def test_effective_status_matches_aggregate_status(db):
@@ -195,7 +199,9 @@ def test_effective_status_matches_aggregate_status(db):
     for size in (1, 2, 3):
         for combo in combinations_with_replacement(child_states, size):
             parent = new_ulid()
-            writer.create_job(job_id=parent, mode="full", status="queued")
+            writer.create_job(
+                job_id=parent, mode="full", status="queued", created_by="u1"
+            )
             for child_status in combo:
                 writer.create_job(
                     job_id=new_ulid(),
@@ -203,6 +209,7 @@ def test_effective_status_matches_aggregate_status(db):
                     parent_job_id=parent,
                     run_id=new_ulid(),
                     status=child_status,
+                    created_by="u1",
                 )
             expected[parent] = aggregate_status(list(combo))
 
@@ -210,10 +217,40 @@ def test_effective_status_matches_aggregate_status(db):
     # those whose Python-aggregated status matches.
     for status in child_states:
         sql_ids = {
-            p["job_id"] for p in reader.list_parent_jobs(status=status, limit=500)
+            p["job_id"] for p in reader.list_parent_jobs("u1", status=status, limit=500)
         }
         python_ids = {pid for pid, s in expected.items() if s == status}
         assert sql_ids == python_ids, f"status={status!r}: {sql_ids} != {python_ids}"
+
+
+def test_list_and_run_owner_are_user_scoped(db):
+    """Job lists are scoped to created_by and run_owner resolves the owner.
+
+    Two users each own a job; neither's list leaks the other's, and run_owner
+    maps a run back to the user whose job produced it (the seam the API's
+    ownership guard authorizes reads with).
+    """
+    writer, reader, _ = db
+    writer.create_job(job_id="pa", mode="full", created_by="alice")
+    writer.create_job(
+        job_id="ca",
+        mode="full",
+        parent_job_id="pa",
+        run_id="run-a",
+        created_by="alice",
+    )
+    writer.create_job(job_id="pb", mode="full", created_by="bob")
+
+    assert [p["job_id"] for p in reader.list_parent_jobs("alice")] == ["pa"]
+    assert [p["job_id"] for p in reader.list_parent_jobs("bob")] == ["pb"]
+    assert reader.list_parent_jobs("carol") == []
+
+    alice_jobs = {j["job_id"] for j in reader.list_jobs("alice")}
+    assert alice_jobs == {"pa", "ca"}  # list_jobs is not parent-only
+    assert {j["job_id"] for j in reader.list_jobs("bob")} == {"pb"}
+
+    assert reader.run_owner("run-a") == "alice"
+    assert reader.run_owner("nonexistent-run") is None
 
 
 def test_list_runs_most_recent_first(db):

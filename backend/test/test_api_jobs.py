@@ -245,7 +245,7 @@ def test_dispatch_unavailable_creates_no_rows(ctx):
     # half-created parent behind.
     assert resp.status_code == 503
     assert "Inline job execution is unavailable" in resp.json()["detail"]
-    assert state.reader.list_jobs() == []
+    assert state.reader.list_jobs("local") == []
 
 
 def test_canceled_job_does_not_start_if_task_later_runs(ctx):
@@ -345,7 +345,7 @@ def test_create_job_missing_video_is_404(ctx):
     assert resp.status_code == 404
     assert resp.headers["content-type"] == "application/problem+json"
     # a failed resolve happens before any row is written
-    assert state.reader.list_jobs() == []
+    assert state.reader.list_jobs("local") == []
 
 
 def test_create_job_path_traversal_is_400(ctx):
@@ -378,7 +378,7 @@ def test_create_job_rejects_video_registered_to_another_user(ctx):
     )
 
     assert resp.status_code == 404
-    assert state.reader.list_jobs() == []
+    assert state.reader.list_jobs("local") == []
 
 
 def test_create_job_requires_a_video_422(ctx):
@@ -404,7 +404,7 @@ def test_parse_via_job_api_is_rejected(ctx):
         "/jobs", json={"mode": "parse", "platform": "youtube", "run_id": "whatever"}
     )
     assert resp.status_code == 400
-    assert state.reader.list_jobs() == []
+    assert state.reader.list_jobs("local") == []
 
 
 def test_unsupported_platform_is_422(ctx):
@@ -458,7 +458,7 @@ def test_retry_child_runs_in_place(ctx):
 
     # Still exactly two children under the one parent — no new job created.
     assert len(state.reader.get_child_jobs(parent_id)) == 2
-    assert len(state.reader.list_parent_jobs()) == 1
+    assert len(state.reader.list_parent_jobs("local")) == 1
 
 
 def test_retry_child_ignores_remote_artifact_factory_errors(ctx, monkeypatch):

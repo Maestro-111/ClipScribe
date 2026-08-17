@@ -28,15 +28,16 @@ WORKDIR /app/backend
 
 RUN uv venv "$VIRTUAL_ENV"
 
-# Install ONLY the slim `api` dependency group, from the LOCK (not a fresh
-# resolve): `uv export --frozen` dumps uv.lock's pinned versions for the group,
-# then we install exactly those — same lock-fidelity pattern as the worker image,
-# minus the torch/CUDA handling (the api group is torch-free). `--only-group`
-# excludes the heavy base `[project.dependencies]`.
+# Install ONLY the slim `api` dependency group straight from the lock, using the
+# same `uv sync --frozen` pattern as the worker images (no fresh resolve) minus
+# the torch/CUDA extras (the api group is torch-free). `--only-group api` installs
+# just that group and EXCLUDES the heavy base `[project.dependencies]`
+# (torch/paddle/whisper/opencv) and the project itself; `--no-install-project`
+# skips building the package (src/ isn't copied yet). Unlike the multi-stage
+# worker images — which discard their uv cache in a throwaway builder stage — this
+# image is single-stage, so `--no-cache` keeps the cache out of the final layer.
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv export --frozen --no-emit-project --no-hashes --only-group api \
-        -o /tmp/api-reqs.txt && \
-    uv pip install --no-cache -r /tmp/api-reqs.txt
+RUN uv sync --frozen --no-install-project --no-cache --only-group api
 
 # Copy just what the API imports at module load; the extractor/ocr/dino/sam2
 # trees are intentionally omitted to keep the image slim and torch-free.

@@ -25,6 +25,7 @@ from src.db.schema import (
     scene_descriptions_table,
     frame_detections_table,
     parser_results_table,
+    jobs_table,
 )
 
 RUN_ID = "r1"
@@ -38,6 +39,18 @@ def client(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
     metadata_obj.create_all(engine)
     with engine.begin() as conn:
+        # A run is only reachable through the job that produced it; seed that
+        # owning job so run_owner() resolves to "local" (the test user) and the
+        # ownership guard admits the read.
+        conn.execute(
+            jobs_table.insert(),
+            {
+                "job_id": "j1",
+                "run_id": RUN_ID,
+                "status": "completed",
+                "created_by": "local",
+            },
+        )
         conn.execute(runs_table.insert(), {"run_id": RUN_ID, "video_name": "ad.mp4"})
         conn.execute(
             global_stats_table.insert(),

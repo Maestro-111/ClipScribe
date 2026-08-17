@@ -176,6 +176,7 @@ class JobService:
             device=device,
             platform=req.platform.value,
             params_json=req.model_dump(mode="json"),
+            created_by=self.user_id,
         )
 
         for video, video_key in resolved:
@@ -196,6 +197,7 @@ class JobService:
                 device=device,
                 platform=req.platform.value,
                 params_json=child_req.model_dump(mode="json"),
+                created_by=self.user_id,
             )
             payload = build_task_payload(
                 job_id=child_id,
@@ -339,6 +341,22 @@ class JobService:
                 ),
             )
 
+    def _require_owned(self, job: dict) -> None:
+        """404 a job the requesting user doesn't own (``jobs.created_by``).
+
+        Guards the mutation paths (cancel/delete/retry), which resolve a job by
+        id straight from the URL. Children are reached only through an
+        already-owner-checked parent and share its ``created_by``, so they need
+        no separate check. A non-owned job 404s rather than 403s so its existence
+        isn't leaked — matching the read-side guards in app/deps.py.
+        """
+        if job.get("created_by") != self.user_id:
+            raise ProblemException(
+                status=404,
+                title="Not Found",
+                detail=f"job '{job['job_id']}' not found",
+            )
+
     def cancel_job(self, job_id: str) -> None:
         """Cancel a queued or running job.
 
@@ -351,6 +369,7 @@ class JobService:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
+        self._require_owned(job)
         if job.get("parent_job_id") is None:
             children = self.reader.get_child_jobs(job_id)
             if children:
@@ -385,6 +404,7 @@ class JobService:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
+        self._require_owned(job)
         if job.get("parent_job_id") is None:
             for child in self.reader.get_child_jobs(job_id):
                 self._delete_child(child)
@@ -420,6 +440,7 @@ class JobService:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
+        self._require_owned(job)
         if job.get("parent_job_id") is not None:
             return self._retry_child_in_place(job)
 

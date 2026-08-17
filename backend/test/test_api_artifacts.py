@@ -17,7 +17,7 @@ from app.deps import (
 from app.main import app
 from app.settings import Settings
 from src.db.reader import ClipScribeReaderDB
-from src.db.schema import metadata_obj, runs_table
+from src.db.schema import jobs_table, metadata_obj, runs_table
 from src.db.writer import ClipScribeWriterDB
 
 RUN_ID = "r1"
@@ -31,6 +31,17 @@ def client(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'art.db'}")
     metadata_obj.create_all(engine)
     with engine.begin() as conn:
+        # Owning job so run_owner() resolves to "local" and the ownership guard
+        # admits the artifact routes.
+        conn.execute(
+            jobs_table.insert(),
+            {
+                "job_id": "j1",
+                "run_id": RUN_ID,
+                "status": "completed",
+                "created_by": "local",
+            },
+        )
         conn.execute(
             runs_table.insert(),
             {"run_id": RUN_ID, "video_name": "ad.mp4", "video_path": "ad.mp4"},

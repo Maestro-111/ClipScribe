@@ -19,30 +19,21 @@ archived ``artifacts.tar.gz`` bundle, not as loose objects.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.deps import artifact_storage_dep, get_reader, settings_dep, video_storage_dep
+from app.deps import (
+    artifact_storage_dep,
+    require_owned_run,
+    video_storage_dep,
+)
 from app.errors import ProblemException
-from app.settings import PROJECT_ROOT, Settings
+from app.settings import PROJECT_ROOT, Settings, get_settings
 from src.utils.clip_scribe_artifacts import ArtifactUploader, run_artifact_dir
 from src.utils.clip_scribe_video_storage import VideoStorage
 
-if TYPE_CHECKING:
-    from src.db import ClipScribeReaderDB
-
 router = APIRouter(prefix="/runs", tags=["artifacts"])
-
-
-def _require_run(reader: "ClipScribeReaderDB", run_id: str) -> dict:
-    run = reader.get_run(run_id)
-    if run is None:
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"run '{run_id}' not found"
-        )
-    return run
 
 
 def _artifact_dir(run_id: str) -> Path:
@@ -63,12 +54,9 @@ def _file_or_404(path: Path, what: str) -> FileResponse:
     response_model=None,  # returns FileResponse or a 302 redirect, not a model
 )
 def get_video(
-    run_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
-    settings: Settings = Depends(settings_dep),
+    run: dict = Depends(require_owned_run),
     storage: VideoStorage = Depends(video_storage_dep),
 ) -> FileResponse | RedirectResponse:
-    run = _require_run(reader, run_id)
     stored = run.get("video_path") or ""
     if not stored:
         raise ProblemException(
@@ -76,6 +64,7 @@ def get_video(
         )
     # GCS: hand the browser a signed URL for the stored key and let it stream
     # directly from the bucket.
+    settings: Settings = get_settings()
     url = storage.signed_url(stored)
     if url is not None:
         return RedirectResponse(url)
@@ -100,13 +89,12 @@ def get_video(
 )
 def get_tracked_video(
     run_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
-    settings: Settings = Depends(settings_dep),
     artifacts: ArtifactUploader = Depends(artifact_storage_dep),
+    _run: dict = Depends(require_owned_run),
 ) -> FileResponse | RedirectResponse:
-    _require_run(reader, run_id)
     # GCS: 302 to the signed URL for the loose tracked_output.mp4 object.
     url = artifacts.tracked_video_url(run_id)
+    settings: Settings = get_settings()
     if url is not None:
         return RedirectResponse(url)
     if settings.storage_backend == "gcs":
