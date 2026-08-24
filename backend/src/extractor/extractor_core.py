@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from src.extractor.scene_describer import GPTSceneDescriber
     from src.ocr.paddle_wrapper import OCRSystem
     from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
+    from src.sam2.sam.sam2_video_processor import SAM2VideoPredictor
 
 
 Box: TypeAlias = Sequence[float]
@@ -397,7 +398,7 @@ class VideoInformationExtractor:
 
     def __init__(
         self,
-        sam_model: Any,
+        sam_model: "SAM2VideoPredictor",
         dino_model: "DinoDetector",
         scene_describer: "GPTSceneDescriber",
         ocr_engine: "OCRSystem",
@@ -417,6 +418,7 @@ class VideoInformationExtractor:
         label_match_merge_threshold: float,
         label_no_match_merge_threshold: float,
         detection_interval: int = 10,
+        iou_threshold: float = 0.5,
         reid_model_frame_check_freq: int = 20,
         reid_similarity_difference: float = 0.8,
         min_samples: int = 1,
@@ -452,6 +454,11 @@ class VideoInformationExtractor:
         self.obj_id_counter = 1
 
         self.active_trackers: dict[int, TrackerData] = {}
+        # SAM2 retains every object ID prompted during a shot, even after its
+        # mask becomes empty and active_trackers drops it. Keep an extractor-
+        # owned mirror so checkpoint reconciliation does not depend on SAM2's
+        # private inference-state dictionaries.
+        self._sam_registered_tracker_ids: set[int] = set()
         self.id_to_label: dict[int, str] = {}
 
         self.text_registry: dict[int, set[str]] = defaultdict(set)
@@ -465,6 +472,8 @@ class VideoInformationExtractor:
 
         self.dino_text_conf = dino_text_conf
         self.dino_box_conf = dino_box_conf
+
+        self.iou_threshold = iou_threshold
 
         self.torch_face_cong = torch_face_cong
 
@@ -633,6 +642,7 @@ class VideoInformationExtractor:
         # clearing in place: the completed extraction summary may still hold
         # references to the old lists/dicts while the engine persists it.
         self.active_trackers = {}
+        self._sam_registered_tracker_ids = set()
         self.id_to_label = {}
         self.text_registry = defaultdict(set)
         self.object_registry = {}
@@ -673,14 +683,79 @@ class VideoInformationExtractor:
             iou = self._calculate_iou(new_box, active_box)
 
             logger.info(
-                f"Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}"
+                f"Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}; "
+                f"iou threshold = {self.iou_threshold}"
             )
 
-            if iou > 0.5:
+            if iou >= self.iou_threshold:
                 if self._labels_match(new_label, active_label):
                     return False
 
         return True
+
+    def _predict_registered_objects_at(self, frame_idx: int) -> dict[int, TrackerData]:
+        """Project this shot's registered SAM2 IDs onto one checkpoint frame.
+
+        ``active_trackers`` only contains IDs whose latest propagated mask was
+        non-empty. SAM2 still retains IDs whose masks became empty, so project
+        every registered ID onto the new detection frame before deciding
+        whether detector boxes represent new objects. ``max_frame_num_to_track
+        = 0`` asks the local SAM2 predictor to process only ``frame_idx``.
+
+        This method deliberately returns tracker state without recording
+        metadata; the normal chunk propagation records the frame once after
+        detector reconciliation is complete.
+        """
+        if not self._sam_registered_tracker_ids:
+            return {}
+
+        predictions = self.sam_model.propagate_in_video(
+            self.inference_state,
+            start_frame_idx=frame_idx,
+            max_frame_num_to_track=0,
+        )
+        prediction = next(predictions, None)
+        if prediction is None:
+            raise RuntimeError(
+                f"SAM2 checkpoint projection returned no frame for {frame_idx}"
+            )
+
+        predicted_frame_idx, obj_ids, video_res_masks = prediction
+        if predicted_frame_idx != frame_idx:
+            raise RuntimeError(
+                "SAM2 checkpoint projection returned frame "
+                f"{predicted_frame_idx}, expected {frame_idx}"
+            )
+
+        masks_np = video_res_masks.cpu().numpy()
+        if len(obj_ids) != len(masks_np):
+            raise RuntimeError(
+                "SAM2 checkpoint projection returned mismatched object IDs and masks"
+            )
+        if set(obj_ids) != self._sam_registered_tracker_ids:
+            raise RuntimeError(
+                "SAM2 checkpoint projection returned IDs that differ from the "
+                "extractor's registered-ID mirror"
+            )
+
+        visible_trackers: dict[int, TrackerData] = {}
+        for obj_id, mask_logits in zip(obj_ids, masks_np):
+            current_box = self._mask_to_box(mask_logits > 0.0)
+            if current_box is None:
+                continue
+
+            visible_trackers[obj_id] = {
+                "box": current_box,
+                "label": self.id_to_label[obj_id],
+            }
+
+        logger.info(
+            "SAM2 checkpoint projection at frame %s found %s/%s registered objects",
+            frame_idx,
+            len(visible_trackers),
+            len(self._sam_registered_tracker_ids),
+        )
+        return visible_trackers
 
     def _get_next_obj_id(self) -> int:
         """Return the next available object ID and increment the counter."""
@@ -1281,6 +1356,7 @@ class VideoInformationExtractor:
             obj_id=new_id,
             box=box,
         )
+        self._sam_registered_tracker_ids.add(new_id)
 
     def _analyze_audio(self, video_path: str) -> None:
         """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
@@ -1376,6 +1452,7 @@ class VideoInformationExtractor:
             self.sam_model.reset_state(self.inference_state)
 
             self.active_trackers = {}
+            self._sam_registered_tracker_ids = set()
             self.current_frame = start_f
 
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
@@ -1486,6 +1563,13 @@ class VideoInformationExtractor:
                     break
 
                 raw_image_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+                # SAM2 retains IDs whose masks became empty in the preceding
+                # chunk. Project those IDs onto this checkpoint before DINO or
+                # MTCNN can register a reappearing object under a second ID.
+                self.active_trackers = self._predict_registered_objects_at(
+                    self.current_frame
+                )
 
                 detected_objects_data = self.dingo_model.detect(
                     raw_image_rgb,

@@ -55,6 +55,9 @@ clip_scribe:
     reid_similarity_difference: 0.8
 
 
+    iou_threshold: 0.5
+
+
     # model to guess the closes video type
     video_matcher:
       llm: "gpt-5.4"

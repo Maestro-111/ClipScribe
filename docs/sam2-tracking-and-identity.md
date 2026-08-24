@@ -37,6 +37,7 @@ The tracking layer answers two questions:
 |---|---|---|---|
 | `obj_id_counter` | `int` | **Whole run**, never reset | Hands out globally-unique local IDs (`_get_next_obj_id`). |
 | `active_trackers` | `dict[int, TrackerData]` | **Reset every shot** (`= {}`) | The extractor's mirror of "which objects are on screen right now." Drives `_is_new_object`. |
+| `_sam_registered_tracker_ids` | `set[int]` | **Reset every shot** | Extractor-owned mirror of every ID prompted into the current SAM2 shot state, including IDs whose latest masks are empty. |
 | `id_to_label` | `dict[int, str]` | **Whole run**, never reset | Maps each local ID → its resolved semantic label. Pure bookkeeping. |
 | `object_registry` | `dict[int, ObjectRegistryEntry]` | **Whole run**, entries never deleted | Per-object accumulator: boxes, timestamps, embedding sum/count. Feeds the final summary. |
 | `inference_state` | SAM2 opaque state | **Reset every shot** (`reset_state`) | SAM2's internal memory of all prompts added this shot. |
@@ -71,18 +72,21 @@ shot:
 Per chunk, in `extract`:
 
 1. Read frame at `current_frame` (= `D`).
-2. **Detect**: DINO objects + MTCNN faces.
-3. For each detection, resolve a taxonomy label, then `_is_new_object`:
+2. If this shot already has registered IDs, project them onto `D` with a
+   one-frame SAM2 propagation (`max_frame_num_to_track=0`). Replace
+   `active_trackers` with the IDs whose projected masks are non-empty.
+3. **Detect**: DINO objects + MTCNN faces.
+4. For each detection, resolve a taxonomy label, then `_is_new_object`:
    - If it does **not** overlap (IoU > 0.5, same/related label) an entry in
      `active_trackers` → `_add_new_tracker`: allocate a new ID, store it in
      `id_to_label` + `active_trackers`, and register a SAM2 prompt
      (`add_new_points_or_box`) at frame `D`.
-4. If `active_trackers` is empty, skip ahead `frames_to_track` and `continue`.
-5. **Propagate**: `propagate_in_video(start_frame_idx=D,
+5. If `active_trackers` is empty, skip ahead `frames_to_track` and `continue`.
+6. **Propagate**: `propagate_in_video(start_frame_idx=D,
    max_frame_num_to_track=k)` yields one `(frame_idx, obj_ids,
    video_res_masks)` tuple per frame in `[D, D+k]`.
-6. For each yielded frame → `_save_metadata` + `visualize_sam_tracking`.
-7. `current_frame = last_propagated_frame + 1`.
+7. For each yielded frame → `_save_metadata` + `visualize_sam_tracking`.
+8. `current_frame = last_propagated_frame + 1`.
 
 ### What the generator actually yields
 
@@ -303,36 +307,48 @@ Overlapping lifespans trip the guard in `_resolve_identities`
 | Stays dead permanently | Yes | disjoint | **MERGED** (1 global) |
 | Re-acquired *after* the new ID is born | Yes | overlap | **DUPLICATE** (2 globals) |
 
-> **Frequency is unmeasured.** SINGLE and DUPLICATE are expected to dominate;
-> in-shot MERGED is the tail case. The exact split depends on SAM2's
-> re-acquisition behavior and chunk timing, which we have not instrumented. To
-> measure it, log per-frame `(obj_id, mask_empty?)` and watch whether a
-> vanished ID ever returns non-empty — this requires a real extraction run.
+> **Frequency is unmeasured.** Checkpoint reconciliation should turn the common
+> reappearance case into SINGLE. The residual split between MERGED and
+> DUPLICATE depends on whether an old ID that was still empty at the checkpoint
+> later returns non-empty during the chunk. Measuring it requires a real
+> extraction run with per-frame `(obj_id, mask_empty?)` instrumentation.
 
 ---
 
-## 6. Why a new ID gets created: `_is_new_object`
+## 6. Preventing a second ID at detection checkpoints
 
 ```python
+active_trackers = _predict_registered_objects_at(current_frame)
+
 def _is_new_object(self, new_box, new_label) -> bool:
-    for obj_id, tracker_data in self.active_trackers.items():   # <-- only active_trackers
+    for obj_id, tracker_data in self.active_trackers.items():
         if iou(new_box, tracker_data["box"]) > 0.5 and labels_match(...):
             return False
     return True
 ```
 
-The decision consults **only `active_trackers`** — *not* SAM2's current mask
-set. So once an object has been popped (its mask went empty), a re-detection at
-the next `detect@D` cannot see that SAM2 still tracks it, and a new ID is
-minted. This is the root cause of State DUPLICATE.
+`_is_new_object` still consults `active_trackers`, but that collection is now
+refreshed once per detection checkpoint from SAM2's masks for **all IDs
+registered during the current shot**. The extractor maintains its own
+`_sam_registered_tracker_ids` mirror instead of reaching into SAM2's opaque
+inference-state dictionaries.
+
+If the old ID produces a non-empty mask on `D`, its mask box is restored to
+`active_trackers`. A same/related-label DINO box with sufficient IoU is
+therefore recognized as existing and no second ID is prompted:
 
 ```
         active_trackers  │  SAM2 knows
                          │
- detect@D5:  ID 5 popped │  ID 5 still registered  ── _is_new_object can't see this
-             → "new!"    │
-             → ID 9 born │  now SAM2 tracks BOTH 5 and 9
+ detect@D5:  ID 5 popped │  project every registered ID onto D5
+             ID 5 restored from its non-empty mask
+             DINO box overlaps ID 5 → existing; no ID 9
 ```
+
+This prevention relies on the old ID producing a usable mask at the checkpoint.
+If that mask is still empty and SAM2 only re-acquires the object later during
+the chunk, State DUPLICATE remains possible. Measuring that residual case
+requires the per-frame instrumentation described above.
 
 ---
 
@@ -428,11 +444,11 @@ object counts and aggregate screen-time in the final JSON / DB.
 
 ## 9. Known limitations & recommendations
 
-1. **Concurrent duplicates are unrepairable downstream.** The merge stage
-   cannot dissolve a same-object pair with overlapping lifespans. Mitigate
-   **upstream**: have `_is_new_object` also check against SAM2's *current*
-   non-empty masks (not just `active_trackers`), or de-duplicate overlapping
-   same-label tracks before `_resolve_identities`.
+1. **Checkpoint reconciliation depends on SAM2 re-acquisition.** The extractor
+   now checks every registered ID's current non-empty mask before allocating a
+   new ID. A residual duplicate is still possible if the old mask is empty at
+   the checkpoint and only becomes non-empty later in the chunk. Concurrent
+   duplicates remain unrepairable by the downstream overlap-guarded merge.
 
 2. **OCR is replayed per chunk, not re-run per frame.** Acceptable for
    second-level text events; document it so consumers don't assume per-frame
@@ -450,9 +466,10 @@ object counts and aggregate screen-time in the final JSON / DB.
    never removes the phantom. A best-match (e.g. Hungarian / highest-similarity)
    pass would be more robust if duplicates persist.
 
-5. **State frequencies are unmeasured.** Add a cheap per-frame
-   `(obj_id, mask_empty?)` debug log to quantify how often SINGLE / MERGED /
-   DUPLICATE actually fire before investing in a fix.
+5. **Residual state frequencies are unmeasured.** Add a cheap per-frame
+   `(obj_id, mask_empty?)` debug log to quantify how often the checkpoint
+   refresh prevents a second ID and how often late re-acquisition still creates
+   DUPLICATE.
 
 ---
 

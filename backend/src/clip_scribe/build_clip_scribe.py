@@ -198,6 +198,8 @@ class ClipScribeBuilder:
         dino_text_conf: float = dino_params.get("dino_text_conf", 0.4)
         dino_box_conf: float = dino_params.get("dino_box_conf", 0.4)
 
+        iou_threshold: float = clib_scribe_extractor_params.get("iou_threshold", 0.5)
+
         torch_face_cong: float = face_detection_params.get("torch_face_cong", 0.9)
 
         label_match_merge_threshold: float = clib_scribe_extractor_params.get(
@@ -266,6 +268,7 @@ class ClipScribeBuilder:
             label_match_merge_threshold,
             label_no_match_merge_threshold,
             detection_interval,
+            iou_threshold,
             reid_model_frame_check_freq,
             reid_similarity_difference,
             min_samples,
