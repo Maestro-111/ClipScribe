@@ -347,8 +347,10 @@ Numbered to extend `web-app-plan` §9; these are the ones this doc adds.
 4. **Scale-to-zero vs. warm floor** for the worker pool, and the KEDA schedule.
 5. **Cost guardrails** — per-batch OpenAI budget cap and where it's enforced
    (API pre-flight vs. worker).
-6. **Multi-user / auth** (still `web-app-plan` §9.3) — batches make "whose job is
-   this" and per-user quota matter sooner.
+6. **Production identity and quotas.** Request/resource ownership scoping has
+   landed, but bearer verification, identity-provider integration, and per-user
+   quotas remain open; see
+   [System architecture §6](system-architecture.md#6-data-artifacts-and-ownership).
 
 ---
 

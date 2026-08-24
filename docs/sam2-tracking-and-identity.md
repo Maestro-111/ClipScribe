@@ -174,13 +174,14 @@ if embedding_count == 0:
 else:
     current_mean = embedding_sum / embedding_count          # a VECTOR (384,), not a scalar
     cos_sim = dot(new_emb, current_mean) / (||new_emb|| * ||current_mean||)
-    if cos_sim < 0.85:                                      # only keep NOVEL viewpoints
+    if cos_sim < self.reid_similarity_difference:           # only keep NOVEL viewpoints
         embedding_sum += new_emb; embedding_count += 1
 ```
 
 This is a **multi-view accumulator**. It only folds in an embedding when the
-new view is *different enough* (`cos_sim < 0.85`) from what's already averaged,
-so near-duplicate frames don't over-weight whichever angle happened to appear
+new view is *different enough*
+(`cos_sim < self.reid_similarity_difference`) from what's already averaged, so
+near-duplicate frames don't over-weight whichever angle happened to appear
 most. The accumulated mean becomes the object's signature for cross-shot
 matching.
 
@@ -322,7 +323,7 @@ active_trackers = _predict_registered_objects_at(current_frame)
 
 def _is_new_object(self, new_box, new_label) -> bool:
     for obj_id, tracker_data in self.active_trackers.items():
-        if iou(new_box, tracker_data["box"]) > 0.5 and labels_match(...):
+        if iou(new_box, tracker_data["box"]) >= self.iou_threshold and labels_match(...):
             return False
     return True
 ```
@@ -454,11 +455,11 @@ object counts and aggregate screen-time in the final JSON / DB.
    second-level text events; document it so consumers don't assume per-frame
    OCR fidelity.
 
-3. **Remaining hardcoded thresholds.** The re-ID viewpoint-novelty threshold is
-   now configurable (`reid_similarity_difference`), but `0.5` (IoU in
-   `_is_new_object`), `0.85` (`wup_similarity` in `_labels_match`), and the OCR
-   `ignore_terms` list are still inline. Promote the behavioral ones to
-   `clip_scribe.yaml` for consistency with the existing re-ID thresholds.
+3. **Remaining hardcoded matching rules.** The IoU and re-ID viewpoint-novelty
+   thresholds are configurable (`iou_threshold` and
+   `reid_similarity_difference`), but `0.85` (`wup_similarity` in
+   `_labels_match`) and the OCR `ignore_terms` list remain inline. Promote the
+   remaining behavioral rules to `clip_scribe.yaml` for consistency.
 
 4. **Greedy, anchor-first merging is not best-match.** `_resolve_identities`
    merges the *first* candidate over threshold, not the most similar. Combined
@@ -480,6 +481,6 @@ object counts and aggregate screen-time in the final JSON / DB.
 | `masks_np[i] > 0.0` | foreground mask for object `i` (logit > 0 ≈ prob > 0.5) |
 | `current_box is None` | object not visible this frame → pop from `active_trackers` |
 | `embedding_sum / embedding_count` | mean re-ID embedding **vector** `(384,)` |
-| `cos_sim < 0.85` | new viewpoint novel enough to accumulate |
+| `cos_sim < reid_similarity_difference` | new viewpoint novel enough to accumulate |
 | `is_overlapping` | two tracks live at the same time → assumed distinct → never merged |
 | `end_a = max(end_a, end_b)` | anchor window extension on merge (strands later duplicates) |

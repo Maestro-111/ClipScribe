@@ -55,6 +55,9 @@ clip_scribe:
     reid_similarity_difference: 0.8
 
 
+    # Minimum IoU between a detector box and a visible SAM2 tracker before a
+    # matching label suppresses allocation of a second object ID.
+    # Range: 0.0-1.0. Default: 0.5
     iou_threshold: 0.5
 
 

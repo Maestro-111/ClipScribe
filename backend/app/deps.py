@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, Request
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
 from app.settings import Settings, get_settings
@@ -32,39 +32,49 @@ _bearer = HTTPBearer(
 )  # auto_error=False → no creds isn't an instant 403
 
 
-def current_user_id(creds=Depends(_bearer)) -> str:
+def current_user_id(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
     settings: Settings = get_settings()
 
+    if settings.allow_anonymous_local:
+        return DEFAULT_USER_ID
+
     if creds is None:
-        if settings.allow_anonymous_local:  # true in dev, false in prod
-            return DEFAULT_USER_ID
         raise ProblemException(
             status=401, title="Unauthorized", detail="authentication required"
         )
     return _verify_and_extract_sub(creds.credentials)
 
 
-def _verify_and_extract_sub(credentials):
-    pass
+def _verify_and_extract_sub(credentials: str) -> str:
+    raise ProblemException(
+        status=401,
+        title="Unauthorized",
+        detail="bearer authentication is not configured",
+    )
 
 
-def video_storage_dep() -> VideoStorage:
+def settings_dep() -> Settings:
+    return get_settings()
+
+
+def video_storage_dep(settings: Settings = Depends(settings_dep)) -> VideoStorage:
     """The configured video storage backend (local disk or a GCS bucket)."""
-
-    settings: Settings = get_settings()
     return make_video_storage(
         settings.storage_backend, settings.input_dir, settings.gcs_bucket
     )
 
 
-def artifact_storage_dep() -> ArtifactUploader:
+def artifact_storage_dep(
+    settings: Settings = Depends(settings_dep),
+) -> ArtifactUploader:
     """The configured artifact storage backend, used to sign served artifacts.
 
     Same selector as video storage; only the read side (``tracked_video_url``)
     is exercised by the API — the write side runs in the worker's engine.
     """
 
-    settings: Settings = get_settings()
     return make_artifact_uploader(settings.storage_backend, settings.gcs_bucket)
 
 

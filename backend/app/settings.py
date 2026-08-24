@@ -152,12 +152,12 @@ class Settings:
                 "CLIPSCRIBE_STORAGE_BACKEND=gcs"
             )
 
-        # Dev-only escape hatch: when true, a request with no bearer token is
-        # treated as the DEFAULT_USER_ID ("local") instead of being rejected.
-        # Must be false in any multi-user deployment (see app/deps.py). Coerced
-        # via _bool_env so "false"/"0" are honored (a raw env string is truthy).
+        # Single-tenant default: requests resolve to DEFAULT_USER_ID ("local")
+        # until bearer verification is implemented. Multi-user deployments must
+        # set this false and provide the verifier in app/deps.py before serving
+        # traffic. Coerced via _bool_env so "false"/"0" are honored.
         self.allow_anonymous_local: bool = _bool_env(
-            "CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL", False
+            "CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL", True
         )
 
 

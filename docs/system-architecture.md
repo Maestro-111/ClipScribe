@@ -207,10 +207,11 @@ erDiagram
 The conceptual database ownership is as follows:
 
 - `videos` is the deduplicated, user-scoped input registry. It keeps a source
-  name, content hash, storage key, and size. The API currently uses a local
-  user identity until authentication is introduced.
+  name, content hash, storage key, and size.
 - `jobs` tracks orchestration state, original request parameters, execution
-  metadata, and the parent/child batch hierarchy.
+  metadata, the parent/child batch hierarchy, and the owning `created_by`
+  identity. Job reads and mutations are owner-scoped; run, chat, export, and
+  artifact authorization derives ownership through the job that minted the run.
 - `runs` is the durable record for a processed video. A run stores its own
   snapshot of the video name and durable source-storage key.
 - Extraction data is normalized into global stats, shots, raw frame detections,
@@ -219,6 +220,11 @@ The conceptual database ownership is as follows:
   inspector and exports.
 - `chat_messages` holds only the advisory conversation. The advisor obtains
   evidence through server-side, read-only queries over run or job data.
+
+The API remains single-tenant by default: `CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL=true`
+maps every request to the `local` identity. Setting it to `false` enables the
+authentication gate, but the bearer verifier currently rejects all tokens; a
+real identity-provider integration is still required before multi-user use.
 
 Alembic migrations own schema creation and upgrades. The application does not
 call `metadata.create_all` at runtime.

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
 from app import settings as settings_mod
-from app.deps import get_executor, get_reader
+from app.deps import current_user_id, get_executor, get_reader
 from app.job_runner import JobService
 from app.main import app
 from app.routes.jobs import get_job_service
@@ -624,6 +624,40 @@ def test_list_jobs_filter_and_shape(ctx):
     queued = client.get("/jobs", params={"status": "queued"})
     assert len(queued.json()["jobs"]) == 2
     assert client.get("/jobs", params={"status": "completed"}).json()["jobs"] == []
+
+
+def test_job_reads_hide_another_users_jobs(ctx):
+    client, state = ctx
+    state.install_service(run=False)
+    parent_id = client.post("/jobs", json=_full_body()).json()["job_id"]
+
+    app.dependency_overrides[current_user_id] = lambda: "other"
+
+    assert client.get("/jobs").json()["jobs"] == []
+    assert client.get(f"/jobs/{parent_id}").status_code == 404
+
+
+def test_default_single_tenant_access_requires_no_bearer(ctx, monkeypatch):
+    client, _ = ctx
+    monkeypatch.delenv("CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL", raising=False)
+    settings_mod.get_settings.cache_clear()
+
+    response = client.get("/jobs")
+
+    assert response.status_code == 200
+
+
+def test_unconfigured_bearer_auth_rejects_credentials(ctx, monkeypatch):
+    client, _ = ctx
+    monkeypatch.setenv("CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL", "false")
+    settings_mod.get_settings.cache_clear()
+
+    response = client.get(
+        "/jobs", headers={"Authorization": "Bearer not-a-valid-token"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "bearer authentication is not configured"
 
 
 def test_list_jobs_status_filter_applies_before_pagination(ctx):

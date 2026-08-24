@@ -26,10 +26,11 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.deps import (
     artifact_storage_dep,
     require_owned_run,
+    settings_dep,
     video_storage_dep,
 )
 from app.errors import ProblemException
-from app.settings import PROJECT_ROOT, Settings, get_settings
+from app.settings import PROJECT_ROOT, Settings
 from src.utils.clip_scribe_artifacts import ArtifactUploader, run_artifact_dir
 from src.utils.clip_scribe_video_storage import VideoStorage
 
@@ -55,6 +56,7 @@ def _file_or_404(path: Path, what: str) -> FileResponse:
 )
 def get_video(
     run: dict = Depends(require_owned_run),
+    settings: Settings = Depends(settings_dep),
     storage: VideoStorage = Depends(video_storage_dep),
 ) -> FileResponse | RedirectResponse:
     stored = run.get("video_path") or ""
@@ -64,7 +66,6 @@ def get_video(
         )
     # GCS: hand the browser a signed URL for the stored key and let it stream
     # directly from the bucket.
-    settings: Settings = get_settings()
     url = storage.signed_url(stored)
     if url is not None:
         return RedirectResponse(url)
@@ -90,11 +91,11 @@ def get_video(
 def get_tracked_video(
     run_id: str,
     artifacts: ArtifactUploader = Depends(artifact_storage_dep),
+    settings: Settings = Depends(settings_dep),
     _run: dict = Depends(require_owned_run),
 ) -> FileResponse | RedirectResponse:
     # GCS: 302 to the signed URL for the loose tracked_output.mp4 object.
     url = artifacts.tracked_video_url(run_id)
-    settings: Settings = get_settings()
     if url is not None:
         return RedirectResponse(url)
     if settings.storage_backend == "gcs":

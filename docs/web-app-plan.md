@@ -864,11 +864,11 @@ worker:
 ### GPU image — bake strategy
 
 `backend/docker/core/gpu/Dockerfile` is the CUDA worker image for Linux +
-NVIDIA hosts. It uses a CUDA runtime base, installs torch/torchvision from the
-CUDA wheel index, exports the locked `worker` group from `uv.lock`, strips the
-torch and `nvidia-*` lines from that export, installs the rest pinned, bakes
-spaCy, and runs `python scripts/prewarm.py` before copying app/source code so
-the large weights layer stays cacheable:
+NVIDIA hosts. It uses a CUDA 12.6 runtime base and installs the locked base
+dependencies with the `worker-gpu` extra, which selects the CUDA 12.6
+torch/torchvision wheels. It then bakes spaCy and runs
+`python scripts/prewarm.py` before copying app/source code so the large weights
+layer stays cacheable:
 
 ```dockerfile
 ENV TORCH_HOME=/app/backend/checkpoints/torch_hub \
@@ -897,28 +897,12 @@ slower than native MPS. Treat it as smoke-test only.
 
 ### API image — always slim
 
-The API Dockerfile installs only the locked `api` dependency group using
-`uv export --frozen --only-group api`, then copies the API package and only the
-source trees it imports at module load: `src/db`, `src/parser`, `src/utils`, and
-`src/clip_scribe`. It includes `openpyxl` for on-demand XLSX exports, but
-deliberately omits extractor/OCR/DINO/SAM2 and never installs torch.
-
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app/backend
-COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv export --frozen --no-emit-project --no-hashes --only-group api \
-  -o /tmp/api-reqs.txt && uv pip install --no-cache -r /tmp/api-reqs.txt
-COPY backend/app ./app
-COPY backend/src/db ./src/db
-COPY backend/src/parser ./src/parser
-COPY backend/src/utils ./src/utils
-COPY backend/src/clip_scribe ./src/clip_scribe
-```
-
-`backend/pyproject.toml` already has a slim `[dependency-groups].api` group for
-local API-container work. Use `uv sync --only-group api`; unlike an optional
-extra, it excludes the heavy main dependencies (torch / whisper / paddleocr).
+The current build contract is owned by `backend/docker/api/Dockerfile`, with
+dependency membership owned by `[dependency-groups].api` in
+`backend/pyproject.toml`. The invariant is that the image installs only that
+locked group, copies only API-imported source trees, includes chat/export
+dependencies, and omits the extractor/OCR/DINO/SAM2 model stack and torch. See
+the README for the local API-only install command.
 
 ---
 
@@ -956,8 +940,11 @@ These are decisions to make before the corresponding implementation step.
    from DB detections and treats PNGs as archival/debug artifacts.
 
 3. **Authentication / multi-user.**
-   None today. Likely deferred to post-MVP. If we add it, keep `created_by` on
-   `jobs` and gate everything on a session.
+   Ownership scaffolding has landed: jobs populate `created_by`, and job/run
+   reads and mutations are scoped to the current identity. Bearer verification
+   and identity-provider integration remain open; see
+   [System architecture §6](system-architecture.md#6-data-artifacts-and-ownership)
+   for the current contract.
 
 4. **Job cancellation semantics.** **Resolved for cooperative stop.**
    Celery `revoke(terminate=True)` is still avoided because it can leak files and

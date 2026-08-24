@@ -15,6 +15,7 @@ def _extractor_with_sam() -> tuple[VideoInformationExtractor, mock.MagicMock]:
     extractor.active_trackers = {}
     extractor._sam_registered_tracker_ids = set()
     extractor.id_to_label = {}
+    extractor.iou_threshold = 0.5
     return extractor, sam_model
 
 

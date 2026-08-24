@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from app import settings as settings_mod
-from app.deps import get_reader
+from app.deps import current_user_id, get_reader
 from app.main import app
 from src.db.reader import ClipScribeReaderDB
 from src.db.schema import (
@@ -162,6 +162,13 @@ def test_get_run_404(client):
     r = client.get("/runs/missing")
     assert r.status_code == 404
     assert r.headers["content-type"] == "application/problem+json"
+
+
+def test_run_reads_hide_another_users_run(client):
+    app.dependency_overrides[current_user_id] = lambda: "other"
+
+    assert client.get(f"/runs/{RUN_ID}").status_code == 404
+    assert client.get(f"/runs/{RUN_ID}/objects").status_code == 404
 
 
 def test_global_stats_bundles_shot_boundaries(client):
