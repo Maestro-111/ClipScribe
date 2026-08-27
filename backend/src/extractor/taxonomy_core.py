@@ -151,7 +151,7 @@ class TaxonomyGenerator:
 
     def generate_taxonomy_prompt(
         self,
-        video_type: str | None,
+        video_type: str,
         scene_context: str = "",
         dino_prompt: str = "",
         user_hints: list[str] | None = None,
@@ -160,7 +160,7 @@ class TaxonomyGenerator:
         profile_hint = profile.get_prompt_instruction()
 
         prompt = [
-            f"Video Type: {video_type or 'general'}",
+            f"Video Type: {video_type}",
             profile_hint,
         ]
 

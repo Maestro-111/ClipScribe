@@ -211,6 +211,11 @@ class ClipScribeEngine:
             if metadata is None:
                 raise RuntimeError("Extractor returned no metadata")
 
+            resolved_video_type = self.extractor.resolved_video_type
+            if resolved_video_type is None:
+                raise RuntimeError("Extractor returned no resolved video type")
+            self.video_type = resolved_video_type
+
             logger.info("Extraction finished successfully.")
             return metadata
         except KeyboardInterrupt:

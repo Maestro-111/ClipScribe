@@ -1,5 +1,6 @@
 """Focused tests for SAM2 checkpoint identity reconciliation."""
 
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
@@ -64,3 +65,51 @@ def test_new_tracker_is_mirrored_as_registered_only_after_sam_accepts_it():
         obj_id=1,
         box=[2, 1, 5, 4],
     )
+
+
+def test_dynamic_profile_uses_all_cached_shot_descriptions():
+    extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
+    profiles = mock.MagicMock()
+    profiles.has_profile.return_value = False
+    profiles.resolve_or_create.return_value = "travel vlog"
+    extractor.taxonomy_generator = SimpleNamespace(profiles=profiles)
+    extractor.taxonomy_user_hints = ["host"]
+    extractor.shot_boundaries = [(0, 10), (10, 20)]
+    extractor._cancel = mock.MagicMock()
+    extractor._describe_shot = mock.MagicMock(
+        side_effect=[
+            ("person . street .", "A host walks through a city."),
+            ("person . food .", "The host visits a restaurant."),
+        ]
+    )
+
+    cache = extractor._prepare_video_profile(None)
+
+    assert cache == {
+        0: ("person . street .", "A host walks through a city."),
+        1: ("person . food .", "The host visits a restaurant."),
+    }
+    assert extractor.resolved_video_type == "travel vlog"
+    call = profiles.resolve_or_create.call_args
+    assert "Shot 0: A host walks through a city." in call.kwargs["scene_context"]
+    assert "Shot 1: The host visits a restaurant." in call.kwargs["scene_context"]
+
+
+def test_known_profile_still_caches_shot_descriptions():
+    extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
+    profiles = mock.MagicMock()
+    profiles.resolve_or_create.return_value = "car commercial"
+    extractor.taxonomy_generator = SimpleNamespace(profiles=profiles)
+    extractor.taxonomy_user_hints = None
+    extractor.shot_boundaries = [(0, 10)]
+    extractor._cancel = mock.MagicMock()
+    extractor._describe_shot = mock.MagicMock(
+        return_value=("car . road .", "A car drives on a road.")
+    )
+
+    assert extractor._prepare_video_profile("car commercial") == {
+        0: ("car . road .", "A car drives on a road.")
+    }
+    assert extractor.resolved_video_type == "car commercial"
+    extractor._describe_shot.assert_called_once_with(0, 10)
+    profiles.resolve_or_create.assert_called_once()

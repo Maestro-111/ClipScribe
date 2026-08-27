@@ -467,6 +467,9 @@ class VideoInformationExtractor:
         self.taxonomy_resolver = taxonomy_resolver
         self.taxonomy_generator = taxonomy_generator
         self.taxonomy_user_hints = taxonomy_user_hints
+        # Resolved from the video's shot descriptions when the request omitted
+        # a known type, then read by the engine for persistence.
+        self.resolved_video_type: str | None = None
 
         self.word_similarity_threshold = word_similarity_threshold
 
@@ -1396,6 +1399,67 @@ class VideoInformationExtractor:
             f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
+    def _describe_shot(self, start_f: int, end_f: int) -> tuple[str, str]:
+        """Sample and describe one shot, returning DINO and narrative contexts."""
+        shot_duration = (end_f - start_f) / self.fps
+        num_samples = max(
+            self.min_samples,
+            min(
+                self.max_samples,
+                int(math.ceil(self.sampling_rate * math.sqrt(shot_duration))),
+            ),
+        )
+        shot_length = end_f - start_f
+
+        logger.info(
+            f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
+        )
+
+        if num_samples == 1:
+            sample_frames = [start_f]
+        else:
+            sample_frames = [
+                start_f + i * shot_length // (num_samples - 1)
+                for i in range(num_samples)
+            ]
+
+        sampled_rgb_frames = []
+        for sample_f in sample_frames:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, sample_f)
+            ret, sample_frame = self.cap.read()
+            if ret:
+                sampled_rgb_frames.append(cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB))
+
+        return self.scene_describer.describe_scene(sampled_rgb_frames)
+
+    def _prepare_video_profile(
+        self, video_type: str | None
+    ) -> dict[int, tuple[str, str]]:
+        """Pre-describe all shots when a run-local profile must be generated."""
+        profiles = self.taxonomy_generator.profiles
+        scene_contexts: dict[int, tuple[str, str]] = {}
+
+        for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
+            self._cancel.check()
+            scene_contexts[shot_idx] = self._describe_shot(start_f, end_f)
+
+        full_scene_context = "\n\n".join(
+            f"Shot {shot_idx}: {raw_context}"
+            for shot_idx, (_, raw_context) in scene_contexts.items()
+        )
+        full_dino_context = "\n".join(
+            f"Shot {shot_idx}: {dino_context}"
+            for shot_idx, (dino_context, _) in scene_contexts.items()
+        )
+        resolved_type: str = profiles.resolve_or_create(
+            video_type,
+            scene_context=full_scene_context,
+            dino_prompt=full_dino_context,
+            user_hints=self.taxonomy_user_hints,
+        )
+        self.resolved_video_type = resolved_type
+        return scene_contexts
+
     def extract(
         self,
         video_type: str | None,
@@ -1404,7 +1468,7 @@ class VideoInformationExtractor:
         run_id: str,
     ) -> ExtractionSummary:
         """
-        Main entry point. Runs the full pipeline: scene analysis, audio transcription,
+        extraction entry point. Runs the full pipeline: scene analysis, audio transcription,
         per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
         """
 
@@ -1438,6 +1502,10 @@ class VideoInformationExtractor:
         self.progress.phase_started(
             Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
         )
+        scene_context_cache = self._prepare_video_profile(video_type)
+        resolved_video_type = self.resolved_video_type
+        if resolved_video_type is None:
+            raise RuntimeError("Video profile preparation returned no video type")
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
             self._cancel.check()
@@ -1463,43 +1531,10 @@ class VideoInformationExtractor:
             if not ret:
                 break
 
-            # Adaptive frame sampling based on shot duration
-            shot_duration = (end_f - start_f) / self.fps
-            num_samples = max(
-                self.min_samples,
-                min(
-                    self.max_samples,
-                    int(math.ceil(self.sampling_rate * math.sqrt(shot_duration))),
-                ),
-            )
-            shot_length = end_f - start_f
-
-            logger.info(
-                f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
-            )
-
-            if num_samples == 1:
-                sample_frames = [start_f]
-            else:
-                sample_frames = [
-                    start_f + i * shot_length // (num_samples - 1)
-                    for i in range(num_samples)
-                ]
-
-            # Collect sampled RGB frames for GPT vision analysis
-            sampled_rgb_frames = []
-            for sample_f in sample_frames:
-                self.cap.set(cv2.CAP_PROP_POS_FRAMES, sample_f)
-                ret, sample_frame = self.cap.read()
-                if ret:
-                    frame_rgb = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2RGB)
-                    sampled_rgb_frames.append(frame_rgb)
-
-            # Single GPT call processes all sampled frames
-            (
-                combined_final_context,
-                combined_raw_context,
-            ) = self.scene_describer.describe_scene(sampled_rgb_frames)
+            contexts = scene_context_cache.get(shot_idx)
+            if contexts is None:
+                contexts = self._describe_shot(start_f, end_f)
+            combined_final_context, combined_raw_context = contexts
 
             self.scene_description_registry.append(
                 {
@@ -1520,7 +1555,7 @@ class VideoInformationExtractor:
             )
 
             taxonomy_prompt = self.taxonomy_generator.generate_taxonomy_prompt(
-                video_type,
+                resolved_video_type,
                 scene_context=combined_raw_context,
                 dino_prompt=combined_final_context,
                 user_hints=self.taxonomy_user_hints,
@@ -1624,7 +1659,7 @@ class VideoInformationExtractor:
                     label = box_info["label"]
 
                     logger.info(
-                        f"trying to match dino label {label} with {video_type} taxonomy targets"
+                        f"trying to match dino label {label} with {resolved_video_type} taxonomy targets"
                     )
 
                     best_semantic = self.taxonomy_resolver.resolve(

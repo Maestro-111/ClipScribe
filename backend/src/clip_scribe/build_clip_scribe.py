@@ -181,7 +181,9 @@ class ClipScribeBuilder:
         audio_params: dict,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
+        taxonomy_generator: TaxonomyGenerator | None = None,
     ):
+        taxonomy_generator = taxonomy_generator or self._build_taxonomy()
         hint_generation_model = self.resolve_model(
             "taxonomy.hint_generation.model",
             taxonomy_params["hint_generation"].get(
@@ -253,7 +255,7 @@ class ClipScribeBuilder:
             scene_describer,
             self.ocr,
             self.taxonomy_resolver,
-            self.taxonomy_generator,
+            taxonomy_generator,
             combined_hints,
             self.reid_model,
             self.audio_model,
@@ -301,6 +303,33 @@ class ClipScribeBuilder:
         except Exception as e:
             logger.error(e)
             raise e
+
+    def _build_taxonomy(self) -> TaxonomyGenerator:
+        extractor_video_matcher_model = self.resolve_model(
+            "extractor.video_matcher",
+            self.clib_scribe_extractor_params.get("video_matcher", {}).get(
+                "llm", self.DEFAULT_VIDEO_TYPE_MATCHER_MODEL
+            ),
+        )
+
+        profiles = ProfilesPile(model=extractor_video_matcher_model)
+
+        taxonomy_objects_num: int = self.taxonomy_params.get(
+            "taxonomy_objects_num", 100
+        )
+
+        target_generation_model = self.resolve_model(
+            "taxonomy.target_generation.model",
+            self.taxonomy_params.get("target_generation").get(
+                "model", self.DEFAULT_TARGET_GENERATION_MODEL
+            ),
+        )
+
+        return TaxonomyGenerator(
+            taxonomy_objects_num,
+            profiles,
+            model=target_generation_model,
+        )
 
     def _assemble_heavy_extractor_utils(self) -> None:
         try:
@@ -358,33 +387,6 @@ class ClipScribeBuilder:
 
             face_detection = MTCNN(keep_all=True, device="cpu")  # force cpu
 
-            extractor_video_matcher_model = self.resolve_model(
-                "extractor.video_matcher",
-                self.clib_scribe_extractor_params.get("video_matcher", {}).get(
-                    "llm", self.DEFAULT_VIDEO_TYPE_MATCHER_MODEL
-                ),
-            )
-
-            profiles = ProfilesPile(model=extractor_video_matcher_model)
-
-            taxonomy_objects_num: int = self.taxonomy_params.get(
-                "taxonomy_objects_num", 100
-            )
-
-            target_generation_model = self.resolve_model(
-                "taxonomy.target_generation.model",
-                self.taxonomy_params.get("target_generation").get(
-                    "model", self.DEFAULT_TARGET_GENERATION_MODEL
-                ),
-            )
-
-            taxonomy_resolver = TaxonomyResolver()
-            taxonomy_generator = TaxonomyGenerator(
-                taxonomy_objects_num,
-                profiles,
-                model=target_generation_model,
-            )
-
             self.dino = dino
             self.sam2 = sam2
             self.ocr = ocr
@@ -392,8 +394,10 @@ class ClipScribeBuilder:
             self.audio_model = audio_model
             self.embedding_transform = embedding_transform
             self.face_detection = face_detection
-            self.taxonomy_resolver = taxonomy_resolver
-            self.taxonomy_generator = taxonomy_generator
+            # The resolver owns the heavy SBERT model and is loaded once. The
+            # profile pile/generator are cheap and built per extraction job so
+            # dynamically generated profiles cannot leak into another run.
+            self.taxonomy_resolver = TaxonomyResolver()
 
         except Exception as e:
             logger.error(e)
@@ -434,6 +438,7 @@ class ClipScribeBuilder:
             info_parser = None
 
             if clib_scribe_mode in ["full", "extract"]:
+                taxonomy_generator = self._build_taxonomy()
                 info_extractor = self.build_extractor(
                     video_name,
                     user_hints,
@@ -446,6 +451,7 @@ class ClipScribeBuilder:
                     self.audio_params,
                     progress_reporter=reporter,
                     cancel_token=canceller,
+                    taxonomy_generator=taxonomy_generator,
                 )
 
             if clib_scribe_mode in ["full", "parse"]:
