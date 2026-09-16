@@ -130,7 +130,9 @@ class VideoInformationParser:
             Path to the generated CSV report
         """
 
-        logger.info(f"Starting parser for run {run_id}, video '{video_name}'")
+        logger.info(
+            f"ClipScribe Parser: Starting parser for run {run_id}, video '{video_name}'"
+        )
 
         report_name = self.create_report_name()
 
@@ -152,7 +154,7 @@ class VideoInformationParser:
             report_writer.write_results(results)
             writer_db.save_parser_results(run_id, self.platform_name, results)
             logger.info(
-                f"Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
+                f"ClipScribe Parser: Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
             )
             self.progress.phase_completed(Phase.PARSE, {"criteria_count": len(results)})
         else:

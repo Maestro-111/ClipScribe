@@ -143,7 +143,10 @@ class ProfilesPile:
 
         profile = generated_profile.model_copy(update={"video_type": resolved_type})
         self.__type_to_profile[resolved_type] = profile
-        logger.info("Created run-local taxonomy profile for '%s'", resolved_type)
+        logger.info(
+            "ClipScribe Extractor: Created run-local taxonomy profile for '%s'",
+            resolved_type,
+        )
         return resolved_type
 
     def query_type_to_profile(self, video_type: str) -> str:
@@ -187,7 +190,9 @@ class ProfilesPile:
         normalized = self._normalize_video_type(video_type)
         try:
             profile = self.__type_to_profile[normalized]
-            logger.info(f"fetched video profile for video type: {normalized};")
+            logger.info(
+                f"ClipScribe Extractor: fetched video profile for video type: {normalized};"
+            )
             return profile
         except KeyError as exc:
             raise KeyError(

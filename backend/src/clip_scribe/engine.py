@@ -112,7 +112,7 @@ class ClipScribeEngine:
             elif self.mode == "extract":
                 # only the extraction engine, i.e. it won't save run to db
                 logger.warning(
-                    "ClipScribe is running in extraction mode only"
+                    "ClipScribe Engine: ClipScribe is running in extraction mode only"
                     "This mode will only process the video and save the artifacts"
                     "Its meant to run locally only"
                 )
@@ -120,7 +120,7 @@ class ClipScribeEngine:
             elif self.mode == "parse":
                 # only parse engine, i.e. we expect to have an existing run_id data in db
                 logger.warning(
-                    "ClipScribe is running in parse mode only"
+                    "ClipScribe Engine: ClipScribe is running in parse mode only"
                     "This mode will only process existing artifacts of run_id"
                     "Its meant to run locally only for agent debugging"
                 )
@@ -132,7 +132,10 @@ class ClipScribeEngine:
         except JobCanceled:
             # A cancel is not a failure: emit a distinct terminal event (ends the
             # SSE stream) and re-raise so run_job_core records 'canceled'.
-            logger.info("Job canceled; stopping pipeline for run %s", self.run_id)
+            logger.info(
+                "ClipScribe Engine: Job canceled; stopping pipeline for run %s",
+                self.run_id,
+            )
             self.progress.emit(ProgressEvent.JOB_CANCELED, {"run_id": self.run_id})
             raise
         except Exception as e:
@@ -216,22 +219,27 @@ class ClipScribeEngine:
                 raise RuntimeError("Extractor returned no resolved video type")
             self.video_type = resolved_video_type
 
-            logger.info("Extraction finished successfully.")
+            logger.info("ClipScribe Engine: Extraction finished successfully.")
             return metadata
         except KeyboardInterrupt:
-            logger.error("\n!!! Interrupted by User. Saving video... !!!")
+            logger.error(
+                "ClipScribe Engine: \n!!! Interrupted by User. Saving video... !!!"
+            )
             raise
         except JobCanceled:
             # Expected cooperative stop, not an error; cleanup() still runs in
             # the finally below, releasing the capture + video writer.
-            logger.info("Extraction canceled; releasing resources.")
+            logger.info("ClipScribe Engine: Extraction canceled; releasing resources.")
             raise
         except Exception as e:
-            logger.error(f"_extract_information error occurred: {e}", exc_info=True)
+            logger.error(
+                f"ClipScribe Engine: _extract_information error occurred: {e}",
+                exc_info=True,
+            )
             raise
         finally:
             self.extractor.cleanup()
-            logger.info("Extraction Done!")
+            logger.info("ClipScribe Engine: Extraction Done!")
 
     def _save_metadata_to_db(
         self,
@@ -268,5 +276,5 @@ class ClipScribeEngine:
             writer_db=self.writer_db,
         )
 
-        logger.info("Parsing complete!")
-        logger.info(f"Parser local report generated: {report_path}")
+        logger.info("ClipScribe Engine: Parsing complete!")
+        logger.info(f"ClipScribe Engine: Parser local report generated: {report_path}")

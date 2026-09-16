@@ -60,7 +60,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             segments = reader_db.get_audio_segments(run_id, max_start_time)
             return json.dumps(segments, indent=2)
         except Exception as e:
-            logger.error("query_audio_segments failed: %s", e)
+            logger.error("ClipScribe Parser: query_audio_segments failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -82,7 +82,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             events = reader_db.get_text_events(run_id, max_second)
             return json.dumps(events, indent=2)
         except Exception as e:
-            logger.error("query_text_events failed: %s", e)
+            logger.error("ClipScribe Parser: query_text_events failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -118,7 +118,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             )
             return json.dumps(objects, indent=2)
         except Exception as e:
-            logger.error("query_visual_objects failed: %s", e)
+            logger.error("ClipScribe Parser: query_visual_objects failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -143,7 +143,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
                 return json.dumps({})
             return json.dumps(stats, indent=2)
         except Exception as e:
-            logger.error("query_global_stats failed: %s", e)
+            logger.error("ClipScribe Parser: query_global_stats failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": {}})
 
     @tool
@@ -170,7 +170,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             )
             return json.dumps(descriptions, indent=2)
         except Exception as e:
-            logger.error("query_scene_descriptions failed: %s", e)
+            logger.error("ClipScribe Parser: query_scene_descriptions failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -194,7 +194,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             descriptions = reader_db.get_field_descriptions(table_name)
             return json.dumps(descriptions, indent=2)
         except Exception as e:
-            logger.error("query_field_descriptions failed: %s", e)
+            logger.error("ClipScribe Parser: query_field_descriptions failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -241,7 +241,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
                 )
             return json.dumps(filtered, indent=2)
         except Exception as e:
-            logger.error("query_parser_results failed: %s", e)
+            logger.error("ClipScribe Parser: query_parser_results failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     # Map tool groups to relevant tools
@@ -404,7 +404,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
                 indent=2,
             )
         except Exception as e:
-            logger.error("query_job_scorecard failed: %s", e)
+            logger.error("ClipScribe Parser: query_job_scorecard failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}"})
 
     @tool
@@ -456,7 +456,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
                     )
             return json.dumps(out, indent=2)
         except Exception as e:
-            logger.error("job query_parser_results failed: %s", e)
+            logger.error("ClipScribe Parser: job query_parser_results failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -476,7 +476,9 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
         try:
             return json.dumps(reader_db.get_scene_descriptions(run_id), indent=2)
         except Exception as e:
-            logger.error("job query_scene_descriptions failed: %s", e)
+            logger.error(
+                "ClipScribe Parser: job query_scene_descriptions failed: %s", e
+            )
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -499,7 +501,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
                 reader_db.get_visual_objects(run_id, label_contains), indent=2
             )
         except Exception as e:
-            logger.error("job query_visual_objects failed: %s", e)
+            logger.error("ClipScribe Parser: job query_visual_objects failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -518,7 +520,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
         try:
             return json.dumps(reader_db.get_audio_segments(run_id), indent=2)
         except Exception as e:
-            logger.error("job query_audio_segments failed: %s", e)
+            logger.error("ClipScribe Parser: job query_audio_segments failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -537,7 +539,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
         try:
             return json.dumps(reader_db.get_text_events(run_id), indent=2)
         except Exception as e:
-            logger.error("job query_text_events failed: %s", e)
+            logger.error("ClipScribe Parser: job query_text_events failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     @tool
@@ -556,7 +558,7 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
         try:
             return json.dumps(reader_db.get_global_stats(run_id) or {}, indent=2)
         except Exception as e:
-            logger.error("job query_global_stats failed: %s", e)
+            logger.error("ClipScribe Parser: job query_global_stats failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": {}})
 
     @tool
@@ -573,7 +575,9 @@ def build_job_tools(reader_db: ClipScribeReaderDB, runs: list[dict]) -> list:
         try:
             return json.dumps(reader_db.get_field_descriptions(table_name), indent=2)
         except Exception as e:
-            logger.error("job query_field_descriptions failed: %s", e)
+            logger.error(
+                "ClipScribe Parser: job query_field_descriptions failed: %s", e
+            )
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
     return [

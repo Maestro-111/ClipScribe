@@ -35,7 +35,9 @@ def _parse_agent_response(
             explanation = str(parsed.get("explanation", "No explanation provided"))
             return agentic_eval(evaluation=evaluation, explanation=explanation)
 
-        logger.info("JSON parsing failed; falling back to heuristic text matching.")
+        logger.info(
+            "ClipScribe Parser: JSON parsing failed; falling back to heuristic text matching."
+        )
         has_affirmative = bool(_AFFIRMATIVE_RE.search(final_message))
         has_negation = bool(_NEGATION_RE.search(final_message))
         evaluation = has_affirmative and not has_negation
@@ -149,7 +151,8 @@ Use the tools to query the database, then provide your structured evaluation."""
             messages = chunk["messages"]
     except GraphRecursionError:
         logger.warning(
-            "Agent hit recursion limit (%d). Using last collected message as final answer.",
+            "ClipScribe Parser: Agent hit recursion limit (%d). Using last collected "
+            "message as final answer.",
             recursion_limit,
         )
 

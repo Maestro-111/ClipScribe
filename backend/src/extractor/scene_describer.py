@@ -83,7 +83,9 @@ class GPTSceneDescriber:
         unique_targets = []
         for target in targets:
             if target == "text":
-                logger.warning("Filtered out 'text' from DINO prompt")
+                logger.warning(
+                    "ClipScribe Extractor: Filtered out 'text' from DINO prompt"
+                )
                 continue
             if target not in seen:
                 seen.add(target)
@@ -103,7 +105,9 @@ class GPTSceneDescriber:
             Tuple of (dino_prompt, scene_description) matching the old API shape
         """
         if not frames_rgb:
-            logger.warning("No frames provided to describe_scene, using defaults")
+            logger.warning(
+                "ClipScribe Extractor: No frames provided to describe_scene, using defaults"
+            )
             return ("object .", "")
 
         # Prepare frames as base64-encoded images
@@ -121,7 +125,9 @@ class GPTSceneDescriber:
                 }
             )
 
-        logger.info(f"Sending {len(frames_rgb)} frames to GPT for scene analysis")
+        logger.info(
+            f"ClipScribe Extractor: Sending {len(frames_rgb)} frames to GPT for scene analysis"
+        )
 
         # Build the message content with text + images
         messages = [
@@ -169,16 +175,22 @@ class GPTSceneDescriber:
             scene_desc = SceneDescription(**parsed)
 
             logger.info(
-                f"GPT Scene Description: {scene_desc.scene_description[:100]}..."
+                f"ClipScribe Extractor: GPT Scene Description: {scene_desc.scene_description[:100]}..."
             )
-            logger.info(f"GPT DINO Prompt (raw): {scene_desc.dino_prompt}")
+            logger.info(
+                f"ClipScribe Extractor: GPT DINO Prompt (raw): {scene_desc.dino_prompt}"
+            )
 
             # Sanitize the DINO prompt to remove duplicates and 'text' keyword
             sanitized_prompt = self._sanitize_dino_prompt(scene_desc.dino_prompt)
-            logger.info(f"GPT DINO Prompt (sanitized): {sanitized_prompt}")
+            logger.info(
+                f"ClipScribe Extractor: GPT DINO Prompt (sanitized): {sanitized_prompt}"
+            )
 
             return (sanitized_prompt, scene_desc.scene_description)
 
         except Exception as e:
-            logger.error(f"GPT scene analysis failed: {e}, using fallback")
+            logger.error(
+                f"ClipScribe Extractor: GPT scene analysis failed: {e}, using fallback"
+            )
             return ("object .", "")

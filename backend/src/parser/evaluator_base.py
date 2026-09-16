@@ -123,7 +123,7 @@ class BaseEvaluator(ABC):
         field_context: str | None = None,
     ) -> BaseFeatureResult:
         feature_id = feature["id"]
-        logger.info(f"Evaluating agentic feature: {feature_id}")
+        logger.info(f"ClipScribe Parser: Evaluating agentic feature: {feature_id}")
 
         tool_group = feature["tool_group"]
         tools = build_tools(self.reader_db, run_id, tool_group)
@@ -164,7 +164,9 @@ class BaseEvaluator(ABC):
             )
 
         except Exception as e:
-            logger.error(f"Error evaluating agentic feature {feature_id}: {str(e)}")
+            logger.error(
+                f"ClipScribe Parser: Error evaluating agentic feature {feature_id}: {str(e)}"
+            )
             return self.build_feature_result(
                 feature=feature,
                 video_name=video_name,
@@ -177,7 +179,7 @@ class BaseEvaluator(ABC):
         self, feature: dict, run_id: str, video_name: str
     ) -> BaseFeatureResult:
         feature_id = feature["id"]
-        logger.info(f"Evaluating baseline feature: {feature_id}")
+        logger.info(f"ClipScribe Parser: Evaluating baseline feature: {feature_id}")
 
         try:
             evaluation = self.evaluate_baseline(feature_id, run_id)
@@ -191,7 +193,9 @@ class BaseEvaluator(ABC):
             )
 
         except Exception as e:
-            logger.error(f"Error evaluating baseline feature {feature_id}: {str(e)}")
+            logger.error(
+                f"ClipScribe Parser: Error evaluating baseline feature {feature_id}: {str(e)}"
+            )
             return self.build_feature_result(
                 feature=feature,
                 video_name=video_name,
@@ -201,7 +205,9 @@ class BaseEvaluator(ABC):
             )
 
     def evaluate_all(self, run_id: str, video_name: str) -> list[BaseFeatureResult]:
-        logger.info(f"Starting {self.platform} evaluation for run {run_id}")
+        logger.info(
+            f"ClipScribe Parser: Starting {self.platform} evaluation for run {run_id}"
+        )
 
         features = self.get_feature_configs()
 
@@ -209,7 +215,9 @@ class BaseEvaluator(ABC):
         agentic_features = [f for f in features if f["mode"] == "agentic"]
 
         results: list[BaseFeatureResult] = []
-        logger.info(f"Evaluating {len(baseline_features)} baseline features...")
+        logger.info(
+            f"ClipScribe Parser: Evaluating {len(baseline_features)} baseline features..."
+        )
 
         for feature in baseline_features:
             self._cancel.check()
@@ -217,7 +225,7 @@ class BaseEvaluator(ABC):
             results.append(result)
 
         logger.info(
-            f"Evaluating {len(agentic_features)} agentic features in parallel "
+            f"ClipScribe Parser: Evaluating {len(agentic_features)} agentic features in parallel "
             f"(max {self.max_parallel_agents} concurrent)..."
         )
 
@@ -230,7 +238,9 @@ class BaseEvaluator(ABC):
                 field_contexts[tg] = self._build_field_context(tg)
             except Exception as e:
                 logger.warning(
-                    "Failed to build field context for tool group '%s': %s", tg, e
+                    "ClipScribe Parser: Failed to build field context for tool group '%s': %s",
+                    tg,
+                    e,
                 )
                 field_contexts[tg] = None
 
@@ -264,7 +274,7 @@ class BaseEvaluator(ABC):
                     results.append(result)
                 except Exception as e:
                     logger.error(
-                        f"Error in parallel evaluation of {feature['id']}: {str(e)}"
+                        f"ClipScribe Parser: Error in parallel evaluation of {feature['id']}: {str(e)}"
                     )
                     results.append(
                         self.build_feature_result(
@@ -276,5 +286,7 @@ class BaseEvaluator(ABC):
                         )
                     )
 
-        logger.info(f"Completed evaluation of {len(results)} features for run {run_id}")
+        logger.info(
+            f"ClipScribe Parser: Completed evaluation of {len(results)} features for run {run_id}"
+        )
         return results

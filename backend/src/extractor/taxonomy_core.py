@@ -17,7 +17,9 @@ def generate_hints_from_video_name(
     """Infer 10-20 object hints from a descriptive video filename.
     Returns [] if the name looks generic / auto-generated."""
 
-    logger.info(f"Attempting to generate hints from video name: '{video_name}'")
+    logger.info(
+        f"ClipScribe Extractor: Attempting to generate hints from video name: '{video_name}'"
+    )
 
     hint_agent = Agent(
         name="VideoNameHintGenerator",
@@ -45,7 +47,7 @@ def generate_hints_from_video_name(
     combined_hints = list(generated_hints_norm | user_hints_norm)
 
     logger.info(
-        f"Generated {len(combined_hints)} hints from video name: {combined_hints}"
+        f"ClipScribe Extractor: Generated {len(combined_hints)} hints from video name: {combined_hints}"
     )
     return combined_hints
 
@@ -67,14 +69,14 @@ class TaxonomyResolver:
         self.device = device
         self.targets: List[LeafItem] = []
 
-        logger.info("Loading SBERT Bi-Encoder...")
+        logger.info("ClipScribe Extractor: Loading SBERT Bi-Encoder...")
         self.embed_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
         self.target_embeddings: Optional[torch.Tensor] = None
         self.active_target_names: list[str] = []
 
     def set_active_targets(self, targets: List[LeafItem]):
-        logger.info(f"Encoding {len(targets)} active targets...")
+        logger.info(f"ClipScribe Extractor: Encoding {len(targets)} active targets...")
         self.targets = targets
         self.active_target_names = [t.anchor for t in targets]
 
@@ -102,7 +104,7 @@ class TaxonomyResolver:
         best_candidate = self.active_target_names[best_idx]
 
         logger.info(
-            f"Taxonomy Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})"
+            f"ClipScribe Extractor: Taxonomy Resolver: '{clean_label}' -> Top Cand: {best_candidate} (Sim: {best_score:.3f})"
         )
 
         if best_score < threshold:
@@ -112,13 +114,13 @@ class TaxonomyResolver:
                     or f" {clean_label} " in f" {cand} "
                 ):
                     logger.info(
-                        f"Taxonomy Resolver MATCH (String Fallback): '{clean_label}' mapped to '{cand}'"
+                        f"ClipScribe Extractor: Taxonomy Resolver MATCH (String Fallback): '{clean_label}' mapped to '{cand}'"
                     )
                     return cand
 
         if best_score >= threshold:
             logger.info(
-                f"Taxonomy Resolver MATCH: '{clean_label}' mapped to '{best_candidate}'"
+                f"ClipScribe Extractor: Taxonomy Resolver MATCH: '{clean_label}' mapped to '{best_candidate}'"
             )
             return best_candidate
 

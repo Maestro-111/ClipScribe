@@ -111,23 +111,29 @@ class ClipScribeBuilder:
         self.artifacts_params = _cfg.get("artifacts", {})
 
         if device is None:
-            logger.info("Using device specified in config")
+            logger.info("ClipScribe Builder: Using device specified in config")
             device = self.clip_scribe_params.get("device", None)
             if device is None:
-                logger.warning("No device specified in config, using CPU")
+                logger.warning(
+                    "ClipScribe Builder: No device specified in config, using CPU"
+                )
                 device = "cpu"
 
         # Verify the requested accelerator is actually present on this host;
         # otherwise roll back to CPU so a config/CLI value of "mps"/"cuda" can
         # never hard-crash at model load on a machine that lacks it.
         if device == "mps" and not torch.backends.mps.is_available():
-            logger.warning("MPS requested but unavailable; falling back to CPU")
+            logger.warning(
+                "ClipScribe Builder: MPS requested but unavailable; falling back to CPU"
+            )
             device = "cpu"
         elif device == "cuda" and not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable; falling back to CPU")
+            logger.warning(
+                "ClipScribe Builder: CUDA requested but unavailable; falling back to CPU"
+            )
             device = "cpu"
 
-        logger.info(f"Clip scribe device: {device}")
+        logger.info(f"ClipScribe Builder: Clip scribe device: {device}")
         self.device = device
 
         self._assemble_db()
@@ -175,6 +181,7 @@ class ClipScribeBuilder:
         generate_hint_from_name: bool,
         clib_scribe_extractor_params: dict,
         dino_params: dict,
+        sam2_params: dict,
         scene_analysis_params: dict,
         face_detection_params: dict,
         taxonomy_params: dict,
@@ -199,6 +206,9 @@ class ClipScribeBuilder:
 
         dino_text_conf: float = dino_params.get("dino_text_conf", 0.4)
         dino_box_conf: float = dino_params.get("dino_box_conf", 0.4)
+
+        sam2_default_refresh_rate: int = sam2_params.get("default_refresh_rate", 100)
+        sam2_dynamic_refresh_rate: bool = sam2_params.get("dynamic_refresh_rate", False)
 
         iou_threshold: float = clib_scribe_extractor_params.get("iou_threshold", 0.5)
 
@@ -225,10 +235,12 @@ class ClipScribeBuilder:
             "reid_similarity_difference", 0.8
         )
 
-        logger.info(f"word_similarity_threshold: {word_similarity_threshold}")
+        logger.info(
+            f"ClipScribe Builder: word_similarity_threshold: {word_similarity_threshold}"
+        )
 
-        logger.info(f"dino_text_conf: {dino_text_conf}")
-        logger.info(f"dino_box_conf: {dino_box_conf}")
+        logger.info(f"ClipScribe Builder: dino_text_conf: {dino_text_conf}")
+        logger.info(f"ClipScribe Builder: dino_box_conf: {dino_box_conf}")
 
         combined_hints = user_hints
         if generate_hint_from_name:
@@ -276,6 +288,8 @@ class ClipScribeBuilder:
             min_samples,
             max_samples,
             sampling_rate,
+            sam2_default_refresh_rate,
+            sam2_dynamic_refresh_rate,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
             max_artifact_files=self.artifacts_params.get("max_artifact_files"),
@@ -301,7 +315,7 @@ class ClipScribeBuilder:
             self.reader_db = reader_db
 
         except Exception as e:
-            logger.error(e)
+            logger.error(f"ClipScribe Builder: {e}")
             raise e
 
     def _build_taxonomy(self) -> TaxonomyGenerator:
@@ -349,7 +363,9 @@ class ClipScribeBuilder:
                 self.device,
             )
 
-            logger.info(f"Loading DINOv2 (ViT-S/14) on {self.device}...")
+            logger.info(
+                f"ClipScribe Builder: Loading DINOv2 (ViT-S/14) on {self.device}..."
+            )
 
             reid_model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(
                 self.device
@@ -357,7 +373,7 @@ class ClipScribeBuilder:
 
             reid_model.eval()
 
-            logger.info("loading whisper to cpu (forces action)")
+            logger.info("ClipScribe Builder: loading whisper to cpu (forces action)")
 
             # Whisper ignores the TORCH_HOME/HF_HOME-style env vars other
             # downloaders honor, so point its weights under checkpoints/ with an
@@ -400,7 +416,7 @@ class ClipScribeBuilder:
             self.taxonomy_resolver = TaxonomyResolver()
 
         except Exception as e:
-            logger.error(e)
+            logger.error(f"ClipScribe Builder: {e}")
             raise e
 
     def build_clip_scribe(
@@ -445,6 +461,7 @@ class ClipScribeBuilder:
                     generate_hint_from_name,
                     self.clib_scribe_extractor_params,
                     self.dino_params,
+                    self.sam2_params,
                     self.scene_analysis_params,
                     self.face_detection_params,
                     self.taxonomy_params,
@@ -494,7 +511,7 @@ class ClipScribeBuilder:
             return clib_scribe
 
         except Exception as e:
-            logger.error(e)
+            logger.error(f"ClipScribe Builder: {e}")
             raise e
 
     def resolve_model(self, field_name: str, model: str) -> str:
@@ -510,5 +527,7 @@ class ClipScribeBuilder:
                 f"Invalid model for '{field_name}': {normalized_model!r}. "
                 f"Allowed values: {', '.join(self.ALLOWED_MODELS)}"
             )
-        logger.info(f"field_name -> {field_name}: model: -> {normalized_model}")
+        logger.info(
+            f"ClipScribe Builder: field_name -> {field_name}: model: -> {normalized_model}"
+        )
         return normalized_model

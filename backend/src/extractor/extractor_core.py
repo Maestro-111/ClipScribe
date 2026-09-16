@@ -258,9 +258,11 @@ class VideoInformationExtractor:
         try:
             with open(output_file, "w") as f:
                 json.dump(information, f, cls=NumpyEncoder, indent=4)
-            logger.info(f"Extraction results successfully saved to: {output_file}")
+            logger.info(
+                f"ClipScribe Extractor: Extraction results successfully saved to: {output_file}"
+            )
         except Exception as e:
-            logger.error(f"Error saving JSON: {e}")
+            logger.error(f"ClipScribe Extractor: Error saving JSON: {e}")
 
     @staticmethod
     def _calculate_iou(boxA: Box, boxB: Box) -> float:
@@ -438,6 +440,8 @@ class VideoInformationExtractor:
         min_samples: int = 1,
         max_samples: int = 12,
         sampling_rate: float = 2.0,
+        sam2_default_refresh_rate: int = 100,
+        sam2_dynamic_refresh_rate: bool = False,
         progress_reporter: "ProgressReporter | None" = None,
         cancel_token: "CancellationToken | None" = None,
         max_artifact_files: int | None = None,
@@ -509,6 +513,9 @@ class VideoInformationExtractor:
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
         self.reid_similarity_difference = reid_similarity_difference
+
+        self.sam2_default_refresh_rate = sam2_default_refresh_rate
+        self.sam2_dynamic_refresh_rate = sam2_dynamic_refresh_rate
 
         # Adaptive frame sampling parameters
         self.min_samples = min_samples
@@ -614,18 +621,21 @@ class VideoInformationExtractor:
         )
         if not self.video_writer.isOpened():
             logger.warning(
-                "avc1/H.264 VideoWriter unavailable (no hardware encoder in this "
-                "environment); falling back to mp4v for tracked_output.mp4"
+                "ClipScribe Extractor: avc1/H.264 VideoWriter unavailable (no hardware "
+                "encoder in this environment); falling back to mp4v for "
+                "tracked_output.mp4"
             )
             self.video_writer.release()
             self.video_writer = cv2.VideoWriter(
                 output_filename, cv2.VideoWriter.fourcc(*"mp4v"), fps, (width, height)
             )
-        logger.info(f"Recording video to: {output_filename}")
+        logger.info(f"ClipScribe Extractor: Recording video to: {output_filename}")
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        logger.info(f"Video opened: {video_path}")
-        logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
+        logger.info(f"ClipScribe Extractor: Video opened: {video_path}")
+        logger.info(
+            f"ClipScribe Extractor: Video FPS: {fps}; Total Frames: {self.total_frames}"
+        )
 
     def _release_sam_inference_state(self) -> None:
         """Release the current shot-local SAM2 state and accelerator cache."""
@@ -637,7 +647,10 @@ class VideoInformationExtractor:
             try:
                 self.sam_model.reset_state(sam_inference_state)
             except Exception:  # noqa: BLE001 - cleanup must not mask task failures
-                logger.warning("Failed to reset SAM2 inference state", exc_info=True)
+                logger.warning(
+                    "ClipScribe Extractor: Failed to reset SAM2 inference state",
+                    exc_info=True,
+                )
         del sam_inference_state
 
         # Drop cyclic references held by model outputs before returning memory
@@ -649,14 +662,20 @@ class VideoInformationExtractor:
                 torch.mps.synchronize()
                 torch.mps.empty_cache()
             except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning("Failed to release MPS cached memory", exc_info=True)
+                logger.warning(
+                    "ClipScribe Extractor: Failed to release MPS cached memory",
+                    exc_info=True,
+                )
 
         if self.device == "cuda" and torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
             except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning("Failed to release CUDA cached memory", exc_info=True)
+                logger.warning(
+                    "ClipScribe Extractor: Failed to release CUDA cached memory",
+                    exc_info=True,
+                )
 
     def _write_video_chunk(
         self,
@@ -718,6 +737,27 @@ class VideoInformationExtractor:
                 f"expected {expected_frames}"
             )
 
+    def _resolve_sam2_refresh_rate(self, active_object_count: int) -> int:
+        default_rate = self.sam2_default_refresh_rate
+
+        if not self.sam2_dynamic_refresh_rate:
+            return default_rate
+
+        if active_object_count <= 2:
+            factor = 1.0
+        elif active_object_count <= 5:
+            factor = 0.8
+        elif active_object_count <= 10:
+            factor = 0.6
+        else:
+            factor = 0.4
+
+        minimum_rate = min(
+            default_rate,
+            max(self.detection_interval, 20),
+        )
+        return max(minimum_rate, round(default_rate * factor))
+
     def _init_sam_inference_state_for_shot(
         self,
         video_path: str,
@@ -755,7 +795,8 @@ class VideoInformationExtractor:
         self.sam_inference_state = sam_inference_state
         self.sam_frame_offset = start_frame
         logger.info(
-            "Initialized SAM2 shot state: video frames [%s, %s) -> local [0, %s)",
+            "ClipScribe Extractor: Initialized SAM2 shot state: video frames "
+            "[%s, %s) -> local [0, %s)",
             start_frame,
             end_frame,
             actual_frames,
@@ -797,7 +838,7 @@ class VideoInformationExtractor:
         if self.video_writer is not None:
             self.video_writer.release()
             self.video_writer = None
-            logger.info("Video writer released. Output saved.")
+            logger.info("ClipScribe Extractor: Video writer released. Output saved.")
 
         self._release_sam_inference_state()
 
@@ -830,7 +871,7 @@ class VideoInformationExtractor:
             iou = self._calculate_iou(new_box, active_box)
 
             logger.info(
-                f"Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}; "
+                f"ClipScribe Extractor: Object {obj_id} label {active_label} has {iou} iou with new box label {new_label}; "
                 f"iou threshold = {self.iou_threshold}"
             )
 
@@ -899,7 +940,8 @@ class VideoInformationExtractor:
             }
 
         logger.info(
-            "SAM2 checkpoint projection at frame %s found %s/%s registered objects",
+            "ClipScribe Extractor: SAM2 checkpoint projection at frame %s found "
+            "%s/%s registered objects",
             frame_idx,
             len(visible_trackers),
             len(self._sam_registered_tracker_ids),
@@ -1028,7 +1070,7 @@ class VideoInformationExtractor:
                                     self.object_registry[obj_id]["embedding_count"] += 1
 
                                     logger.info(
-                                        f"New viewpoint for ID {obj_id} captured. Sim: {cos_sim:.2f}"
+                                        f"ClipScribe Extractor: New viewpoint for ID {obj_id} captured. Sim: {cos_sim:.2f}"
                                     )
                         self.object_registry[obj_id]["last_embedding_frame"] = frame_idx
 
@@ -1151,7 +1193,7 @@ class VideoInformationExtractor:
         Merge local object IDs into global identities across shots using DINOv2
         cosine similarity and semantic label matching. Returns a local-to-global ID map.
         """
-        logger.info("Resolving identities across shots...")
+        logger.info("ClipScribe Extractor: Resolving identities across shots...")
 
         id_map: dict[int, int] = {}
         next_global_id = 0
@@ -1212,13 +1254,13 @@ class VideoInformationExtractor:
 
                 if labels_match and visual_sim > self.label_match_merge_threshold:
                     logger.info(
-                        f"Merge (Standard): {obj_a['label']} matches. Sim: {visual_sim:.2f}"
+                        f"ClipScribe Extractor: Merge (Standard): {obj_a['label']} matches. Sim: {visual_sim:.2f}"
                     )
                     should_merge = True
 
                 elif visual_sim > self.label_no_match_merge_threshold:
                     logger.info(
-                        f"Merge (Visual Override): Labels '{obj_a['label']}'/'{obj_b['label']}' differ, but visual sim is high ({visual_sim:.2f})"
+                        f"ClipScribe Extractor: Merge (Visual Override): Labels '{obj_a['label']}'/'{obj_b['label']}' differ, but visual sim is high ({visual_sim:.2f})"
                     )
                     should_merge = True
 
@@ -1320,14 +1362,16 @@ class VideoInformationExtractor:
     ) -> None:
         """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
         if not self.video_writer.isOpened():
-            logger.error("Error: Video Writer is NOT open.")
+            logger.error("ClipScribe Extractor: Error: Video Writer is NOT open.")
             return
 
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = self.cap.read()
 
         if not ret:
-            logger.error(f"Error: Could not read frame {frame_idx}.")
+            logger.error(
+                f"ClipScribe Extractor: Error: Could not read frame {frame_idx}."
+            )
             return
 
         vis_frame = frame.copy()
@@ -1376,12 +1420,12 @@ class VideoInformationExtractor:
         self.video_writer.write(vis_frame)
 
         if frame_idx % 30 == 0:
-            logger.info(f"Wrote frame {frame_idx} to video.")
+            logger.info(f"ClipScribe Extractor: Wrote frame {frame_idx} to video.")
 
     def _digest_video(self, video_path: str) -> None:
         """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
-        logger.info("--- Step 1: Analyzing Shots ---")
-        logger.info("Detecting scenes...")
+        logger.info("ClipScribe Extractor: --- Step 1: Analyzing Shots ---")
+        logger.info("ClipScribe Extractor: Detecting scenes...")
 
         # 1. Run Scene Detection
         # threshold=27.0 compares adjacent frames' content (HSV).
@@ -1396,7 +1440,7 @@ class VideoInformationExtractor:
         if not self.shot_boundaries:
             self.shot_boundaries = [(0, self.total_frames)]
 
-        logger.info(f"Found {len(self.shot_boundaries)} scenes.")
+        logger.info(f"ClipScribe Extractor: Found {len(self.shot_boundaries)} scenes.")
 
         shot_data: list[ShotData] = []
 
@@ -1472,14 +1516,16 @@ class VideoInformationExtractor:
             },
         }
 
-        logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
+        logger.info(
+            f"ClipScribe Extractor:  > Analysis Complete. Dynamic Start: {has_dynamic_start}"
+        )
 
     def _add_new_tracker(self, box: Box, label: str) -> None:
         """Helper to register the new object with SAM and internal state"""
 
         new_id = self._get_next_obj_id()
 
-        logger.info(f"New object {new_id} ({label})")
+        logger.info(f"ClipScribe Extractor: New object {new_id} ({label})")
         self.id_to_label[new_id] = label
 
         self.active_trackers[new_id] = {
@@ -1497,7 +1543,9 @@ class VideoInformationExtractor:
 
     def _analyze_audio(self, video_path: str) -> None:
         """Transcribe the video audio with Whisper and filter segments below the confidence threshold."""
-        logger.info("--- Step 2: Transcribing Audio with Whisper ---")
+        logger.info(
+            "ClipScribe Extractor: --- Step 2: Transcribing Audio with Whisper ---"
+        )
 
         result = self.audio_model.transcribe(
             audio=video_path,
@@ -1515,7 +1563,7 @@ class VideoInformationExtractor:
 
             if confidence < self.audio_confidence:
                 logger.info(
-                    f"Skipping audio segment '{segment['text']}' (Conf: {confidence:.2f})"
+                    f"ClipScribe Extractor: Skipping audio segment '{segment['text']}' (Conf: {confidence:.2f})"
                 )
                 continue
 
@@ -1530,7 +1578,7 @@ class VideoInformationExtractor:
             self.progress.emit(ProgressEvent.AUDIO_SEGMENT, dict(kept_segment))
 
         logger.info(
-            f"Audio transcription complete. Kept {len(self.audio_registry)} segments."
+            f"ClipScribe Extractor: Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
     def _describe_shot(self, start_f: int, end_f: int) -> tuple[str, str]:
@@ -1546,7 +1594,7 @@ class VideoInformationExtractor:
         shot_length = end_f - start_f
 
         logger.info(
-            f"Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
+            f"ClipScribe Extractor: Shot duration: {shot_duration:.2f}s -> sampling {num_samples} frames"
         )
 
         if num_samples == 1:
@@ -1631,7 +1679,7 @@ class VideoInformationExtractor:
             Phase.AUDIO, {"segments_kept": len(self.audio_registry)}
         )
 
-        logger.info("--- Step 3: Tracking/OCR ---")
+        logger.info("ClipScribe Extractor: --- Step 3: Tracking/OCR ---")
 
         self.progress.phase_started(
             Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
@@ -1659,7 +1707,9 @@ class VideoInformationExtractor:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
             ret, frame = self.cap.read()
 
-            logger.info(f"Processing Shot {shot_idx}: Frames {start_f} to {end_f}")
+            logger.info(
+                f"ClipScribe Extractor: Processing Shot {shot_idx}: Frames {start_f} to {end_f}"
+            )
 
             if not ret:
                 break
@@ -1701,7 +1751,9 @@ class VideoInformationExtractor:
 
             with open(taxonomy_prompt_path, "w", encoding="utf-8") as file:
                 file.write(taxonomy_prompt)
-                logger.info(f"Taxonomy Prompt saved to: {taxonomy_prompt_path}")
+                logger.info(
+                    f"ClipScribe Extractor: Taxonomy Prompt saved to: {taxonomy_prompt_path}"
+                )
 
             dynamic_taxonomy = self.taxonomy_generator.generate_taxonomy_targets(
                 taxonomy_prompt
@@ -1717,19 +1769,56 @@ class VideoInformationExtractor:
                 },
             )
 
-            logger.info(f"Dino Shot Prompt: {combined_final_context}")
+            logger.info(
+                f"ClipScribe Extractor: Dino Shot Prompt: {combined_final_context}"
+            )
 
             # SAM2 accepts a video path and eagerly decodes every frame in it.
             # Give it only this shot so unrelated shots never occupy the
             # inference state. The temporary file is removed once init_state
             # has synchronously loaded it.
-            self._init_sam_inference_state_for_shot(video_path, start_f, end_f)
+            sam2_refresh_rate = self.sam2_default_refresh_rate
+            sam_window_end = min(start_f + sam2_refresh_rate, end_f)
+            self._init_sam_inference_state_for_shot(video_path, start_f, sam_window_end)
 
             while self.current_frame < end_f:
                 # Finest checkpoint: each iteration is a detection batch (DINO +
                 # OCR + MTCNN + SAM) worth seconds of GPU work, so a per-batch
                 # Redis check is negligible overhead and bounds cancel latency.
                 self._cancel.check()
+
+                if self.current_frame >= sam_window_end:
+                    active_object_count = len(self.active_trackers)
+
+                    sam2_refresh_rate = self._resolve_sam2_refresh_rate(
+                        active_object_count
+                    )
+
+                    sam_window_end = min(self.current_frame + sam2_refresh_rate, end_f)
+
+                    logger.info(
+                        "ClipScribe Extractor: Refreshing SAM2 at frame %s with %s "
+                        "active objects; next window contains %s frames",
+                        self.current_frame,
+                        active_object_count,
+                        sam2_refresh_rate,
+                    )
+
+                    self._init_sam_inference_state_for_shot(
+                        video_path, self.current_frame, sam_window_end
+                    )
+
+                    self._sam_registered_tracker_ids = set()
+
+                    for obj_id, tracker in self.active_trackers.items():
+                        self.sam_model.add_new_points_or_box(
+                            inference_state=self.sam_inference_state,
+                            frame_idx=0,
+                            obj_id=obj_id,
+                            box=tracker["box"],
+                        )
+                        self._sam_registered_tracker_ids.add(obj_id)
+
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
                 ret, frame_bgr = self.cap.read()
 
@@ -1755,7 +1844,7 @@ class VideoInformationExtractor:
                 detected_text_data = self.ocr_engine.detect(raw_image_rgb)
 
                 logger.info(
-                    f"Detected #{len(detected_objects_data)} general objects in the current frame"
+                    f"ClipScribe Extractor: Detected #{len(detected_objects_data)} general objects in the current frame"
                 )
 
                 text_viz_path = os.path.join(
@@ -1798,7 +1887,7 @@ class VideoInformationExtractor:
                     label = box_info["label"]
 
                     logger.info(
-                        f"trying to match dino label {label} with {resolved_video_type} taxonomy targets"
+                        f"ClipScribe Extractor: trying to match dino label {label} with {resolved_video_type} taxonomy targets"
                     )
 
                     best_semantic = self.taxonomy_resolver.resolve(
@@ -1807,7 +1896,7 @@ class VideoInformationExtractor:
 
                     if best_semantic is None:
                         logger.warning(
-                            f"No proper semantic found for dino label: {label}. skipping..."
+                            f"ClipScribe Extractor: No proper semantic found for dino label: {label}. skipping..."
                         )
                         continue
 
@@ -1828,7 +1917,7 @@ class VideoInformationExtractor:
                 try:
                     boxes, probs = self.face_detection.detect(raw_image_rgb)
                 except Exception as e:
-                    logger.warning(f"MTCNN Error: {e}")
+                    logger.warning(f"ClipScribe Extractor: MTCNN Error: {e}")
                     boxes, probs = None, None
 
                 if boxes is not None:
@@ -1864,7 +1953,9 @@ class VideoInformationExtractor:
                             self._add_new_tracker(tracker_box, forced_label)
 
                     num_faces = len(mapping)
-                    logger.info(f"Detected #{num_faces} faces in the current frame")
+                    logger.info(
+                        f"ClipScribe Extractor: Detected #{num_faces} faces in the current frame"
+                    )
                     if mapping and self._take_viz_slot():
                         self.dingo_model.map_results(
                             raw_image_rgb, mapping, face_viz_path
@@ -1881,8 +1972,8 @@ class VideoInformationExtractor:
                     },
                 )
 
-                frames_left_in_shot = end_f - self.current_frame
-                frames_in_batch = min(self.detection_interval, frames_left_in_shot)
+                frames_left_in_window = sam_window_end - self.current_frame
+                frames_in_batch = min(self.detection_interval, frames_left_in_window)
 
                 if frames_in_batch <= 0:
                     break
@@ -1931,7 +2022,9 @@ class VideoInformationExtractor:
 
         self.progress.phase_completed(Phase.SHOT_PROCESSING)
 
-        logger.info("Video Processing Complete. Finalizing data...")
+        logger.info(
+            "ClipScribe Extractor: Video Processing Complete. Finalizing data..."
+        )
 
         self.progress.phase_started(Phase.FINALIZE)
         information = self._finalize_data()
