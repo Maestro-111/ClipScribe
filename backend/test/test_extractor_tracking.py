@@ -1,5 +1,6 @@
 """Focused tests for SAM2 checkpoint identity reconciliation."""
 
+import os
 from types import SimpleNamespace
 from unittest import mock
 
@@ -12,7 +13,8 @@ def _extractor_with_sam() -> tuple[VideoInformationExtractor, mock.MagicMock]:
     extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
     sam_model = mock.MagicMock()
     extractor.sam_model = sam_model
-    extractor.inference_state = object()
+    extractor.sam_inference_state = {"num_frames": 20}
+    extractor.sam_frame_offset = 10
     extractor.active_trackers = {}
     extractor._sam_registered_tracker_ids = set()
     extractor.id_to_label = {}
@@ -34,14 +36,14 @@ def test_checkpoint_projection_restores_only_ids_with_non_empty_masks():
 
     masks = torch.full((2, 1, 8, 8), -1.0)
     masks[0, 0, 1:5, 2:6] = 1.0
-    sam_model.propagate_in_video.return_value = iter([(12, [7, 8], masks)])
+    sam_model.propagate_in_video.return_value = iter([(2, [7, 8], masks)])
 
     visible = extractor._predict_registered_objects_at(12)
 
     assert visible == {7: {"box": [2, 1, 5, 4], "label": "car"}}
     sam_model.propagate_in_video.assert_called_once_with(
-        extractor.inference_state,
-        start_frame_idx=12,
+        extractor.sam_inference_state,
+        start_frame_idx=2,
         max_frame_num_to_track=0,
     )
 
@@ -60,10 +62,34 @@ def test_new_tracker_is_mirrored_as_registered_only_after_sam_accepts_it():
     assert extractor._sam_registered_tracker_ids == {1}
     assert extractor.active_trackers == {1: {"box": [2, 1, 5, 4], "label": "car"}}
     sam_model.add_new_points_or_box.assert_called_once_with(
-        inference_state=extractor.inference_state,
-        frame_idx=12,
+        inference_state=extractor.sam_inference_state,
+        frame_idx=2,
         obj_id=1,
         box=[2, 1, 5, 4],
+    )
+
+
+def test_shot_state_uses_temporary_video_and_records_frame_offset():
+    extractor, sam_model = _extractor_with_sam()
+    extractor.sam_inference_state = None
+    extractor.sam_frame_offset = None
+    extractor.device = "cpu"
+    sam_model.init_state.return_value = {"num_frames": 10}
+
+    with mock.patch.object(extractor, "_write_video_chunk") as write_video_chunk:
+        extractor._init_sam_inference_state_for_shot("source.mp4", 30, 40)
+
+    assert extractor.sam_inference_state == {"num_frames": 10}
+    assert extractor.sam_frame_offset == 30
+    assert extractor._to_sam_frame(34) == 4
+    assert extractor._to_video_frame(4) == 34
+
+    output_path = write_video_chunk.call_args.args[3]
+    assert os.path.basename(output_path) == "shot.mp4"
+    write_video_chunk.assert_called_once_with("source.mp4", 30, 40, output_path)
+    sam_model.init_state.assert_called_once_with(
+        video_path=output_path,
+        async_loading_frames=False,
     )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import cv2
 import gc
 import os
+import tempfile
 
 import re
 import logging
@@ -249,6 +250,19 @@ class VideoInformationExtractor:
         }
 
     @staticmethod
+    def _save_results_to_json(
+        information: ExtractionSummary, artifact_path: str
+    ) -> None:
+        """Serialize the extraction results dict to extraction_summary.json."""
+        output_file = os.path.join(artifact_path, "extraction_summary.json")
+        try:
+            with open(output_file, "w") as f:
+                json.dump(information, f, cls=NumpyEncoder, indent=4)
+            logger.info(f"Extraction results successfully saved to: {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving JSON: {e}")
+
+    @staticmethod
     def _calculate_iou(boxA: Box, boxB: Box) -> float:
         """Compute Intersection over Union between two [x1, y1, x2, y2] boxes."""
         # Determine intersection rectangle
@@ -448,7 +462,10 @@ class VideoInformationExtractor:
         # cleanup can safely run after a partially initialized extraction.
         self.cap: Any = None
         self.video_writer: Any = None
-        self.inference_state: Any = None
+        self.sam_inference_state: Any = None
+        # Frame 0 in a per-shot SAM state corresponds to this frame in the
+        # original video. All persisted frame indices remain video-global.
+        self.sam_frame_offset: int | None = None
 
         self.current_frame = 0
         self.obj_id_counter = 1
@@ -564,7 +581,7 @@ class VideoInformationExtractor:
         return True
 
     def _state_init(self, artifact_path: str, video_path: str) -> None:
-        """Open the video capture, initialize the video writer, and set up SAM inference state."""
+        """Open the input video and initialize the tracked-output writer."""
         if not os.path.exists(artifact_path):
             os.makedirs(artifact_path)
 
@@ -605,22 +622,172 @@ class VideoInformationExtractor:
                 output_filename, cv2.VideoWriter.fourcc(*"mp4v"), fps, (width, height)
             )
         logger.info(f"Recording video to: {output_filename}")
-
-        self.inference_state = self.sam_model.init_state(video_path=video_path)
-        self.total_frames = self.inference_state["num_frames"]
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         logger.info(f"Video opened: {video_path}")
         logger.info(f"Video FPS: {fps}; Total Frames: {self.total_frames}")
+
+    def _release_sam_inference_state(self) -> None:
+        """Release the current shot-local SAM2 state and accelerator cache."""
+        sam_inference_state = self.sam_inference_state
+        self.sam_inference_state = None
+        self.sam_frame_offset = None
+
+        if sam_inference_state is not None:
+            try:
+                self.sam_model.reset_state(sam_inference_state)
+            except Exception:  # noqa: BLE001 - cleanup must not mask task failures
+                logger.warning("Failed to reset SAM2 inference state", exc_info=True)
+        del sam_inference_state
+
+        # Drop cyclic references held by model outputs before returning memory
+        # to the accelerator allocator. Model weights remain resident.
+        gc.collect()
+
+        if self.device == "mps" and torch.backends.mps.is_available():
+            try:
+                torch.mps.synchronize()
+                torch.mps.empty_cache()
+            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
+                logger.warning("Failed to release MPS cached memory", exc_info=True)
+
+        if self.device == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
+                logger.warning("Failed to release CUDA cached memory", exc_info=True)
+
+    def _write_video_chunk(
+        self,
+        video_path: str,
+        start_frame: int,
+        end_frame: int,
+        output_path: str,
+    ) -> None:
+        """Stream ``[start_frame, end_frame)`` into a temporary SAM2 video."""
+        if not 0 <= start_frame < end_frame <= self.total_frames:
+            raise ValueError(
+                "Invalid SAM2 shot range "
+                f"[{start_frame}, {end_frame}) for {self.total_frames} frames"
+            )
+
+        source = cv2.VideoCapture(video_path)
+        writer: Any = None
+        written_frames = 0
+
+        try:
+            if not source.isOpened():
+                raise ValueError(f"Could not open video for SAM2 shot: {video_path}")
+
+            source.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            ok, frame = source.read()
+            if not ok:
+                raise RuntimeError(
+                    f"Could not read SAM2 shot start frame {start_frame}"
+                )
+
+            height, width = frame.shape[:2]
+            writer = cv2.VideoWriter(
+                output_path,
+                cv2.VideoWriter.fourcc(*"mp4v"),
+                self.fps,
+                (width, height),
+            )
+            if not writer.isOpened():
+                raise RuntimeError(f"Could not create SAM2 shot video: {output_path}")
+
+            for frame_idx in range(start_frame, end_frame):
+                if frame_idx != start_frame:
+                    ok, frame = source.read()
+                    if not ok:
+                        raise RuntimeError(
+                            f"Could not read source frame {frame_idx} for SAM2 shot"
+                        )
+                writer.write(frame)
+                written_frames += 1
+        finally:
+            source.release()
+            if writer is not None:
+                writer.release()
+
+        expected_frames = end_frame - start_frame
+        if written_frames != expected_frames:
+            raise RuntimeError(
+                f"SAM2 shot video contains {written_frames} frames; "
+                f"expected {expected_frames}"
+            )
+
+    def _init_sam_inference_state_for_shot(
+        self,
+        video_path: str,
+        start_frame: int,
+        end_frame: int,
+    ) -> None:
+        """Create a SAM2 state containing only one shot's decoded frames."""
+        self._release_sam_inference_state()
+
+        with tempfile.TemporaryDirectory(prefix="clipscribe-sam-shot-") as temp_dir:
+            shot_video_path = os.path.join(temp_dir, "shot.mp4")
+            self._write_video_chunk(
+                video_path,
+                start_frame,
+                end_frame,
+                shot_video_path,
+            )
+            sam_inference_state = self.sam_model.init_state(
+                video_path=shot_video_path,
+                async_loading_frames=False,
+            )
+
+        expected_frames = end_frame - start_frame
+        actual_frames = int(sam_inference_state["num_frames"])
+        if actual_frames != expected_frames:
+            try:
+                self.sam_model.reset_state(sam_inference_state)
+            finally:
+                del sam_inference_state
+            raise RuntimeError(
+                f"SAM2 initialized {actual_frames} shot frames; "
+                f"expected {expected_frames}"
+            )
+
+        self.sam_inference_state = sam_inference_state
+        self.sam_frame_offset = start_frame
+        logger.info(
+            "Initialized SAM2 shot state: video frames [%s, %s) -> local [0, %s)",
+            start_frame,
+            end_frame,
+            actual_frames,
+        )
+
+    def _to_sam_frame(self, video_frame_idx: int) -> int:
+        """Translate a video-global frame index to the current SAM shot index."""
+        if self.sam_inference_state is None or self.sam_frame_offset is None:
+            raise RuntimeError("SAM2 shot state is not initialized")
+
+        sam_frame_idx = video_frame_idx - self.sam_frame_offset
+        num_frames = int(self.sam_inference_state["num_frames"])
+        if not 0 <= sam_frame_idx < num_frames:
+            raise IndexError(
+                f"Video frame {video_frame_idx} maps to SAM2 frame {sam_frame_idx}, "
+                f"outside [0, {num_frames})"
+            )
+        return sam_frame_idx
+
+    def _to_video_frame(self, sam_frame_idx: int) -> int:
+        """Translate a current-shot SAM frame index to the original video."""
+        if self.sam_frame_offset is None:
+            raise RuntimeError("SAM2 shot state is not initialized")
+        return self.sam_frame_offset + sam_frame_idx
 
     def cleanup(self) -> None:
         """Release resources owned by this extraction run.
 
         The detector, SAM2 predictor, Whisper model, and other model objects are
         owned by the long-lived ``ClipScribeBuilder`` and intentionally remain
-        loaded between Celery tasks.  The SAM2 *inference state*, however, is
-        created for one video and can retain decoded frames and accelerator
-        tensors.  Drop that state explicitly so a worker can process a second
-        video without carrying the previous video's memory forward.
+        loaded between Celery tasks. The current shot's SAM2 inference state can
+        retain decoded frames and accelerator tensors, so drop it explicitly.
         """
 
         if self.cap is not None:
@@ -632,14 +799,7 @@ class VideoInformationExtractor:
             self.video_writer = None
             logger.info("Video writer released. Output saved.")
 
-        inference_state = getattr(self, "inference_state", None)
-        if inference_state is not None:
-            try:
-                self.sam_model.reset_state(inference_state)
-            except Exception:  # noqa: BLE001 - cleanup must not mask task failures
-                logger.warning("Failed to reset SAM2 inference state", exc_info=True)
-            finally:
-                self.inference_state = None
+        self._release_sam_inference_state()
 
         # These are all owned by this per-job extractor.  Rebind instead of
         # clearing in place: the completed extraction summary may still hold
@@ -657,22 +817,6 @@ class VideoInformationExtractor:
         self.shot_boundaries = []
         self.current_frame = 0
         self.obj_id_counter = 1
-
-        gc.collect()
-
-        if self.device == "mps" and torch.backends.mps.is_available():
-            try:
-                torch.mps.synchronize()
-                torch.mps.empty_cache()
-            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning("Failed to release MPS cached memory", exc_info=True)
-
-        if self.device == "cuda" and torch.cuda.is_available():
-            try:
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning("Failed to release CUDA cached memory", exc_info=True)
 
     def _is_new_object(self, new_box: Box, new_label: str) -> bool:
         """
@@ -712,9 +856,10 @@ class VideoInformationExtractor:
         if not self._sam_registered_tracker_ids:
             return {}
 
+        sam_frame_idx = self._to_sam_frame(frame_idx)
         predictions = self.sam_model.propagate_in_video(
-            self.inference_state,
-            start_frame_idx=frame_idx,
+            self.sam_inference_state,
+            start_frame_idx=sam_frame_idx,
             max_frame_num_to_track=0,
         )
         prediction = next(predictions, None)
@@ -724,10 +869,11 @@ class VideoInformationExtractor:
             )
 
         predicted_frame_idx, obj_ids, video_res_masks = prediction
-        if predicted_frame_idx != frame_idx:
+        if predicted_frame_idx != sam_frame_idx:
             raise RuntimeError(
                 "SAM2 checkpoint projection returned frame "
-                f"{predicted_frame_idx}, expected {frame_idx}"
+                f"{predicted_frame_idx}, expected shot-local frame {sam_frame_idx} "
+                f"for video frame {frame_idx}"
             )
 
         masks_np = video_res_masks.cpu().numpy()
@@ -1328,18 +1474,6 @@ class VideoInformationExtractor:
 
         logger.info(f" > Analysis Complete. Dynamic Start: {has_dynamic_start}")
 
-    def _save_results_to_json(
-        self, information: ExtractionSummary, artifact_path: str
-    ) -> None:
-        """Serialize the extraction results dict to extraction_summary.json."""
-        output_file = os.path.join(artifact_path, "extraction_summary.json")
-        try:
-            with open(output_file, "w") as f:
-                json.dump(information, f, cls=NumpyEncoder, indent=4)
-            logger.info(f"Extraction results successfully saved to: {output_file}")
-        except Exception as e:
-            logger.error(f"Error saving JSON: {e}")
-
     def _add_new_tracker(self, box: Box, label: str) -> None:
         """Helper to register the new object with SAM and internal state"""
 
@@ -1354,8 +1488,8 @@ class VideoInformationExtractor:
         }
 
         self.sam_model.add_new_points_or_box(
-            inference_state=self.inference_state,
-            frame_idx=self.current_frame,
+            inference_state=self.sam_inference_state,
+            frame_idx=self._to_sam_frame(self.current_frame),
             obj_id=new_id,
             box=box,
         )
@@ -1517,7 +1651,6 @@ class VideoInformationExtractor:
                     "end": round(end_f / self.fps, 2),
                 },
             )
-            self.sam_model.reset_state(self.inference_state)
 
             self.active_trackers = {}
             self._sam_registered_tracker_ids = set()
@@ -1585,6 +1718,12 @@ class VideoInformationExtractor:
             )
 
             logger.info(f"Dino Shot Prompt: {combined_final_context}")
+
+            # SAM2 accepts a video path and eagerly decodes every frame in it.
+            # Give it only this shot so unrelated shots never occupy the
+            # inference state. The temporary file is removed once init_state
+            # has synchronously loaded it.
+            self._init_sam_inference_state_for_shot(video_path, start_f, end_f)
 
             while self.current_frame < end_f:
                 # Finest checkpoint: each iteration is a detection batch (DINO +
@@ -1743,25 +1882,33 @@ class VideoInformationExtractor:
                 )
 
                 frames_left_in_shot = end_f - self.current_frame
-                frames_to_track = min(self.detection_interval, frames_left_in_shot)
+                frames_in_batch = min(self.detection_interval, frames_left_in_shot)
 
-                if frames_to_track <= 0:
+                if frames_in_batch <= 0:
                     break
 
                 if len(self.active_trackers) == 0:
-                    self.current_frame += frames_to_track
+                    self.current_frame += frames_in_batch
                     continue
 
+                sam_start_frame = self._to_sam_frame(self.current_frame)
                 chunk_generator = self.sam_model.propagate_in_video(
-                    self.inference_state,
-                    start_frame_idx=self.current_frame,
-                    max_frame_num_to_track=frames_to_track,
+                    self.sam_inference_state,
+                    start_frame_idx=sam_start_frame,
+                    # SAM2's range includes both the start frame and
+                    # start + max_frame_num_to_track.
+                    max_frame_num_to_track=frames_in_batch - 1,
                 )
 
                 last_propagated_frame = self.current_frame
-                for frame_idx, obj_ids, video_res_masks in chunk_generator:
+                for sam_frame_idx, obj_ids, video_res_masks in chunk_generator:
+                    frame_idx = self._to_video_frame(sam_frame_idx)
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                    _, curr_frame = self.cap.read()
+                    frame_ok, curr_frame = self.cap.read()
+                    if not frame_ok:
+                        raise RuntimeError(
+                            f"Could not read propagated video frame {frame_idx}"
+                        )
 
                     self._save_metadata(
                         frame_idx,
@@ -1780,6 +1927,7 @@ class VideoInformationExtractor:
                 ProgressEvent.SHOT_COMPLETED,
                 {"shot_idx": shot_idx, "objects_tracked": len(self.active_trackers)},
             )
+            self._release_sam_inference_state()
 
         self.progress.phase_completed(Phase.SHOT_PROCESSING)
 
