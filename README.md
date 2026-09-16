@@ -6,7 +6,17 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 
 ClipScribe splits a video into scenes, detects and tracks objects across shots, transcribes speech, extracts on-screen text, and assembles the result into structured metadata. A parser layer can then evaluate the extracted data against platform-specific criteria.
 
+## Architecture
+
+[![ClipScribe overall architecture](icons/overall-architecture.svg)](icons/overall-architecture.svg)
+
+The web dashboard talks to one FastAPI contract whether jobs run in the API's inline executor or on a Celery worker. Both execution modes converge on the same job lifecycle and ClipScribe engine, with Redis carrying queued work, progress events, and cancellation signals. See the [system architecture guide](docs/system-architecture.md) for the component and data-ownership details.
+
 ## Pipeline
+
+[![Detailed ClipScribe extractor pipeline](icons/extractor-pipeline.svg)](icons/extractor-pipeline.svg)
+
+The extractor runs four ordered phases, with the detailed per-shot detection and tracking loop shown above. See the [extractor algorithm guide](docs/extractor-core-algorithm.md) and [SAM2 tracking guide](docs/sam2-tracking-and-identity.md) for implementation-level behavior.
 
 1. **Scene Detection** - split the video into shots using content-based scene detection.
 2. **Scene Comprehension** - GPT vision analyzes sampled frames per shot and produces a narrative scene description plus a GroundingDINO detection prompt.

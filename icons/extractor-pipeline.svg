@@ -1,0 +1,338 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1460" viewBox="0 0 1800 1460" role="img" aria-labelledby="title desc">
+  <title id="title">ClipScribe detailed extractor pipeline</title>
+  <desc id="desc">Detailed flow of the VideoInformationExtractor from video initialization and shot detection through audio transcription, scene understanding, taxonomy generation, GroundingDINO detection, OCR, face detection, SAM2 tracking, cross-shot identity resolution, metrics, and extraction outputs.</desc>
+  <defs>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="0.62" stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="final" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+    <style>
+      .title { font: 700 40px Inter, ui-sans-serif, system-ui, sans-serif; fill: #fff; }
+      .subtitle { font: 400 18px Inter, ui-sans-serif, system-ui, sans-serif; fill: #bfdbfe; }
+      .phase { font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; fill: #1d4ed8; letter-spacing: 1.2px; }
+      .phase-title { font: 700 18px Inter, ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .phase-copy { font: 400 13px Inter, ui-sans-serif, system-ui, sans-serif; fill: #64748b; }
+      .section { font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; fill: #334155; letter-spacing: 1.4px; }
+      .card-title { font: 700 18px Inter, ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .card-copy { font: 400 14px Inter, ui-sans-serif, system-ui, sans-serif; fill: #475569; }
+      .small-title { font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .small-copy { font: 400 12.5px Inter, ui-sans-serif, system-ui, sans-serif; fill: #64748b; }
+      .code { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #475569; }
+      .label { font: 600 12px Inter, ui-sans-serif, system-ui, sans-serif; fill: #64748b; }
+      .white-title { font: 700 18px Inter, ui-sans-serif, system-ui, sans-serif; fill: #fff; }
+      .white-copy { font: 400 13px Inter, ui-sans-serif, system-ui, sans-serif; fill: #dbeafe; }
+      .flow { fill: none; stroke: #475569; stroke-width: 2.4; marker-end: url(#arrow); }
+      .flow-blue { fill: none; stroke: #2563eb; stroke-width: 2.8; marker-end: url(#arrowBlue); }
+      .flow-purple { fill: none; stroke: #7c3aed; stroke-width: 2.6; marker-end: url(#arrowPurple); }
+      .aux { fill: none; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 6; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #2563eb; stroke-width: 2.6; stroke-dasharray: 9 6; marker-end: url(#arrowBlue); }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1460" rx="24" fill="#f8fafc"/>
+  <path d="M24 0h1752a24 24 0 0 1 24 24v120H0V24A24 24 0 0 1 24 0z" fill="url(#header)"/>
+  <g transform="translate(64 42)">
+    <rect width="56" height="56" rx="14" fill="#fff" fill-opacity="0.12"/>
+    <rect x="11" y="13" width="34" height="10" rx="2" fill="#fff"/>
+    <path d="M17 12l-3 12m13-12-3 12m13-12-3 12" stroke="#1e3a8a" stroke-width="2.5"/>
+    <rect x="11" y="27" width="34" height="18" rx="3" fill="#fff"/>
+    <path d="M18 32h18M18 39h12" stroke="#1e3a8a" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+  <text x="142" y="65" class="title">Detailed extractor pipeline</text>
+  <text x="142" y="100" class="subtitle">VideoInformationExtractor.extract · phase order, per-shot control flow, tracking loop, and output assembly</text>
+  <g transform="translate(1450 43)">
+    <rect width="282" height="51" rx="25" fill="#fff" fill-opacity="0.10" stroke="#fff" stroke-opacity="0.18"/>
+    <circle cx="27" cy="25" r="7" fill="#60a5fa"/>
+    <text x="45" y="31" class="subtitle">cooperative cancel checkpoints</text>
+  </g>
+
+  <text x="54" y="164" class="section">RUN-LEVEL PHASES — SEQUENTIAL</text>
+  <line x1="54" y1="178" x2="1746" y2="178" stroke="#e2e8f0" stroke-width="2"/>
+
+  <g filter="url(#shadow)">
+    <rect x="55" y="205" width="270" height="128" rx="17" fill="#fff" stroke="#cbd5e1"/>
+    <circle cx="88" cy="238" r="18" fill="#e2e8f0"/>
+    <text x="82" y="244" class="phase-title">0</text>
+    <text x="117" y="232" class="phase">INITIALIZE</text>
+    <text x="117" y="258" class="phase-title">Video state</text>
+    <text x="79" y="291" class="phase-copy">OpenCV capture · FPS + dimensions</text>
+    <text x="79" y="313" class="phase-copy">tracked MP4 writer · run artifact dir</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="365" y="205" width="270" height="128" rx="17" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <circle cx="398" cy="238" r="18" fill="#dbeafe"/>
+    <text x="393" y="244" class="phase-title">1</text>
+    <text x="427" y="232" class="phase">SCENE DETECTION</text>
+    <text x="427" y="258" class="phase-title">Digest video</text>
+    <text x="389" y="291" class="phase-copy">PySceneDetect shot boundaries</text>
+    <text x="389" y="313" class="phase-copy">duration · pacing · dynamic start</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="675" y="205" width="270" height="128" rx="17" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <circle cx="708" cy="238" r="18" fill="#dbeafe"/>
+    <text x="702" y="244" class="phase-title">2</text>
+    <text x="737" y="232" class="phase">AUDIO</text>
+    <text x="737" y="258" class="phase-title">Whisper</text>
+    <text x="699" y="291" class="phase-copy">Whole-video transcription</text>
+    <text x="699" y="313" class="phase-copy">exp(avg_logprob) confidence filter</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="985" y="205" width="330" height="128" rx="17" fill="#fff" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="1018" cy="238" r="18" fill="#ede9fe"/>
+    <text x="1012" y="244" class="phase-title">3</text>
+    <text x="1047" y="232" class="phase">SHOT PROCESSING</text>
+    <text x="1047" y="258" class="phase-title">Understand + detect + track</text>
+    <text x="1009" y="291" class="phase-copy">Pre-describe shots · resolve video profile</text>
+    <text x="1009" y="313" class="phase-copy">then execute the per-shot loop below</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1355" y="205" width="390" height="128" rx="17" fill="#fff" stroke="#86efac" stroke-width="2"/>
+    <circle cx="1388" cy="238" r="18" fill="#dcfce7"/>
+    <text x="1382" y="244" class="phase-title">4</text>
+    <text x="1417" y="232" class="phase">FINALIZE</text>
+    <text x="1417" y="258" class="phase-title">Resolve + summarize</text>
+    <text x="1379" y="291" class="phase-copy">Cross-shot IDs · motion metrics · global mapping</text>
+    <text x="1379" y="313" class="phase-copy">ExtractionSummary + JSON artifact</text>
+  </g>
+
+  <path d="M325 269H365" class="flow-blue"/>
+  <path d="M635 269H675" class="flow-blue"/>
+  <path d="M945 269H985" class="flow-blue"/>
+  <path d="M1315 269H1355" class="flow-blue"/>
+
+  <rect x="50" y="382" width="1700" height="735" rx="24" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="50" y="382" width="1700" height="56" rx="24" fill="#f1f5f9"/>
+  <path d="M50 414h1700v24H50z" fill="#f1f5f9"/>
+  <text x="82" y="417" class="section">PHASE 3 DETAIL — FOR EACH SHOT</text>
+  <text x="1470" y="417" class="code">cancel check at shot + batch boundaries</text>
+
+  <g filter="url(#shadow)">
+    <rect x="84" y="472" width="300" height="142" rx="17" fill="#fff" stroke="#bfdbfe" stroke-width="2"/>
+    <rect x="104" y="491" width="92" height="24" rx="12" fill="#eff6ff"/>
+    <text x="118" y="508" class="label" fill="#1d4ed8">SCENE AI</text>
+    <text x="104" y="545" class="card-title">Adaptive frame samples</text>
+    <text x="104" y="572" class="card-copy">GPT vision returns two contexts:</text>
+    <text x="104" y="594" class="small-copy">narrative description + DINO prompt</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="430" y="472" width="330" height="142" rx="17" fill="#fff" stroke="#c4b5fd" stroke-width="2"/>
+    <rect x="450" y="491" width="102" height="24" rx="12" fill="#f5f3ff"/>
+    <text x="464" y="508" class="label" fill="#6d28d9">TAXONOMY</text>
+    <text x="450" y="545" class="card-title">Canonical targets</text>
+    <text x="450" y="572" class="card-copy">LLM combines profile + scene + hints</text>
+    <text x="450" y="594" class="small-copy">activate targets in the SBERT resolver</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="806" y="472" width="286" height="142" rx="17" fill="#fff" stroke="#fcd34d" stroke-width="2"/>
+    <rect x="826" y="491" width="111" height="24" rx="12" fill="#fffbeb"/>
+    <text x="840" y="508" class="label" fill="#a16207">SAM WINDOW</text>
+    <text x="826" y="545" class="card-title">Initialize shot slice</text>
+    <text x="826" y="572" class="card-copy">Decode only the active window</text>
+    <text x="826" y="594" class="small-copy">refresh rate may scale with objects</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1138" y="472" width="250" height="142" rx="17" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <rect x="1158" y="491" width="82" height="24" rx="12" fill="#eff6ff"/>
+    <text x="1172" y="508" class="label" fill="#1d4ed8">CURSOR</text>
+    <text x="1158" y="545" class="card-title">Read current frame</text>
+    <text x="1158" y="572" class="card-copy">Detection occurs once per</text>
+    <text x="1158" y="594" class="code">detection_interval</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1434" y="472" width="282" height="142" rx="17" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+    <rect x="1454" y="491" width="116" height="24" rx="12" fill="#f1f5f9"/>
+    <text x="1468" y="508" class="label">CHECKPOINT</text>
+    <text x="1454" y="545" class="card-title">Reconcile trackers</text>
+    <text x="1454" y="572" class="card-copy">Project registered SAM IDs</text>
+    <text x="1454" y="594" class="small-copy">avoid duplicate IDs after reappearance</text>
+  </g>
+
+  <path d="M384 543H430" class="flow-purple"/>
+  <path d="M760 543H806" class="flow-purple"/>
+  <path d="M1092 543H1138" class="flow"/>
+  <path d="M1388 543H1434" class="flow"/>
+
+  <text x="84" y="661" class="section">DETECTION BATCH</text>
+  <line x1="84" y1="674" x2="1716" y2="674" stroke="#e2e8f0"/>
+
+  <g filter="url(#shadow)">
+    <rect x="84" y="708" width="215" height="286" rx="18" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="108" y="746" class="card-title">Frame fan-out</text>
+    <text x="108" y="773" class="card-copy">Same RGB frame enters</text>
+    <text x="108" y="795" class="card-copy">three detectors.</text>
+    <circle cx="191" cy="850" r="45" fill="#eff6ff" stroke="#60a5fa" stroke-width="2"/>
+    <rect x="166" y="832" width="50" height="36" rx="5" fill="none" stroke="#2563eb" stroke-width="3"/>
+    <path d="M177 843l16 8-16 8z" fill="#2563eb"/>
+    <text x="127" y="931" class="code">current_frame</text>
+    <text x="115" y="956" class="small-copy">raw overlay rows share</text>
+    <text x="127" y="975" class="small-copy">one record shape</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="350" y="702" width="245" height="84" rx="15" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="372" y="735" class="small-title">GroundingDINO</text>
+    <text x="372" y="760" class="small-copy">prompted boxes + raw labels</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="350" y="816" width="245" height="84" rx="15" fill="#fff" stroke="#67e8f9" stroke-width="2"/>
+    <text x="372" y="849" class="small-title">PaddleOCR</text>
+    <text x="372" y="874" class="small-copy">text boxes + confidence</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="350" y="930" width="245" height="84" rx="15" fill="#fff" stroke="#fda4af" stroke-width="2"/>
+    <text x="372" y="963" class="small-title">MTCNN</text>
+    <text x="372" y="988" class="small-copy">face boxes + probability</text>
+  </g>
+  <path d="M299 850H323V744H350" class="flow"/>
+  <path d="M299 850H350" class="flow"/>
+  <path d="M299 850H323V972H350" class="flow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="653" y="702" width="260" height="100" rx="15" fill="#fff" stroke="#c4b5fd" stroke-width="2"/>
+    <text x="675" y="735" class="small-title">SBERT semantic gate</text>
+    <text x="675" y="760" class="small-copy">raw label → canonical target</text>
+    <text x="675" y="781" class="code">below threshold → skip</text>
+  </g>
+  <path d="M595 744H653" class="flow-purple"/>
+
+  <g filter="url(#shadow)">
+    <rect x="653" y="824" width="260" height="76" rx="15" fill="#fff" stroke="#67e8f9" stroke-width="2"/>
+    <text x="675" y="855" class="small-title">Record OCR detection</text>
+    <text x="675" y="880" class="small-copy">filter + aggregate text per second</text>
+  </g>
+  <path d="M595 858H653" class="flow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="653" y="930" width="260" height="84" rx="15" fill="#fff" stroke="#fda4af" stroke-width="2"/>
+    <text x="675" y="963" class="small-title">Face confidence gate</text>
+    <text x="675" y="988" class="small-copy">accepted label = “human face”</text>
+  </g>
+  <path d="M595 972H653" class="flow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="973" y="727" width="250" height="124" rx="17" fill="#fff" stroke="#fcd34d" stroke-width="2"/>
+    <text x="995" y="761" class="card-title">New-object test</text>
+    <text x="995" y="789" class="card-copy">semantic label match</text>
+    <text x="995" y="812" class="card-copy">+ IoU against active tracks</text>
+    <text x="995" y="834" class="code">duplicate → keep existing ID</text>
+  </g>
+  <path d="M913 752H973" class="flow"/>
+  <path d="M913 972H943V824H973" class="flow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="1278" y="727" width="194" height="124" rx="17" fill="#fff" stroke="#fcd34d" stroke-width="2"/>
+    <text x="1300" y="761" class="card-title">Seed tracker</text>
+    <text x="1300" y="789" class="card-copy">assign local object ID</text>
+    <text x="1300" y="812" class="card-copy">add box prompt to SAM2</text>
+    <text x="1300" y="834" class="small-copy">DINO + face paths only</text>
+  </g>
+  <path d="M1223 789H1278" class="flow-blue"/>
+
+  <g filter="url(#shadow)">
+    <rect x="1525" y="702" width="191" height="174" rx="17" fill="#fff" stroke="#818cf8" stroke-width="2"/>
+    <text x="1547" y="736" class="card-title">SAM2 propagate</text>
+    <text x="1547" y="764" class="card-copy">track next interval</text>
+    <text x="1547" y="789" class="small-copy">mask → box + local ID</text>
+    <text x="1547" y="812" class="small-copy">update tracker state</text>
+    <path d="M1547 832h147" stroke="#e2e8f0"/>
+    <text x="1547" y="855" class="code">no trackers → advance</text>
+  </g>
+  <path d="M1472 789H1525" class="flow-blue"/>
+
+  <g filter="url(#shadow)">
+    <rect x="973" y="914" width="499" height="100" rx="17" fill="#fff" stroke="#a7f3d0" stroke-width="2"/>
+    <text x="997" y="948" class="card-title">Per-frame metadata + evidence</text>
+    <text x="997" y="976" class="card-copy">SAM mask detections · boxes/timestamps · periodic DINOv2 embeddings</text>
+    <text x="997" y="998" class="small-copy">write tracked MP4 + capped detector/OCR/face visualization PNGs</text>
+  </g>
+  <path d="M1620 876V894H1472V944" class="flow"/>
+  <path d="M913 862H943V985H973" class="aux"/>
+
+  <path d="M1472 985H1608V1067H191V994" class="loop"/>
+  <text x="696" y="1091" class="label" fill="#1d4ed8">advance cursor → refresh SAM window when needed → repeat until shot end → next shot</text>
+  <path d="M1575 614V674" class="aux"/>
+
+  <text x="54" y="1161" class="section">FINALIZATION &amp; HANDOFF</text>
+  <line x1="54" y1="1175" x2="1746" y2="1175" stroke="#e2e8f0" stroke-width="2"/>
+
+  <g filter="url(#shadow)">
+    <rect x="65" y="1210" width="310" height="154" rx="18" fill="#fff" stroke="#c4b5fd" stroke-width="2"/>
+    <text x="91" y="1248" class="card-title">Cross-shot identity</text>
+    <text x="91" y="1277" class="card-copy">DINOv2 cosine similarity</text>
+    <text x="91" y="1301" class="card-copy">+ semantic label compatibility</text>
+    <text x="91" y="1332" class="small-copy">local tracker IDs → global object IDs</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="425" y="1210" width="315" height="154" rx="18" fill="#fff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="451" y="1248" class="card-title">Object metrics</text>
+    <text x="451" y="1277" class="card-copy">velocity · growth · coverage</text>
+    <text x="451" y="1301" class="card-copy">direction · centrality · quadrant</text>
+    <text x="451" y="1332" class="small-copy">screen time from box/timestamp history</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="790" y="1210" width="390" height="154" rx="18" fill="url(#final)"/>
+    <text x="818" y="1248" class="white-title">ExtractionSummary</text>
+    <text x="818" y="1278" class="white-copy">global stats · shot boundaries · scenes</text>
+    <text x="818" y="1302" class="white-copy">objects · frame detections · OCR · audio</text>
+    <path d="M818 1320h332" stroke="#93c5fd" stroke-opacity="0.7"/>
+    <text x="818" y="1343" class="white-copy">global IDs rewrite raw tracking references</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1230" y="1210" width="245" height="154" rx="18" fill="#fff" stroke="#86efac" stroke-width="2"/>
+    <text x="1256" y="1248" class="card-title">Run artifacts</text>
+    <text x="1256" y="1278" class="card-copy">extraction_summary.json</text>
+    <text x="1256" y="1302" class="card-copy">tracked_output.mp4</text>
+    <text x="1256" y="1332" class="small-copy">taxonomy prompts + debug PNGs</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1525" y="1210" width="220" height="154" rx="18" fill="#fff" stroke="#86efac" stroke-width="2"/>
+    <text x="1551" y="1248" class="card-title">Engine handoff</text>
+    <text x="1551" y="1278" class="card-copy">upload artifacts</text>
+    <text x="1551" y="1302" class="card-copy">persist normalized data</text>
+    <text x="1551" y="1332" class="small-copy">then run platform parser</text>
+  </g>
+
+  <path d="M375 1287H425" class="flow-purple"/>
+  <path d="M740 1287H790" class="flow-blue"/>
+  <path d="M1180 1287H1230" class="flow"/>
+  <path d="M1475 1287H1525" class="flow-blue"/>
+
+  <g transform="translate(65 1401)">
+    <circle cx="8" cy="8" r="6" fill="#2563eb"/>
+    <text x="24" y="13" class="label">primary control flow</text>
+    <circle cx="190" cy="8" r="6" fill="#7c3aed"/>
+    <text x="206" y="13" class="label">AI semantic flow</text>
+    <path d="M370 8h34" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 6"/>
+    <text x="417" y="13" class="label">supporting evidence / state</text>
+    <text x="725" y="13" class="small-copy">Detection is periodic; SAM2 fills the temporal gaps between detector passes.</text>
+  </g>
+</svg>
