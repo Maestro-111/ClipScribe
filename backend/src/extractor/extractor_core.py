@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import cv2
-import gc
 import os
-import tempfile
 
 import re
 import logging
@@ -18,11 +16,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Mapping,
-    NotRequired,
-    Protocol,
     Sequence,
-    TypedDict,
-    TypeAlias,
 )
 
 from scenedetect import detect, ContentDetector
@@ -37,6 +31,25 @@ from src.utils.progress import (
     ProgressReporter,
 )
 from src.utils.clip_scribe_artifacts import run_artifact_dir
+from src.extractor.extractor_mixins import ExtractorSam2Mixin
+from src.extractor.extractor_models import (
+    AudioSegment,
+    Box,
+    DetectionResult,
+    Embedding,
+    ExtractionSummary,
+    FrameDetection,
+    OCRDetection,
+    ObjectRegistryEntry,
+    RapidFireInterval,
+    ReIDModel,
+    SceneDescriptionRecord,
+    ShotData,
+    TextEvent,
+    TrackerData,
+    VisualObjectOccurrence,
+    VisualObjectSummary,
+)
 
 logger = logging.getLogger("clip_scribe")
 
@@ -49,120 +62,6 @@ if TYPE_CHECKING:
     from src.ocr.paddle_wrapper import OCRSystem
     from src.extractor.taxonomy_core import TaxonomyGenerator, TaxonomyResolver
     from src.sam2.sam.sam2_video_processor import SAM2VideoPredictor
-
-
-Box: TypeAlias = Sequence[float]
-Embedding: TypeAlias = npt.NDArray[np.floating[Any]]
-
-
-class TrackerData(TypedDict):
-    box: Box
-    label: str
-
-
-class OCRDetection(TypedDict):
-    box: Box
-    text: str
-    confidence: float
-    label: NotRequired[str]
-
-
-class DetectionResult(TypedDict):
-    box: Box
-    label: str
-    score: float
-
-
-class ObjectRegistryEntry(TypedDict):
-    label: str
-    shot_id: int
-    embedding_sum: Embedding
-    embedding_count: int
-    boxes: list[Box]
-    timestamps: list[float]
-    last_embedding_frame: float
-
-
-class VisualObjectOccurrence(TypedDict):
-    shot_index: int
-    lifespan: list[float]
-    screen_coverage: float
-    velocity_px_sec: float
-    growth_factor: float
-    direction: str
-    centrality_score: float
-    screen_time_ratio: float
-    quadrant: str
-
-
-class VisualObjectSummary(TypedDict):
-    global_id: int
-    label: str
-    occurrences: list[VisualObjectOccurrence]
-
-
-class TextEvent(TypedDict):
-    second: int
-    text: list[str]
-
-
-class AudioSegment(TypedDict):
-    start: float
-    end: float
-    text: str
-    confidence: float
-
-
-class SceneDescriptionRecord(TypedDict):
-    shot_index: int
-    start_time: float
-    end_time: float
-    description: str
-
-
-class ShotData(TypedDict):
-    index: int
-    start: float
-    end: float
-    duration: float
-
-
-class RapidFireInterval(TypedDict):
-    start_time: float
-    end_time: float
-    shot_count: int
-    duration: float
-    shot_indices: list[int]
-
-
-class FrameDetection(TypedDict):
-    shot_index: int
-    frame_idx: int
-    timestamp_sec: float
-    source: str  # dino | ocr | mtcnn | sam_mask
-    label: str | None
-    text: str | None
-    box_x1: float
-    box_y1: float
-    box_x2: float
-    box_y2: float
-    confidence: float | None
-    object_id: int | None
-
-
-class ExtractionSummary(TypedDict):
-    global_stats: dict[str, object]
-    visual_objects: list[VisualObjectSummary]
-    text_events: list[TextEvent]
-    audio_segments: list[AudioSegment]
-    scene_descriptions: list[SceneDescriptionRecord]
-    shot_boundaries: list[ShotData]
-    frame_detections: list[FrameDetection]
-
-
-class ReIDModel(Protocol):
-    def forward_features(self, x: torch.Tensor) -> Mapping[str, torch.Tensor]:
-        ...
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -180,7 +79,7 @@ class NumpyEncoder(json.JSONEncoder):
         return super(NumpyEncoder, self).default(obj)
 
 
-class VideoInformationExtractor:
+class VideoInformationExtractor(ExtractorSam2Mixin):
 
     """
     Process objects, text, moving history and record in json/csv
@@ -466,10 +365,8 @@ class VideoInformationExtractor:
         # cleanup can safely run after a partially initialized extraction.
         self.cap: Any = None
         self.video_writer: Any = None
-        self.sam_inference_state: Any = None
-        # Frame 0 in a per-shot SAM state corresponds to this frame in the
-        # original video. All persisted frame indices remain video-global.
-        self.sam_frame_offset: int | None = None
+        self.sam_inference_state = None
+        self.sam_frame_offset = None
 
         self.current_frame = 0
         self.obj_id_counter = 1
@@ -637,46 +534,6 @@ class VideoInformationExtractor:
             f"ClipScribe Extractor: Video FPS: {fps}; Total Frames: {self.total_frames}"
         )
 
-    def _release_sam_inference_state(self) -> None:
-        """Release the current shot-local SAM2 state and accelerator cache."""
-        sam_inference_state = self.sam_inference_state
-        self.sam_inference_state = None
-        self.sam_frame_offset = None
-
-        if sam_inference_state is not None:
-            try:
-                self.sam_model.reset_state(sam_inference_state)
-            except Exception:  # noqa: BLE001 - cleanup must not mask task failures
-                logger.warning(
-                    "ClipScribe Extractor: Failed to reset SAM2 inference state",
-                    exc_info=True,
-                )
-        del sam_inference_state
-
-        # Drop cyclic references held by model outputs before returning memory
-        # to the accelerator allocator. Model weights remain resident.
-        gc.collect()
-
-        if self.device == "mps" and torch.backends.mps.is_available():
-            try:
-                torch.mps.synchronize()
-                torch.mps.empty_cache()
-            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning(
-                    "ClipScribe Extractor: Failed to release MPS cached memory",
-                    exc_info=True,
-                )
-
-        if self.device == "cuda" and torch.cuda.is_available():
-            try:
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001 - best-effort accelerator cleanup
-                logger.warning(
-                    "ClipScribe Extractor: Failed to release CUDA cached memory",
-                    exc_info=True,
-                )
-
     def _write_video_chunk(
         self,
         video_path: str,
@@ -736,91 +593,6 @@ class VideoInformationExtractor:
                 f"SAM2 shot video contains {written_frames} frames; "
                 f"expected {expected_frames}"
             )
-
-    def _resolve_sam2_refresh_rate(self, active_object_count: int) -> int:
-        default_rate = self.sam2_default_refresh_rate
-
-        if not self.sam2_dynamic_refresh_rate:
-            return default_rate
-
-        if active_object_count <= 2:
-            factor = 1.0
-        elif active_object_count <= 5:
-            factor = 0.8
-        elif active_object_count <= 10:
-            factor = 0.6
-        else:
-            factor = 0.4
-
-        minimum_rate = min(
-            default_rate,
-            max(self.detection_interval, 20),
-        )
-        return max(minimum_rate, round(default_rate * factor))
-
-    def _init_sam_inference_state_for_shot(
-        self,
-        video_path: str,
-        start_frame: int,
-        end_frame: int,
-    ) -> None:
-        """Create a SAM2 state containing only one shot's decoded frames."""
-        self._release_sam_inference_state()
-
-        with tempfile.TemporaryDirectory(prefix="clipscribe-sam-shot-") as temp_dir:
-            shot_video_path = os.path.join(temp_dir, "shot.mp4")
-            self._write_video_chunk(
-                video_path,
-                start_frame,
-                end_frame,
-                shot_video_path,
-            )
-            sam_inference_state = self.sam_model.init_state(
-                video_path=shot_video_path,
-                async_loading_frames=False,
-            )
-
-        expected_frames = end_frame - start_frame
-        actual_frames = int(sam_inference_state["num_frames"])
-        if actual_frames != expected_frames:
-            try:
-                self.sam_model.reset_state(sam_inference_state)
-            finally:
-                del sam_inference_state
-            raise RuntimeError(
-                f"SAM2 initialized {actual_frames} shot frames; "
-                f"expected {expected_frames}"
-            )
-
-        self.sam_inference_state = sam_inference_state
-        self.sam_frame_offset = start_frame
-        logger.info(
-            "ClipScribe Extractor: Initialized SAM2 shot state: video frames "
-            "[%s, %s) -> local [0, %s)",
-            start_frame,
-            end_frame,
-            actual_frames,
-        )
-
-    def _to_sam_frame(self, video_frame_idx: int) -> int:
-        """Translate a video-global frame index to the current SAM shot index."""
-        if self.sam_inference_state is None or self.sam_frame_offset is None:
-            raise RuntimeError("SAM2 shot state is not initialized")
-
-        sam_frame_idx = video_frame_idx - self.sam_frame_offset
-        num_frames = int(self.sam_inference_state["num_frames"])
-        if not 0 <= sam_frame_idx < num_frames:
-            raise IndexError(
-                f"Video frame {video_frame_idx} maps to SAM2 frame {sam_frame_idx}, "
-                f"outside [0, {num_frames})"
-            )
-        return sam_frame_idx
-
-    def _to_video_frame(self, sam_frame_idx: int) -> int:
-        """Translate a current-shot SAM frame index to the original video."""
-        if self.sam_frame_offset is None:
-            raise RuntimeError("SAM2 shot state is not initialized")
-        return self.sam_frame_offset + sam_frame_idx
 
     def cleanup(self) -> None:
         """Release resources owned by this extraction run.
@@ -1353,74 +1125,6 @@ class VideoInformationExtractor:
                 global_id_map
             ),
         }
-
-    def visualize_sam_tracking(
-        self,
-        frame_idx: int,
-        obj_ids: Sequence[int],
-        masks: torch.Tensor | npt.NDArray[Any],
-    ) -> None:
-        """Overlay colored SAM masks and ID labels onto the frame and write it to the output video."""
-        if not self.video_writer.isOpened():
-            logger.error("ClipScribe Extractor: Error: Video Writer is NOT open.")
-            return
-
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = self.cap.read()
-
-        if not ret:
-            logger.error(
-                f"ClipScribe Extractor: Error: Could not read frame {frame_idx}."
-            )
-            return
-
-        vis_frame = frame.copy()
-
-        if isinstance(masks, torch.Tensor):
-            masks = masks.cpu().numpy()
-
-        for i, obj_id in enumerate(obj_ids):
-            mask = masks[i]
-            if len(mask.shape) == 3:
-                mask = mask[0]
-            mask_binary = (mask > 0.0).astype(np.uint8)
-
-            if mask_binary.sum() > 0:
-                np.random.seed(int(obj_id))
-                color = np.random.randint(0, 255, (3,), dtype=int).tolist()
-
-                # Draw Mask
-                colored_mask = np.zeros_like(vis_frame)
-                colored_mask[mask_binary == 1] = color
-                mask_indices = mask_binary == 1
-                vis_frame[mask_indices] = cv2.addWeighted(
-                    vis_frame[mask_indices], 0.6, colored_mask[mask_indices], 0.4, 0
-                ).reshape(-1, 3)
-
-                # Draw ID and Label
-                x, y, w, h = cv2.boundingRect(mask_binary)
-                label = self.id_to_label.get(obj_id, "")
-
-                text = f"ID {obj_id}: {label}"
-                cv2.putText(
-                    vis_frame,
-                    text,
-                    (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2,
-                )
-
-        target_w, target_h = self.video_writer_dims
-
-        if vis_frame.shape[1] != target_w or vis_frame.shape[0] != target_h:
-            vis_frame = cv2.resize(vis_frame, (target_w, target_h))
-
-        self.video_writer.write(vis_frame)
-
-        if frame_idx % 30 == 0:
-            logger.info(f"ClipScribe Extractor: Wrote frame {frame_idx} to video.")
 
     def _digest_video(self, video_path: str) -> None:
         """Run scene detection, compute shot boundaries, and derive global pacing statistics."""
