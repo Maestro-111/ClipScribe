@@ -25,7 +25,7 @@ from src.utils.clip_scribe_logging import configure_logging
 from src.db import (
     ClipScribeWriterDB,
     ClipScribeReaderDB,
-    create_db_engine,
+    create_sync_db_engine,
     resolve_database_url,
     resolve_pool_settings,
 )
@@ -302,7 +302,7 @@ class ClipScribeBuilder:
             db_url = resolve_database_url()
             pool_size, max_overflow = resolve_pool_settings()
 
-            db_engine = create_db_engine(
+            db_engine = create_sync_db_engine(
                 database_url=db_url,
                 pool_size=pool_size,
                 max_overflow=max_overflow,

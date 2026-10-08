@@ -1,13 +1,16 @@
 """Engine factory, upsert helper, and base DB class."""
 
+import asyncio
 import functools
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import ParamSpec, TypeVar
 
 from sqlalchemy import Engine, Table, create_engine, event
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
@@ -77,6 +80,7 @@ def resolve_pool_settings() -> tuple[int, int]:
 
 
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
 
 # How many times to attempt a transient-failing DB operation before giving up.
 _RETRY_MAX_ATTEMPTS = 3
@@ -125,6 +129,40 @@ def retry_transient(fn: Callable[..., _T]) -> Callable[..., _T]:
     return wrapper
 
 
+def retry_transient_async(
+    fn: Callable[_P, Awaitable[_T]],
+) -> Callable[_P, Awaitable[_T]]:
+    """Async counterpart to :func:`retry_transient`.
+
+    Each retry awaits a fresh invocation of the decorated method, so its
+    ``async with engine.begin()`` block opens a new transaction. Backoff uses
+    :func:`asyncio.sleep` and therefore does not block the event loop.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+        attempt = 0
+        while True:
+            try:
+                return await fn(*args, **kwargs)
+            except OperationalError as exc:
+                attempt += 1
+                if attempt >= _RETRY_MAX_ATTEMPTS:
+                    raise
+                delay = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** (attempt - 1)))
+                logger.warning(
+                    "Transient DB error in %s (attempt %d/%d): %s; retrying in %.2fs",
+                    fn.__name__,
+                    attempt,
+                    _RETRY_MAX_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+    return wrapper
+
+
 def ensure_sqlite_parent_directory(database_url: str) -> None:
     url = make_url(database_url)
     if not url.drivername.startswith("sqlite"):
@@ -134,7 +172,49 @@ def ensure_sqlite_parent_directory(database_url: str) -> None:
         Path(url.database).parent.mkdir(parents=True, exist_ok=True)
 
 
-def create_db_engine(
+def create_async_db_engine(
+    database_url: str,
+    pool_size: int = 5,
+    max_overflow: int = 10,
+) -> AsyncEngine:
+    """Create the async SQLAlchemy engine used by the FastAPI process.
+
+    SQLite uses aiosqlite and ignores PostgreSQL pool settings.
+    PostgreSQL uses asyncpg with pre-ping enabled.
+    """
+    url = make_url(database_url)
+    backend = url.get_backend_name()
+
+    if backend == "sqlite":
+        ensure_sqlite_parent_directory(database_url)
+        async_url = url.set(drivername="sqlite+aiosqlite")
+        engine = create_async_engine(async_url)
+
+        # SQLAlchemy events remain synchronous and attach to sync_engine.
+        @event.listens_for(engine.sync_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, connection_record) -> None:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+    elif backend == "postgresql":
+        async_url = url.set(drivername="postgresql+asyncpg")
+        engine = create_async_engine(
+            async_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,
+        )
+
+    else:
+        raise ValueError(f"Unsupported database backend: {backend!r}")
+
+    logger.info("Created async database engine for %s", backend)
+    return engine
+
+
+def create_sync_db_engine(
     database_url: str,
     pool_size: int = 5,
     max_overflow: int = 10,
@@ -211,3 +291,12 @@ class ClipScribeBaseDB:
     def close(self) -> None:
         self._engine.dispose()
         logger.info("ClipScribeDB engine disposed.")
+
+
+class ClipScribeAsyncBaseDB:
+    def __init__(self, async_engine: AsyncEngine):
+        self._async_engine = async_engine
+
+    async def close(self) -> None:
+        await self._async_engine.dispose()
+        logger.info("ClipScribeAsyncDB engine disposed.")

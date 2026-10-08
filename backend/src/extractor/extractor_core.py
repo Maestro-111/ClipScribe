@@ -1383,7 +1383,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             Phase.AUDIO, {"segments_kept": len(self.audio_registry)}
         )
 
-        logger.info("ClipScribe Extractor: --- Step 3: Tracking/OCR ---")
+        logger.info("ClipScribe Extractor: --- Step 3: SceneAnalysis/Tracking/OCR ---")
 
         self.progress.phase_started(
             Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}

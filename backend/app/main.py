@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from src.db import (
             ClipScribeReaderDB,
             ClipScribeWriterDB,
-            create_db_engine,
+            create_sync_db_engine,
             resolve_database_url,
             resolve_pool_settings,
         )
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db_url = resolve_database_url()
         ensure_sqlite_parent_directory(db_url)
         pool_size, max_overflow = resolve_pool_settings()
-        db_engine = create_db_engine(
+        db_engine = create_sync_db_engine(
             db_url, pool_size=pool_size, max_overflow=max_overflow
         )
         app.state.db_engine = db_engine

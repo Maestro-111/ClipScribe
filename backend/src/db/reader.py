@@ -4,59 +4,58 @@ import json
 import logging
 
 from sqlalchemy import Engine, text
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .engine import ClipScribeBaseDB
+from .engine import ClipScribeAsyncBaseDB, ClipScribeBaseDB
 
 logger = logging.getLogger("clip_scribe")
 
 
-class ClipScribeReaderDB(ClipScribeBaseDB):
-    def __init__(self, engine: Engine):
-        super().__init__(engine)
-        logger.info("ClipScribeReaderDB ready.")
+class _ReaderOperations:
+    """Shared query and decoding logic for sync and async readers."""
 
-    def get_run(self, run_id: str) -> dict | None:
-        """Fetch a specific run by its run_id."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT * FROM runs WHERE run_id = :run_id"),
-                {"run_id": run_id},
+    @staticmethod
+    def get_run(conn: Connection, run_id: str) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM runs WHERE run_id = :run_id"),
+            {"run_id": run_id},
+        )
+        row = result.mappings().fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def get_latest_run(conn: Connection) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM runs ORDER BY created_at DESC LIMIT 1")
+        )
+        row = result.mappings().fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def get_global_stats(conn: Connection, run_id: str) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM global_stats WHERE run_id = :run_id"),
+            {"run_id": run_id},
+        )
+        row = result.mappings().fetchone()
+        if not row:
+            return None
+        stats = dict(row)
+        if stats.get("qp_intro_shots"):
+            stats["qp_intro_shots"] = json.loads(stats["qp_intro_shots"])
+        if stats.get("qp_general_rapid_fire_segments"):
+            stats["qp_general_rapid_fire_segments"] = json.loads(
+                stats["qp_general_rapid_fire_segments"]
             )
-            row = result.mappings().fetchone()
-            return dict(row) if row else None
+        return stats
 
-    def get_latest_run(self) -> dict | None:
-        """Fetch the most recent run from the runs table."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT * FROM runs ORDER BY created_at DESC LIMIT 1")
-            )
-            row = result.mappings().fetchone()
-            return dict(row) if row else None
-
-    def get_global_stats(self, run_id: str) -> dict | None:
-        """Fetch global statistics for a specific run."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT * FROM global_stats WHERE run_id = :run_id"),
-                {"run_id": run_id},
-            )
-            row = result.mappings().fetchone()
-            if not row:
-                return None
-            stats = dict(row)
-            if stats.get("qp_intro_shots"):
-                stats["qp_intro_shots"] = json.loads(stats["qp_intro_shots"])
-            if stats.get("qp_general_rapid_fire_segments"):
-                stats["qp_general_rapid_fire_segments"] = json.loads(
-                    stats["qp_general_rapid_fire_segments"]
-                )
-            return stats
-
+    @staticmethod
     def get_audio_segments(
-        self, run_id: str, max_start_time: float | None = None
+        conn: Connection,
+        run_id: str,
+        max_start_time: float | None = None,
     ) -> list[dict]:
-        """Fetch audio transcript segments for a run."""
         query = "SELECT * FROM audio_segments WHERE run_id = :run_id"
         params: dict = {"run_id": run_id}
 
@@ -65,13 +64,15 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["max_start_time"] = max_start_time
 
         query += " ORDER BY start_time"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
-
-    def get_text_events(self, run_id: str, max_second: int | None = None) -> list[dict]:
-        """Fetch OCR text events for a run."""
+    @staticmethod
+    def get_text_events(
+        conn: Connection,
+        run_id: str,
+        max_second: int | None = None,
+    ) -> list[dict]:
         query = "SELECT * FROM text_events WHERE run_id = :run_id"
         params: dict = {"run_id": run_id}
 
@@ -80,24 +81,22 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["max_second"] = max_second
 
         query += " ORDER BY second, line_index"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
-
+    @staticmethod
     def get_visual_objects(
-        self,
+        conn: Connection,
         run_id: str,
         label_contains: str | None = None,
         max_lifespan_start: float | None = None,
     ) -> list[dict]:
-        """Fetch visual object occurrences for a run."""
         query = "SELECT * FROM visual_object_occurrences WHERE run_id = :run_id"
         params: dict = {"run_id": run_id}
 
         if label_contains is not None:
-            # Use ILIKE on PostgreSQL for case-insensitive match, LIKE on SQLite
-            if self._engine.dialect.name == "postgresql":
+            # Use ILIKE on PostgreSQL for case-insensitive match, LIKE on SQLite.
+            if conn.dialect.name == "postgresql":
                 query += " AND label ILIKE :label_pattern"
             else:
                 query += " AND label LIKE :label_pattern"
@@ -108,13 +107,14 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["max_lifespan_start"] = max_lifespan_start
 
         query += " ORDER BY lifespan_start"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
-
-    def get_field_descriptions(self, table_name: str | None = None) -> list[dict]:
-        """Fetch field descriptions from the field_descriptions table."""
+    @staticmethod
+    def get_field_descriptions(
+        conn: Connection,
+        table_name: str | None = None,
+    ) -> list[dict]:
         query = "SELECT table_name, column_name, description FROM field_descriptions"
         params: dict = {}
 
@@ -123,18 +123,16 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["table_name"] = table_name
 
         query += " ORDER BY table_name, column_name"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
-
+    @staticmethod
     def get_scene_descriptions(
-        self,
+        conn: Connection,
         run_id: str,
         max_start_time: float | None = None,
         max_end_time: float | None = None,
     ) -> list[dict]:
-        """Fetch scene descriptions for a run."""
         query = "SELECT * FROM scene_descriptions WHERE run_id = :run_id"
         params: dict = {"run_id": run_id}
 
@@ -147,46 +145,38 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["max_end_time"] = max_end_time
 
         query += " ORDER BY start_time"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
+    @staticmethod
+    def list_runs(conn: Connection, limit: int, offset: int) -> list[dict]:
+        result = conn.execute(
+            text(
+                "SELECT * FROM runs ORDER BY created_at DESC "
+                "LIMIT :limit OFFSET :offset"
+            ),
+            {"limit": limit, "offset": offset},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
-    def list_runs(self, limit: int = 50, offset: int = 0) -> list[dict]:
-        """List runs, most recent first (jobs / run-history view)."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT * FROM runs ORDER BY created_at DESC "
-                    "LIMIT :limit OFFSET :offset"
-                ),
-                {"limit": limit, "offset": offset},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
+    @staticmethod
+    def get_shot_boundaries(conn: Connection, run_id: str) -> list[dict]:
+        result = conn.execute(
+            text(
+                "SELECT * FROM shot_boundaries WHERE run_id = :run_id "
+                "ORDER BY shot_index"
+            ),
+            {"run_id": run_id},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
-    def get_shot_boundaries(self, run_id: str) -> list[dict]:
-        """Fetch per-shot temporal boundaries for a run (timeline view)."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT * FROM shot_boundaries WHERE run_id = :run_id "
-                    "ORDER BY shot_index"
-                ),
-                {"run_id": run_id},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
-
+    @staticmethod
     def get_frame_detections(
-        self,
+        conn: Connection,
         run_id: str,
         from_sec: float | None = None,
         to_sec: float | None = None,
     ) -> list[dict]:
-        """Fetch raw frame detections for a run, optionally within a time window.
-
-        Backs the inspector overlay: the frontend pulls detections for a run
-        (optionally a ``[from_sec, to_sec]`` playback window) and draws boxes.
-        """
         query = "SELECT * FROM frame_detections WHERE run_id = :run_id"
         params: dict = {"run_id": run_id}
 
@@ -198,50 +188,38 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["to_sec"] = to_sec
 
         query += " ORDER BY frame_idx, id"
+        result = conn.execute(text(query), params)
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [dict(row) for row in result.mappings().fetchall()]
+    @staticmethod
+    def get_parser_results(conn: Connection, run_id: str) -> list[dict]:
+        result = conn.execute(
+            text(
+                "SELECT * FROM parser_results WHERE run_id = :run_id "
+                "ORDER BY feature_category, feature_name"
+            ),
+            {"run_id": run_id},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
-    def get_parser_results(self, run_id: str) -> list[dict]:
-        """Fetch persisted per-criterion parser evaluations for a run."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT * FROM parser_results WHERE run_id = :run_id "
-                    "ORDER BY feature_category, feature_name"
-                ),
-                {"run_id": run_id},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
-
-    def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
-        """Fetch a per-run chat session transcript, oldest first."""
-        return self._chat_messages("run_id", run_id, session_id)
-
-    def get_job_chat_messages(self, job_id: str, session_id: str) -> list[dict]:
-        """Fetch a job-level chat session transcript, oldest first."""
-        return self._chat_messages("job_id", job_id, session_id)
-
-    def _chat_messages(
-        self, scope_col: str, scope_val: str, session_id: str
+    @staticmethod
+    def get_chat_messages(
+        conn: Connection,
+        scope_col: str,
+        scope_val: str,
+        session_id: str,
     ) -> list[dict]:
-        """Transcript for one chat session, scoped by ``run_id`` or ``job_id``.
-
-        ``scope_col`` is a fixed internal literal (never user input), so
-        interpolating it into the query is safe.
-        """
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT id, run_id, job_id, session_id, role, content, "
-                    "tool_calls_json, created_at FROM chat_messages "
-                    f"WHERE {scope_col} = :scope AND session_id = :session_id "
-                    "ORDER BY id"
-                ),
-                {"scope": scope_val, "session_id": session_id},
-            )
-            rows = [dict(row) for row in result.mappings().fetchall()]
+        """Return one transcript scoped by the internal run/job column literal."""
+        result = conn.execute(
+            text(
+                "SELECT id, run_id, job_id, session_id, role, content, "
+                "tool_calls_json, created_at FROM chat_messages "
+                f"WHERE {scope_col} = :scope AND session_id = :session_id "
+                "ORDER BY id"
+            ),
+            {"scope": scope_val, "session_id": session_id},
+        )
+        rows = [dict(row) for row in result.mappings().fetchall()]
         for row in rows:
             raw = row.get("tool_calls_json")
             if isinstance(raw, str) and raw:
@@ -251,59 +229,45 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
                     pass
         return rows
 
-    def get_chat_sessions(self, run_id: str) -> list[dict]:
-        """List per-run chat sessions, most recently active first."""
-        return self._chat_sessions("run_id", run_id)
-
-    def get_job_chat_sessions(self, job_id: str) -> list[dict]:
-        """List job-level chat sessions, most recently active first."""
-        return self._chat_sessions("job_id", job_id)
-
-    def _chat_sessions(self, scope_col: str, scope_val: str) -> list[dict]:
-        """Chat-session summaries scoped by ``run_id`` or ``job_id``.
-
-        ``scope_col`` is a fixed internal literal (never user input), so
-        interpolating it into the query is safe.
-        """
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT session_id, COUNT(*) AS message_count, "
-                    "MIN(created_at) AS started_at, MAX(created_at) AS last_at, "
-                    "(SELECT content FROM chat_messages c2 "
-                    f" WHERE c2.{scope_col} = c.{scope_col} "
-                    "  AND c2.session_id = c.session_id "
-                    " ORDER BY id LIMIT 1) AS title "
-                    f"FROM chat_messages c WHERE {scope_col} = :scope "
-                    "GROUP BY session_id ORDER BY MAX(id) DESC"
-                ),
-                {"scope": scope_val},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
-
-    def get_job(self, job_id: str) -> dict | None:
-        """Fetch a single orchestration job by id."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT * FROM jobs WHERE job_id = :job_id"),
-                {"job_id": job_id},
-            )
-            row = result.mappings().fetchone()
-            return self._decode_job(dict(row)) if row else None
-
-    def list_jobs(
-        self,
-        user_id: str,
-        status: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
+    @staticmethod
+    def get_chat_sessions(
+        conn: Connection,
+        scope_col: str,
+        scope_val: str,
     ) -> list[dict]:
-        """List a user's jobs, most recent first, optionally filtered by status.
+        """Return chat summaries scoped by the internal run/job column literal."""
+        result = conn.execute(
+            text(
+                "SELECT session_id, COUNT(*) AS message_count, "
+                "MIN(created_at) AS started_at, MAX(created_at) AS last_at, "
+                "(SELECT content FROM chat_messages c2 "
+                f" WHERE c2.{scope_col} = c.{scope_col} "
+                "  AND c2.session_id = c.session_id "
+                " ORDER BY id LIMIT 1) AS title "
+                f"FROM chat_messages c WHERE {scope_col} = :scope "
+                "GROUP BY session_id ORDER BY MAX(id) DESC"
+            ),
+            {"scope": scope_val},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        Scoped to ``user_id`` (``jobs.created_by``): a caller only ever sees the
-        jobs they own. The owner filter is applied in SQL so it precedes
-        ``LIMIT``/``OFFSET`` and pagination stays correct.
-        """
+    @staticmethod
+    def get_job(conn: Connection, job_id: str) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM jobs WHERE job_id = :job_id"),
+            {"job_id": job_id},
+        )
+        row = result.mappings().fetchone()
+        return _ReaderOperations._decode_job(dict(row)) if row else None
+
+    @staticmethod
+    def list_jobs(
+        conn: Connection,
+        user_id: str,
+        status: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
         query = "SELECT * FROM jobs WHERE created_by = :user_id"
         params: dict = {"user_id": user_id, "limit": limit, "offset": offset}
 
@@ -312,29 +276,20 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             params["status"] = status
 
         query += " ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
+        result = conn.execute(text(query), params)
+        return [
+            _ReaderOperations._decode_job(dict(row))
+            for row in result.mappings().fetchall()
+        ]
 
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
-
+    @staticmethod
     def list_parent_jobs(
-        self,
+        conn: Connection,
         user_id: str,
-        limit: int = 50,
-        offset: int = 0,
-        status: str | None = None,
+        limit: int,
+        offset: int,
+        status: str | None,
     ) -> list[dict]:
-        """A user's top-level (parent/standalone) jobs, most recent first.
-
-        Excludes child runs (``parent_job_id`` set). Scoped to ``user_id``
-        (``jobs.created_by``) so a caller only sees jobs they own. When
-        ``status`` is provided, filter by the same effective status exposed by
-        the API: batch parents aggregate their children, while standalone rows
-        keep their own status.
-        """
-
-        # left join in query is equal to inner join anyway. keep as defense
-
         query = """
             WITH child_status AS (
                 SELECT
@@ -388,123 +343,112 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             query += " WHERE effective_status = :status"
             params["status"] = status
         query += " ORDER BY created_at DESC, job_id DESC LIMIT :limit OFFSET :offset"
-        with self._engine.connect() as conn:
-            result = conn.execute(text(query), params)
-            rows = []
-            for row in result.mappings().fetchall():
-                decoded = self._decode_job(dict(row))
-                decoded.pop("effective_status", None)
-                rows.append(decoded)
-            return rows
 
-    def get_child_jobs(self, parent_job_id: str) -> list[dict]:
-        """Child runs of a batch job, in submission order (oldest first)."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
+        result = conn.execute(text(query), params)
+        rows = []
+        for row in result.mappings().fetchall():
+            decoded = _ReaderOperations._decode_job(dict(row))
+            decoded.pop("effective_status", None)
+            rows.append(decoded)
+        return rows
+
+    @staticmethod
+    def get_child_jobs(conn: Connection, parent_job_id: str) -> list[dict]:
+        result = conn.execute(
+            text(
+                "SELECT * FROM jobs WHERE parent_job_id = :pid "
+                "ORDER BY created_at ASC, job_id ASC"
+            ),
+            {"pid": parent_job_id},
+        )
+        return [
+            _ReaderOperations._decode_job(dict(row))
+            for row in result.mappings().fetchall()
+        ]
+
+    @staticmethod
+    def get_run_siblings(
+        conn: Connection,
+        run_id: str,
+        user_id: str,
+    ) -> list[dict]:
+        child = (
+            conn.execute(
                 text(
-                    "SELECT * FROM jobs WHERE parent_job_id = :pid "
-                    "ORDER BY created_at ASC, job_id ASC"
+                    "SELECT parent_job_id FROM jobs "
+                    "WHERE run_id = :rid AND created_by = :uid LIMIT 1"
                 ),
-                {"pid": parent_job_id},
+                {"rid": run_id, "uid": user_id},
             )
-            return [self._decode_job(dict(row)) for row in result.mappings().fetchall()]
+            .mappings()
+            .fetchone()
+        )
+        if child is None or child["parent_job_id"] is None:
+            return []
 
-    def get_run_siblings(self, run_id: str, user_id: str) -> list[dict]:
-        """Sibling runs that share the batch parent of ``run_id``'s child job.
+        result = conn.execute(
+            text(
+                "SELECT job_id, parent_job_id, run_id, status, video_name "
+                "FROM jobs WHERE parent_job_id = :pid AND run_id IS NOT NULL "
+                "AND created_by = :uid "
+                "ORDER BY created_at ASC, job_id ASC"
+            ),
+            {"pid": child["parent_job_id"], "uid": user_id},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
-        Returns ``{job_id, run_id, status, video_name}`` in submission order,
-        including the run itself. Scoped to ``user_id`` (``jobs.created_by``):
-        the run must belong to the caller, and only the caller's siblings are
-        returned. Empty when the run has no child job row (e.g. a CLI run written
-        outside the job API) or is owned by someone else, which the caller treats
-        as a standalone run with no siblings.
-        """
-        with self._engine.connect() as conn:
-            child = (
-                conn.execute(
-                    text(
-                        "SELECT parent_job_id FROM jobs "
-                        "WHERE run_id = :rid AND created_by = :uid LIMIT 1"
-                    ),
-                    {"rid": run_id, "uid": user_id},
-                )
-                .mappings()
-                .fetchone()
+    @staticmethod
+    def run_owner(conn: Connection, run_id: str) -> str | None:
+        row = (
+            conn.execute(
+                text("SELECT created_by FROM jobs WHERE run_id = :rid LIMIT 1"),
+                {"rid": run_id},
             )
-            if child is None or child["parent_job_id"] is None:
-                return []
-            result = conn.execute(
-                text(
-                    "SELECT job_id, parent_job_id, run_id, status, video_name "
-                    "FROM jobs WHERE parent_job_id = :pid AND run_id IS NOT NULL "
-                    "AND created_by = :uid "
-                    "ORDER BY created_at ASC, job_id ASC"
-                ),
-                {"pid": child["parent_job_id"], "uid": user_id},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
+            .mappings()
+            .fetchone()
+        )
+        return row["created_by"] if row else None
 
-    def run_owner(self, run_id: str) -> str | None:
-        """The ``created_by`` of the job that produced ``run_id``, else ``None``.
+    @staticmethod
+    def get_video_by_hash(
+        conn: Connection,
+        user_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM videos " "WHERE user_id = :uid AND content_hash = :h"),
+            {"uid": user_id, "h": content_hash},
+        )
+        row = result.mappings().fetchone()
+        return dict(row) if row else None
 
-        Run-scoped tables carry no user column; ownership lives on the ``jobs``
-        row that minted the run (``jobs.run_id``, indexed). This single lookup is
-        the seam the API's ownership guard uses to authorize by-run-id reads —
-        ``None`` means the run has no owning job (a CLI run, or absent), which the
-        guard treats as "not accessible".
-        """
-        with self._engine.connect() as conn:
-            row = (
-                conn.execute(
-                    text("SELECT created_by FROM jobs " "WHERE run_id = :rid LIMIT 1"),
-                    {"rid": run_id},
-                )
-                .mappings()
-                .fetchone()
-            )
-            return row["created_by"] if row else None
+    @staticmethod
+    def get_video_by_key(
+        conn: Connection,
+        user_id: str,
+        stored_key: str,
+    ) -> dict | None:
+        result = conn.execute(
+            text("SELECT * FROM videos WHERE user_id = :uid AND stored_key = :k"),
+            {"uid": user_id, "k": stored_key},
+        )
+        row = result.mappings().fetchone()
+        return dict(row) if row else None
 
-    def get_video_by_hash(self, user_id: str, content_hash: str) -> dict | None:
-        """Look up a registered video by its content hash (dedup check)."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT * FROM videos " "WHERE user_id = :uid AND content_hash = :h"
-                ),
-                {"uid": user_id, "h": content_hash},
-            )
-            row = result.mappings().fetchone()
-            return dict(row) if row else None
-
-    def get_video_by_key(self, user_id: str, stored_key: str) -> dict | None:
-        """Look up a registered video by its storage key."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT * FROM videos WHERE user_id = :uid AND stored_key = :k"),
-                {"uid": user_id, "k": stored_key},
-            )
-            row = result.mappings().fetchone()
-            return dict(row) if row else None
-
-    def list_videos(self, user_id: str) -> list[dict]:
-        """All registered videos for a user, newest first (input picker)."""
-        with self._engine.connect() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT * FROM videos WHERE user_id = :uid "
-                    "ORDER BY created_at DESC, stored_key DESC"
-                ),
-                {"uid": user_id},
-            )
-            return [dict(row) for row in result.mappings().fetchall()]
+    @staticmethod
+    def list_videos(conn: Connection, user_id: str) -> list[dict]:
+        result = conn.execute(
+            text(
+                "SELECT * FROM videos WHERE user_id = :uid "
+                "ORDER BY created_at DESC, stored_key DESC"
+            ),
+            {"uid": user_id},
+        )
+        return [dict(row) for row in result.mappings().fetchall()]
 
     @staticmethod
     def _decode_job(row: dict) -> dict:
-        """Decode ``params_json`` to a dict when the driver returns raw text.
-
-        Raw ``SELECT *`` bypasses the JSON column type, so SQLite (and some
-        drivers) hand back the stored JSON as a string.
-        """
+        """Decode ``params_json`` when a driver returns it as raw text."""
         raw = row.get("params_json")
         if isinstance(raw, str):
             try:
@@ -512,3 +456,429 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
             except (ValueError, TypeError):
                 pass
         return row
+
+
+class ClipScribeAsyncReaderDB(ClipScribeAsyncBaseDB):
+    def __init__(self, async_engine: AsyncEngine) -> None:
+        super().__init__(async_engine)
+        self.reader_op = _ReaderOperations()
+        logger.info("ClipScribeAsyncReaderDB ready")
+
+    async def get_run(self, run_id: str) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_run, run_id)
+
+    async def get_latest_run(self) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_latest_run)
+
+    async def get_global_stats(self, run_id: str) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_global_stats, run_id)
+
+    async def get_audio_segments(
+        self,
+        run_id: str,
+        max_start_time: float | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_audio_segments,
+                run_id,
+                max_start_time,
+            )
+
+    async def get_text_events(
+        self,
+        run_id: str,
+        max_second: int | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_text_events,
+                run_id,
+                max_second,
+            )
+
+    async def get_visual_objects(
+        self,
+        run_id: str,
+        label_contains: str | None = None,
+        max_lifespan_start: float | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_visual_objects,
+                run_id,
+                label_contains,
+                max_lifespan_start,
+            )
+
+    async def get_field_descriptions(
+        self,
+        table_name: str | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_field_descriptions,
+                table_name,
+            )
+
+    async def get_scene_descriptions(
+        self,
+        run_id: str,
+        max_start_time: float | None = None,
+        max_end_time: float | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_scene_descriptions,
+                run_id,
+                max_start_time,
+                max_end_time,
+            )
+
+    async def list_runs(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.list_runs, limit, offset)
+
+    async def get_shot_boundaries(self, run_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_shot_boundaries, run_id)
+
+    async def get_frame_detections(
+        self,
+        run_id: str,
+        from_sec: float | None = None,
+        to_sec: float | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_frame_detections,
+                run_id,
+                from_sec,
+                to_sec,
+            )
+
+    async def get_parser_results(self, run_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_parser_results, run_id)
+
+    async def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_chat_messages,
+                "run_id",
+                run_id,
+                session_id,
+            )
+
+    async def get_job_chat_messages(
+        self,
+        job_id: str,
+        session_id: str,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_chat_messages,
+                "job_id",
+                job_id,
+                session_id,
+            )
+
+    async def get_chat_sessions(self, run_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_chat_sessions,
+                "run_id",
+                run_id,
+            )
+
+    async def get_job_chat_sessions(self, job_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_chat_sessions,
+                "job_id",
+                job_id,
+            )
+
+    async def get_job(self, job_id: str) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_job, job_id)
+
+    async def list_jobs(
+        self,
+        user_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.list_jobs,
+                user_id,
+                status,
+                limit,
+                offset,
+            )
+
+    async def list_parent_jobs(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.list_parent_jobs,
+                user_id,
+                limit,
+                offset,
+                status,
+            )
+
+    async def get_child_jobs(self, parent_job_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_child_jobs,
+                parent_job_id,
+            )
+
+    async def get_run_siblings(self, run_id: str, user_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_run_siblings,
+                run_id,
+                user_id,
+            )
+
+    async def run_owner(self, run_id: str) -> str | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.run_owner, run_id)
+
+    async def get_video_by_hash(
+        self,
+        user_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_video_by_hash,
+                user_id,
+                content_hash,
+            )
+
+    async def get_video_by_key(
+        self,
+        user_id: str,
+        stored_key: str,
+    ) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_video_by_key,
+                user_id,
+                stored_key,
+            )
+
+    async def list_videos(self, user_id: str) -> list[dict]:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.list_videos, user_id)
+
+
+class ClipScribeReaderDB(ClipScribeBaseDB):
+    def __init__(self, engine: Engine) -> None:
+        super().__init__(engine)
+        self.reader_op = _ReaderOperations()
+        logger.info("ClipScribeReaderDB ready")
+
+    def get_run(self, run_id: str) -> dict | None:
+        """Fetch a specific run by its run_id."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_run(conn, run_id)
+
+    def get_latest_run(self) -> dict | None:
+        """Fetch the most recent run from the runs table."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_latest_run(conn)
+
+    def get_global_stats(self, run_id: str) -> dict | None:
+        """Fetch global statistics for a specific run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_global_stats(conn, run_id)
+
+    def get_audio_segments(
+        self,
+        run_id: str,
+        max_start_time: float | None = None,
+    ) -> list[dict]:
+        """Fetch audio transcript segments for a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_audio_segments(conn, run_id, max_start_time)
+
+    def get_text_events(
+        self,
+        run_id: str,
+        max_second: int | None = None,
+    ) -> list[dict]:
+        """Fetch OCR text events for a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_text_events(conn, run_id, max_second)
+
+    def get_visual_objects(
+        self,
+        run_id: str,
+        label_contains: str | None = None,
+        max_lifespan_start: float | None = None,
+    ) -> list[dict]:
+        """Fetch visual object occurrences for a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_visual_objects(
+                conn,
+                run_id,
+                label_contains,
+                max_lifespan_start,
+            )
+
+    def get_field_descriptions(self, table_name: str | None = None) -> list[dict]:
+        """Fetch field descriptions from the field_descriptions table."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_field_descriptions(conn, table_name)
+
+    def get_scene_descriptions(
+        self,
+        run_id: str,
+        max_start_time: float | None = None,
+        max_end_time: float | None = None,
+    ) -> list[dict]:
+        """Fetch scene descriptions for a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_scene_descriptions(
+                conn,
+                run_id,
+                max_start_time,
+                max_end_time,
+            )
+
+    def list_runs(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """List runs, most recent first (jobs / run-history view)."""
+        with self._engine.connect() as conn:
+            return self.reader_op.list_runs(conn, limit, offset)
+
+    def get_shot_boundaries(self, run_id: str) -> list[dict]:
+        """Fetch per-shot temporal boundaries for a run (timeline view)."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_shot_boundaries(conn, run_id)
+
+    def get_frame_detections(
+        self,
+        run_id: str,
+        from_sec: float | None = None,
+        to_sec: float | None = None,
+    ) -> list[dict]:
+        """Fetch raw frame detections, optionally within a time window."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_frame_detections(
+                conn,
+                run_id,
+                from_sec,
+                to_sec,
+            )
+
+    def get_parser_results(self, run_id: str) -> list[dict]:
+        """Fetch persisted per-criterion parser evaluations for a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_parser_results(conn, run_id)
+
+    def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
+        """Fetch a per-run chat session transcript, oldest first."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_chat_messages(
+                conn,
+                "run_id",
+                run_id,
+                session_id,
+            )
+
+    def get_job_chat_messages(self, job_id: str, session_id: str) -> list[dict]:
+        """Fetch a job-level chat session transcript, oldest first."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_chat_messages(
+                conn,
+                "job_id",
+                job_id,
+                session_id,
+            )
+
+    def get_chat_sessions(self, run_id: str) -> list[dict]:
+        """List per-run chat sessions, most recently active first."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_chat_sessions(conn, "run_id", run_id)
+
+    def get_job_chat_sessions(self, job_id: str) -> list[dict]:
+        """List job-level chat sessions, most recently active first."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_chat_sessions(conn, "job_id", job_id)
+
+    def get_job(self, job_id: str) -> dict | None:
+        """Fetch a single orchestration job by id."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_job(conn, job_id)
+
+    def list_jobs(
+        self,
+        user_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List a user's jobs, newest first and optionally by status."""
+        with self._engine.connect() as conn:
+            return self.reader_op.list_jobs(conn, user_id, status, limit, offset)
+
+    def list_parent_jobs(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[dict]:
+        """List a user's top-level jobs using their effective status."""
+        with self._engine.connect() as conn:
+            return self.reader_op.list_parent_jobs(
+                conn,
+                user_id,
+                limit,
+                offset,
+                status,
+            )
+
+    def get_child_jobs(self, parent_job_id: str) -> list[dict]:
+        """List child runs of a batch job in submission order."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_child_jobs(conn, parent_job_id)
+
+    def get_run_siblings(self, run_id: str, user_id: str) -> list[dict]:
+        """List sibling runs from the same user-owned batch."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_run_siblings(conn, run_id, user_id)
+
+    def run_owner(self, run_id: str) -> str | None:
+        """Return the owner of the job that produced a run."""
+        with self._engine.connect() as conn:
+            return self.reader_op.run_owner(conn, run_id)
+
+    def get_video_by_hash(self, user_id: str, content_hash: str) -> dict | None:
+        """Look up a registered video by its content hash."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_video_by_hash(conn, user_id, content_hash)
+
+    def get_video_by_key(self, user_id: str, stored_key: str) -> dict | None:
+        """Look up a registered video by its storage key."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_video_by_key(conn, user_id, stored_key)
+
+    def list_videos(self, user_id: str) -> list[dict]:
+        """List all registered videos for a user, newest first."""
+        with self._engine.connect() as conn:
+            return self.reader_op.list_videos(conn, user_id)
