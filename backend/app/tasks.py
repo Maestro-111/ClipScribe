@@ -20,12 +20,12 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from celery.signals import worker_process_init
-from src.utils.clip_scribe_logging import configure_logging
+from clip_scribe.utils.clip_scribe_logging import configure_logging
 from app.celery_app import celery_app
 from app.job_execution import run_job_core
 
 if TYPE_CHECKING:
-    from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+    from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
 logger = logging.getLogger("clip_scribe")
 
@@ -46,7 +46,7 @@ def get_builder() -> "ClipScribeBuilder":
     global _BUILDER
     if _BUILDER is None:
         from app.settings import get_settings
-        from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+        from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
         device = get_settings().clip_scribe_device
         logger.info(

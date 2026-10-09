@@ -13,8 +13,8 @@ from sqlalchemy import create_engine
 from app import settings as settings_mod
 from app.deps import current_user_id, get_reader
 from app.main import app
-from src.db.reader import ClipScribeReaderDB
-from src.db.schema import (
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import (
     metadata_obj,
     runs_table,
     global_stats_table,

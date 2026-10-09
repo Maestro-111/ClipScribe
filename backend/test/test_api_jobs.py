@@ -18,10 +18,10 @@ from app.job_runner import JobService
 from app.main import app
 from app.routes.jobs import get_job_service
 from app.settings import Settings
-from src.db.reader import ClipScribeReaderDB
-from src.db.schema import metadata_obj
-from src.db.writer import ClipScribeWriterDB
-from src.utils.clip_scribe_video_storage import LocalVideoStorage
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import metadata_obj
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.utils.clip_scribe_video_storage import LocalVideoStorage
 
 
 class InlineExecutor:
@@ -252,7 +252,7 @@ def test_canceled_job_does_not_start_if_task_later_runs(ctx):
     _, state = ctx
     from app.job_execution import build_task_payload, run_job_core
     from app.models import JobCreateRequest
-    from src.utils.ids import new_ulid
+    from clip_scribe.utils.ids import new_ulid
 
     req = JobCreateRequest.model_validate(_full_body())
     video = req.videos[0]
@@ -290,7 +290,7 @@ def test_canceled_running_job_is_not_marked_completed(ctx):
     _, state = ctx
     from app.job_execution import build_task_payload, run_job_core
     from app.models import JobCreateRequest
-    from src.utils.ids import new_ulid
+    from clip_scribe.utils.ids import new_ulid
 
     req = JobCreateRequest.model_validate(_full_body())
     video = req.videos[0]
@@ -470,7 +470,7 @@ def test_retry_child_ignores_remote_artifact_factory_errors(ctx, monkeypatch):
     child = state.reader.get_child_jobs(parent_id)[0]
     old_run = child["run_id"]
 
-    import src.utils.clip_scribe_artifacts as artifacts_mod
+    import clip_scribe.utils.clip_scribe_artifacts as artifacts_mod
 
     def fail_factory(_backend, _bucket):
         raise RuntimeError("gcs unavailable")
@@ -492,7 +492,7 @@ def test_delete_job_purges_child_runs(ctx):
     rid = child["run_id"]
 
     # Simulate the extractor having written a run row for the child.
-    from src.db.schema import runs_table
+    from clip_scribe.db.schema import runs_table
 
     with state.reader._engine.begin() as conn:
         conn.execute(runs_table.insert(), {"run_id": rid, "video_name": "ad.mp4"})
@@ -516,7 +516,7 @@ def test_delete_job_purges_remote_artifacts(ctx, monkeypatch):
         def delete_run_artifacts(self, run_id):
             deleted.append(run_id)
 
-    import src.utils.clip_scribe_artifacts as artifacts_mod
+    import clip_scribe.utils.clip_scribe_artifacts as artifacts_mod
 
     monkeypatch.setattr(
         artifacts_mod,
@@ -538,7 +538,7 @@ def test_delete_job_ignores_remote_artifact_factory_errors(ctx, monkeypatch):
     state.settings.storage_backend = "gcs"
     state.settings.gcs_bucket = "clipscribe"
 
-    import src.utils.clip_scribe_artifacts as artifacts_mod
+    import clip_scribe.utils.clip_scribe_artifacts as artifacts_mod
 
     def fail_factory(_backend, _bucket):
         raise RuntimeError("gcs unavailable")

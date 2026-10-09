@@ -24,8 +24,11 @@ from typing import Any, Mapping
 
 import redis
 
-from src.utils.clip_scribe_cancel import CancellationToken, NullCancellationToken
-from src.utils.progress import NullProgressReporter, ProgressReporter
+from clip_scribe.utils.clip_scribe_cancel import (
+    CancellationToken,
+    NullCancellationToken,
+)
+from clip_scribe.utils.progress import NullProgressReporter, ProgressReporter
 from .settings import get_settings
 
 logger = logging.getLogger("clip_scribe")

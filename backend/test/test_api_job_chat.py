@@ -15,10 +15,10 @@ from sqlalchemy import create_engine
 from app.deps import get_reader, get_writer
 from app.main import app
 from app.routes.chat import get_chat_service
-from src.db.reader import ClipScribeReaderDB
-from src.db.schema import metadata_obj, parser_results_table, runs_table
-from src.db.writer import ClipScribeWriterDB
-from src.parser.tools import build_job_tools
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import metadata_obj, parser_results_table, runs_table
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.parser.tools import build_job_tools
 
 PARENT = "job-p"
 CHILD1 = "job-c1"

@@ -21,7 +21,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.utils.clip_scribe_logging import configure_logging
+from clip_scribe.utils.clip_scribe_logging import configure_logging
 
 from app.errors import register_error_handlers
 from app.routes import artifacts, chat, health, jobs, meta, runs, uploads
@@ -48,14 +48,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The API enqueues to a worker (web-app-plan §10.8); it needs DB access
         # but NEVER the ML models. Build a standalone reader/writer only — this
         # is also the shape the slim API image ships with.
-        from src.db import (
+        from clip_scribe.db import (
             ClipScribeReaderDB,
             ClipScribeWriterDB,
             create_sync_db_engine,
             resolve_database_url,
             resolve_pool_settings,
         )
-        from src.db.engine import ensure_sqlite_parent_directory
+        from clip_scribe.db.engine import ensure_sqlite_parent_directory
 
         db_url = resolve_database_url()
         ensure_sqlite_parent_directory(db_url)
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Heavy: loads SAM2/DINO/Whisper/DINOv2/MTCNN/PaddleOCR once. The
         # single-slot executor is the local stand-in for Celery concurrency=1
         # (shared GPU-resident models must not run two jobs at once).
-        from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+        from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
         logger.info("Loading ClipScribeBuilder (this can take 30-60s)...")
 

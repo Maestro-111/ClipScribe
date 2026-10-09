@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from src.utils.progress import (
+from clip_scribe.utils.progress import (
     NullProgressReporter,
     Phase,
     ProgressEvent,

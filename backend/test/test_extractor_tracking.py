@@ -6,7 +6,7 @@ from unittest import mock
 
 import torch
 
-from src.extractor.extractor_core import VideoInformationExtractor
+from clip_scribe.extractor.extractor_core import VideoInformationExtractor
 
 
 def _extractor_with_sam() -> tuple[VideoInformationExtractor, mock.MagicMock]:

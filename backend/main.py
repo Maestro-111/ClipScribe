@@ -3,8 +3,8 @@ entry point for local dev, just run with uv run main.py
 """
 
 
-from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
-from src.clip_scribe.build_clip_scribe_plalform import build_platform
+from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
+from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platform
 from dotenv import load_dotenv, find_dotenv
 
 import sys

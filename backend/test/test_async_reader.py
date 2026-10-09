@@ -4,8 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from src.db import ClipScribeAsyncReaderDB, create_async_db_engine
-from src.db.schema import (
+from clip_scribe.db import ClipScribeAsyncReaderDB, create_async_db_engine
+from clip_scribe.db.schema import (
     audio_segments_table,
     chat_messages_table,
     field_descriptions_table,

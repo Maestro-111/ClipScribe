@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.models import JobCreateRequest, JobStatus
-from src.clip_scribe.build_clip_scribe_plalform import build_platform
+from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platform
 
 if TYPE_CHECKING:
-    from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
+    from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
 logger = logging.getLogger("clip_scribe")
 
@@ -74,8 +74,8 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
         make_reporter,
     )
     from app.settings import get_settings
-    from src.utils.clip_scribe_cancel import JobCanceled
-    from src.utils.clip_scribe_video_storage import make_video_storage
+    from clip_scribe.utils.clip_scribe_cancel import JobCanceled
+    from clip_scribe.utils.clip_scribe_video_storage import make_video_storage
 
     writer = builder.writer_db
     job_id = payload["job_id"]

@@ -16,9 +16,9 @@ from app.deps import (
 )
 from app.main import app
 from app.settings import Settings
-from src.db.reader import ClipScribeReaderDB
-from src.db.schema import jobs_table, metadata_obj, runs_table
-from src.db.writer import ClipScribeWriterDB
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import jobs_table, metadata_obj, runs_table
+from clip_scribe.db.writer import ClipScribeWriterDB
 
 RUN_ID = "r1"
 

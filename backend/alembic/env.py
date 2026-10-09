@@ -5,8 +5,8 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from src.db.engine import ensure_sqlite_parent_directory, resolve_database_url
-from src.db.schema import metadata_obj
+from clip_scribe.db.engine import ensure_sqlite_parent_directory, resolve_database_url
+from clip_scribe.db.schema import metadata_obj
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

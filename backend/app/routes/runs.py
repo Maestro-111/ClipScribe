@@ -28,7 +28,7 @@ from app.models import (
 )
 
 if TYPE_CHECKING:
-    from src.db import ClipScribeReaderDB
+    from clip_scribe.db import ClipScribeReaderDB
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 

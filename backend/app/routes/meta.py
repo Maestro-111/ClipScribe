@@ -27,8 +27,8 @@ from app.deps import (
     video_storage_dep,
 )
 from app.settings import PROJECT_ROOT
-from src.db import ClipScribeReaderDB, ClipScribeWriterDB
-from src.utils.clip_scribe_video_storage import VideoStorage
+from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
 
 router = APIRouter(tags=["metadata"])
 

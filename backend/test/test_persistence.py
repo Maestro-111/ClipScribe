@@ -11,16 +11,16 @@ import types
 import pytest
 from sqlalchemy import create_engine, select
 
-from src.db.schema import (
+from clip_scribe.db.schema import (
     metadata_obj,
     frame_detections_table,
     shot_boundaries_table,
     parser_results_table,
     runs_table,
 )
-from src.db.writer import ClipScribeWriterDB
-from src.utils.ids import new_ulid
-from src.utils.clip_scribe_artifacts import (
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.utils.ids import new_ulid
+from clip_scribe.utils.clip_scribe_artifacts import (
     GCSArtifactUploader,
     NullArtifactUploader,
     make_artifact_uploader,

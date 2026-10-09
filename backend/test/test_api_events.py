@@ -23,7 +23,7 @@ from app.events import (
 )
 from app.events import summarize_progress
 from app.routes.jobs import _job_event_stream, _sse_frame
-from src.utils.progress import NullProgressReporter, ProgressEvent
+from clip_scribe.utils.progress import NullProgressReporter, ProgressEvent
 
 
 # --- RedisProgressReporter -------------------------------------------------

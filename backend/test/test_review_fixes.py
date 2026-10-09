@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 
-from src.db.engine import ensure_sqlite_parent_directory
+from clip_scribe.db.engine import ensure_sqlite_parent_directory
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -53,7 +53,7 @@ def patched_heavy(monkeypatch, tmp_path):
     # clip_scribe.yaml / .env config (which may select postgresql locally).
     monkeypatch.setenv("CLIPSCRIBE_DB_BACKEND", "sqlite")
     monkeypatch.setenv("SQLITE_URL", f"sqlite:////{tmp_path / 'test.db'}")
-    import src.clip_scribe.build_clip_scribe as bcs
+    import clip_scribe.clip_scribe_core.build_clip_scribe as bcs
 
     for name in (
         "DinoDetector",
@@ -136,9 +136,9 @@ def test_build_clip_scribe_does_not_reload_heavy_models(patched_heavy, mode):
 
 
 def test_parser_report_path_stays_under_output_dir(tmp_path):
-    from src.parser.parser_core import VideoInformationParser
-    from src.utils.clip_scribe_cancel import NullCancellationToken
-    from src.utils.progress import NullProgressReporter
+    from clip_scribe.parser.parser_core import VideoInformationParser
+    from clip_scribe.utils.clip_scribe_cancel import NullCancellationToken
+    from clip_scribe.utils.progress import NullProgressReporter
 
     class DummyEvaluator:
         def evaluate_all(self, run_id, video_name):

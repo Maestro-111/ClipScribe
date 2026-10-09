@@ -30,10 +30,10 @@ from app.models import (
     JobResponse,
 )
 from app.settings import get_settings
-from src.utils.clip_scribe_video_storage import make_video_storage
+from clip_scribe.utils.clip_scribe_video_storage import make_video_storage
 
 if TYPE_CHECKING:
-    from src.db import ClipScribeReaderDB
+    from clip_scribe.db import ClipScribeReaderDB
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 

@@ -10,16 +10,16 @@ is owned by Alembic).
 import pytest
 from sqlalchemy import create_engine
 
-from src.db.schema import (
+from clip_scribe.db.schema import (
     metadata_obj,
     runs_table,
     shot_boundaries_table,
     frame_detections_table,
     parser_results_table,
 )
-from src.db.reader import ClipScribeReaderDB
-from src.db.writer import ClipScribeWriterDB
-from src.utils.ids import new_ulid
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.utils.ids import new_ulid
 
 
 @pytest.fixture

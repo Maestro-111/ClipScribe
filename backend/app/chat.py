@@ -29,7 +29,7 @@ from langchain_core.messages import (
 )
 from langchain_openai import ChatOpenAI
 
-from src.parser.advisory import (
+from clip_scribe.parser.advisory import (
     ADVISORY_SYSTEM_PROMPT,
     JOB_ADVISORY_SYSTEM_PROMPT,
     build_advisory_agent,
@@ -38,7 +38,7 @@ from src.parser.advisory import (
 
 if TYPE_CHECKING:
     from app.settings import Settings
-    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
 
 logger = logging.getLogger("clip_scribe")
 

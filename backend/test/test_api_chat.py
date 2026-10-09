@@ -16,15 +16,15 @@ from app import settings as settings_mod
 from app.deps import get_reader, get_writer
 from app.main import app
 from app.routes.chat import get_chat_service
-from src.db.reader import ClipScribeReaderDB
-from src.db.schema import (
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import (
     jobs_table,
     metadata_obj,
     parser_results_table,
     runs_table,
 )
-from src.db.writer import ClipScribeWriterDB
-from src.parser.tools import build_tools
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.parser.tools import build_tools
 
 RUN_ID = "r1"
 

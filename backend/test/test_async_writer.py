@@ -4,12 +4,12 @@ import asyncio
 import types
 from pathlib import Path
 
-from src.db import (
+from clip_scribe.db import (
     ClipScribeAsyncReaderDB,
     ClipScribeAsyncWriterDB,
     create_async_db_engine,
 )
-from src.db.schema import metadata_obj
+from clip_scribe.db.schema import metadata_obj
 
 
 def test_async_writer_methods_share_sync_write_operations(tmp_path: Path) -> None:

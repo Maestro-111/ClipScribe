@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest import mock
 
-from src.extractor.taxonomy_config import ProfilesPile, TaxonomyProfile
+from clip_scribe.extractor.taxonomy_config import ProfilesPile, TaxonomyProfile
 
 
 def _generated_profile(video_type: str) -> TaxonomyProfile:
@@ -24,7 +24,9 @@ def test_profiles_pile_has_no_general_profile() -> None:
 def test_resolve_or_create_reuses_known_profile_without_agent_call() -> None:
     profiles = ProfilesPile(model="test-model")
 
-    with mock.patch("src.extractor.taxonomy_config.Runner.run_sync") as run_sync:
+    with mock.patch(
+        "clip_scribe.extractor.taxonomy_config.Runner.run_sync"
+    ) as run_sync:
         resolved_type = profiles.resolve_or_create(
             "  Car   Commercial ", scene_context="A vehicle on a road."
         )
@@ -38,7 +40,7 @@ def test_resolve_or_create_generates_unknown_explicit_type_once() -> None:
     result = SimpleNamespace(final_output=_generated_profile("ignored agent value"))
 
     with mock.patch(
-        "src.extractor.taxonomy_config.Runner.run_sync", return_value=result
+        "clip_scribe.extractor.taxonomy_config.Runner.run_sync", return_value=result
     ) as run_sync:
         first = profiles.resolve_or_create(
             " Travel   Vlog ",
@@ -59,7 +61,7 @@ def test_resolve_or_create_infers_missing_video_type() -> None:
     result = SimpleNamespace(final_output=_generated_profile("Cooking Tutorial"))
 
     with mock.patch(
-        "src.extractor.taxonomy_config.Runner.run_sync", return_value=result
+        "clip_scribe.extractor.taxonomy_config.Runner.run_sync", return_value=result
     ):
         resolved_type = profiles.resolve_or_create(
             None,

@@ -25,7 +25,7 @@ from app.models import (
     JobChatHistoryResponse,
     JobChatSessionsResponse,
 )
-from src.utils.ids import new_ulid
+from clip_scribe.utils.ids import new_ulid
 
 if TYPE_CHECKING:
     from app.chat import ChatService

@@ -30,8 +30,8 @@ from app.models import (
     JobResponse,
     JobStatus,
 )
-from src.utils.clip_scribe_video_storage import VideoStorage
-from src.utils.ids import new_ulid
+from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
+from clip_scribe.utils.ids import new_ulid
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 
     from app.models import VideoInput
     from app.settings import Settings
-    from src.clip_scribe.build_clip_scribe import ClipScribeBuilder
-    from src.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
+    from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
 
 logger = logging.getLogger("clip_scribe")
 
@@ -553,7 +553,7 @@ class JobService:
         import shutil
 
         from app.settings import PROJECT_ROOT
-        from src.utils.clip_scribe_artifacts import (
+        from clip_scribe.utils.clip_scribe_artifacts import (
             make_artifact_uploader,
             run_artifact_dir,
         )
