@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Future, ThreadPoolExecutor
 
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
-    from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from clip_scribe.db import ClipScribeAsyncWriterDB, ClipScribeAsyncReaderDB
 
 # Single-tenant placeholder until auth lands. Everything user-scoped (uploads,
 # the videos registry, the input picker) reads this, so wiring in real auth is
@@ -35,7 +35,7 @@ _bearer = HTTPBearer(
 )  # auto_error=False → no creds isn't an instant 403
 
 
-def current_user_id(
+async def current_user_id(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
     settings: Settings = get_settings()
@@ -81,7 +81,7 @@ def artifact_storage_dep(
     return make_artifact_uploader(settings.storage_backend, settings.gcs_bucket)
 
 
-def get_builder(request: Request) -> "ClipScribeBuilder":
+def get_builder(request: Request) -> ClipScribeBuilder:
     builder = getattr(request.app.state, "builder", None)
     if builder is None:
         raise ProblemException(
@@ -92,10 +92,9 @@ def get_builder(request: Request) -> "ClipScribeBuilder":
     return builder
 
 
-def get_reader(request: Request) -> "ClipScribeReaderDB":
-    # Read from app.state, not the builder: in celery mode the API has a DB
-    # connection but no builder (no models). lifespan populates reader_db from
-    # the builder (inline) or a standalone engine (celery).
+def get_reader(request: Request) -> ClipScribeAsyncReaderDB:
+    # The API always owns async DB adapters in app.state. In inline mode the
+    # builder separately owns synchronous adapters for the worker thread.
     reader = getattr(request.app.state, "reader_db", None)
     if reader is None:
         raise ProblemException(
@@ -106,7 +105,7 @@ def get_reader(request: Request) -> "ClipScribeReaderDB":
     return reader
 
 
-def get_writer(request: Request) -> "ClipScribeWriterDB":
+def get_writer(request: Request) -> ClipScribeAsyncWriterDB:
     writer = getattr(request.app.state, "writer_db", None)
     if writer is None:
         raise ProblemException(
@@ -117,7 +116,7 @@ def get_writer(request: Request) -> "ClipScribeWriterDB":
     return writer
 
 
-def get_executor(request: Request) -> "ThreadPoolExecutor":
+def get_executor(request: Request) -> ThreadPoolExecutor:
     executor = getattr(request.app.state, "executor", None)
     if executor is None:
         raise ProblemException(
@@ -128,13 +127,13 @@ def get_executor(request: Request) -> "ThreadPoolExecutor":
     return executor
 
 
-def get_futures(request: Request) -> "dict[str, Future[None]]":
+def get_futures(request: Request) -> dict[str, Future[None]]:
     return getattr(request.app.state, "futures", {})
 
 
-def require_owned_run(
+async def require_owned_run(
     run_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
     user_id: str = Depends(current_user_id),
 ) -> dict:
     """Authorize a by-run-id read and return the run row.
@@ -146,17 +145,17 @@ def require_owned_run(
     existence check; the leaf reads that follow are then safe because the caller
     is known to own the run.
     """
-    run = reader.get_run(run_id)
-    if run is None or reader.run_owner(run_id) != user_id:
+    run = await reader.get_run(run_id)
+    if run is None or await reader.run_owner(run_id) != user_id:
         raise ProblemException(
             status=404, title="Not Found", detail=f"run '{run_id}' not found"
         )
     return run
 
 
-def require_owned_job(
+async def require_owned_job(
     job_id: str,
-    reader: "ClipScribeReaderDB" = Depends(get_reader),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
     user_id: str = Depends(current_user_id),
 ) -> dict:
     """Authorize a by-job-id read and return the job row.
@@ -164,7 +163,7 @@ def require_owned_job(
     Ownership lives directly on ``jobs.created_by``. As with runs, a job the
     caller doesn't own 404s rather than 403s so existence isn't leaked.
     """
-    job = reader.get_job(job_id)
+    job = await reader.get_job(job_id)
     if job is None or job.get("created_by") != user_id:
         raise ProblemException(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"

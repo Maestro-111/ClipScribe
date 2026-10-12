@@ -79,6 +79,19 @@ class Settings:
     # (a retried job gets a fresh job_id / key, so no stale flag can leak across).
     CANCEL_FLAG_TTL_SECONDS = 24 * 3600
 
+    # Block window for XREAD while tailing; on each timeout we emit an SSE comment to
+    # keep proxies from closing an idle connection and re-check the job row so a
+    # canceled/queued job (which may never emit a terminal event) still ends cleanly.
+    XREAD_BLOCK_MS = 15000
+
+    # 1 MiB chunks: bounded memory while streaming arbitrarily large videos.
+    VIDEO_CHUNK = 1024 * 1024
+
+    # Chat answers run longer than a one-line verdict, so we lift the token cap above
+    # the parser's default while reusing its model + temperature.
+    CHAT_MAX_TOKENS = 1500
+    RECURSION_LIMIT = 25
+
     def __init__(self) -> None:
         # Local source-video storage root. The API stores opaque keys here when
         # CLIPSCRIBE_STORAGE_BACKEND=local; the gcs backend uses it only for

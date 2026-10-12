@@ -8,9 +8,38 @@ test_api_jobs. Tests that exercise the GCS backend do so by constructing the
 classes directly with a fake client, not through the environment.
 """
 
+import asyncio
+
 import pytest
 
 from app import settings as settings_mod
+from clip_scribe.db import (
+    ClipScribeAsyncReaderDB,
+    ClipScribeAsyncWriterDB,
+    create_async_db_engine,
+)
+
+
+@pytest.fixture
+def async_db_adapters():
+    """Build API-facing async adapters for a test's existing SQLite file."""
+    engines = []
+
+    def factory(database_url: str):
+        engine = create_async_db_engine(database_url)
+        engines.append(engine)
+        return (
+            ClipScribeAsyncReaderDB(async_engine=engine),
+            ClipScribeAsyncWriterDB(async_engine=engine),
+        )
+
+    yield factory
+
+    async def dispose() -> None:
+        for engine in engines:
+            await engine.dispose()
+
+    asyncio.run(dispose())
 
 
 @pytest.fixture(autouse=True)

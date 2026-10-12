@@ -1,7 +1,8 @@
 """API tests for the jobs endpoints and JobService (web-app-plan §5, §11).
 
-No models are loaded: a fake builder (real reader/writer over temp SQLite, a
-stub engine) and an inline executor stand in, wired via dependency_overrides.
+No models are loaded: a fake builder uses synchronous DB adapters like the real
+pipeline, while JobService uses async adapters over the same temp SQLite file.
+An inline executor and stub engine stand in for model execution.
 """
 
 import hashlib
@@ -63,17 +64,19 @@ class FakeBuilder:
 
 
 @pytest.fixture
-def ctx(tmp_path):
+def ctx(tmp_path, async_db_adapters):
     os.environ["CLIPSCRIBE_API_LOAD_MODELS"] = "false"
     # Pin the dispatch backend so an ambient .env (CLIPSCRIBE_JOB_BACKEND=celery)
     # can't push these tests onto the Redis path; they exercise the inline path.
     os.environ["CLIPSCRIBE_JOB_BACKEND"] = "inline"
     settings_mod.get_settings.cache_clear()
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'api.db'}")
+    database_url = f"sqlite:///{tmp_path / 'api.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
     reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
+    async_reader, async_writer = async_db_adapters(database_url)
 
     input_dir = tmp_path / "input"
     input_dir.mkdir()
@@ -93,12 +96,14 @@ def ctx(tmp_path):
     state = SimpleNamespace(
         reader=reader,
         writer=writer,
+        async_reader=async_reader,
+        async_writer=async_writer,
         settings=settings,
         input_dir=input_dir,
         storage=storage,
     )
 
-    app.dependency_overrides[get_reader] = lambda: reader
+    app.dependency_overrides[get_reader] = lambda: async_reader
     app.dependency_overrides[get_executor] = lambda: InlineExecutor()
 
     def install_service(fake_engine=None, run=True, device="cpu"):
@@ -106,8 +111,8 @@ def ctx(tmp_path):
         executor = InlineExecutor(run=run)
         builder = FakeBuilder(reader, writer, fake_engine, device=device)
         svc = JobService(
-            reader,
-            writer,
+            async_reader,
+            async_writer,
             settings,
             storage,
             "local",
@@ -237,7 +242,13 @@ def test_create_job_records_failure(ctx):
 
 def test_dispatch_unavailable_creates_no_rows(ctx):
     client, state = ctx
-    svc = JobService(state.reader, state.writer, state.settings, state.storage, "local")
+    svc = JobService(
+        state.async_reader,
+        state.async_writer,
+        state.settings,
+        state.storage,
+        "local",
+    )
     app.dependency_overrides[get_job_service] = lambda: svc
 
     resp = client.post("/jobs", json=_full_body())
@@ -565,8 +576,8 @@ def test_delete_job_does_not_construct_source_storage(ctx, monkeypatch):
 
     monkeypatch.setattr(jobs_routes, "make_video_storage", fail_storage_factory)
     app.dependency_overrides.pop(get_job_service)
-    app.state.reader_db = state.reader
-    app.state.writer_db = state.writer
+    app.state.reader_db = state.async_reader
+    app.state.writer_db = state.async_writer
     app.state.settings = state.settings
     app.state.builder = None
     app.state.executor = None

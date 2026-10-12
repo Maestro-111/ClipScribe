@@ -20,6 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from starlette.concurrency import run_in_threadpool
+
 from app.errors import ProblemException
 from app.job_execution import build_task_payload, now_iso
 from app.models import (
@@ -40,7 +42,7 @@ if TYPE_CHECKING:
     from app.models import VideoInput
     from app.settings import Settings
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
-    from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 
 logger = logging.getLogger("clip_scribe")
 
@@ -50,7 +52,7 @@ _TERMINAL_JOB_STATUSES = frozenset(
 _CANCELLABLE_JOB_STATUSES = frozenset({JobStatus.QUEUED.value, JobStatus.RUNNING.value})
 
 
-def aggregate_status(child_statuses: "Sequence[str]") -> str:
+def aggregate_status(child_statuses: Sequence[str]) -> str:
     """Derive a batch parent's status from its children (read-time, §2.1).
 
     - all children completed → ``completed``
@@ -77,7 +79,7 @@ def aggregate_status(child_statuses: "Sequence[str]") -> str:
     return JobStatus.QUEUED.value
 
 
-def _batch_label(videos: "Sequence[VideoInput]") -> str | None:
+def _batch_label(videos: Sequence[VideoInput]) -> str | None:
     """A human label for the parent row: the first video, plus a count if batched."""
     if not videos:
         return None
@@ -86,7 +88,7 @@ def _batch_label(videos: "Sequence[VideoInput]") -> str | None:
     return f"{videos[0].video_name} (+{len(videos) - 1} more)"
 
 
-def build_job_response(reader: "ClipScribeReaderDB", row: dict) -> JobResponse:
+async def build_job_response(reader: ClipScribeAsyncReaderDB, row: dict) -> JobResponse:
     """Assemble a :class:`JobResponse`, aggregating parent status from children.
 
     A parent row (``parent_job_id`` NULL) carries its children and an aggregated
@@ -95,7 +97,7 @@ def build_job_response(reader: "ClipScribeReaderDB", row: dict) -> JobResponse:
     children: list[JobChild] = []
     status = row.get("status", JobStatus.QUEUED.value)
     if row.get("parent_job_id") is None:
-        child_rows = reader.get_child_jobs(row["job_id"])
+        child_rows = await reader.get_child_jobs(row["job_id"])
         if child_rows:
             children = [JobChild(**cr) for cr in child_rows]
             status = aggregate_status([c.status for c in children])
@@ -105,19 +107,20 @@ def build_job_response(reader: "ClipScribeReaderDB", row: dict) -> JobResponse:
 class JobService:
     def __init__(
         self,
-        reader: "ClipScribeReaderDB",
-        writer: "ClipScribeWriterDB",
-        settings: "Settings",
+        reader: ClipScribeAsyncReaderDB,
+        writer: ClipScribeAsyncWriterDB,
+        settings: Settings,
         storage: VideoStorage | Callable[[], VideoStorage],
         user_id: str,
         *,
-        builder: "ClipScribeBuilder | None" = None,
-        executor: "ThreadPoolExecutor | None" = None,
+        builder: ClipScribeBuilder | None = None,
+        executor: ThreadPoolExecutor | None = None,
         futures: "dict[str, Future[None]] | None" = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
         self.settings = settings
+        self._storage: VideoStorage | None
         if isinstance(storage, VideoStorage):
             self._storage = storage
             self._storage_factory: Callable[[], VideoStorage] = lambda: storage
@@ -137,7 +140,7 @@ class JobService:
             self._storage = self._storage_factory()
         return self._storage
 
-    def create_job(self, req: JobCreateRequest) -> JobCreatedResponse:
+    async def create_job(self, req: JobCreateRequest) -> JobCreatedResponse:
         """Fan a batch request out to a parent job + one child run per video.
 
         Every request writes one parent row (a container, never executed) and
@@ -162,11 +165,11 @@ class JobService:
         self._ensure_dispatchable()
         # Validate every input up front: a bad/missing key 404s/400s before we
         # persist. Returns the logical storage key, not a local path.
-        resolved = [(v, self._validate_input(v.video_path)) for v in req.videos]
+        resolved = [(v, await self._validate_input(v.video_path)) for v in req.videos]
 
         device = getattr(self.builder, "device", None)
         parent_id = new_ulid()
-        self.writer.create_job(
+        await self.writer.create_job(
             job_id=parent_id,
             mode=req.mode.value,
             status=JobStatus.QUEUED.value,
@@ -185,7 +188,7 @@ class JobService:
             # The child stores a single-video request so retrying it re-runs just
             # this video (retrying the parent re-fans the whole batch).
             child_req = req.model_copy(update={"videos": [video]})
-            self.writer.create_job(
+            await self.writer.create_job(
                 job_id=child_id,
                 mode=req.mode.value,
                 status=JobStatus.QUEUED.value,
@@ -209,12 +212,12 @@ class JobService:
                 video_type=video.video_type,
             )
             try:
-                self._dispatch(child_id, payload)
+                await self._dispatch(child_id, payload)
             except Exception as exc:  # noqa: BLE001 - recorded on the child row
                 # Best-effort: one child failing to dispatch doesn't abort the
                 # batch; the parent's aggregate status reflects the failure.
                 logger.exception("Failed to dispatch child job %s", child_id)
-                self.writer.update_job_if_status(
+                await self.writer.update_job_if_status(
                     child_id,
                     allowed_statuses=(JobStatus.QUEUED.value,),
                     status=JobStatus.FAILED.value,
@@ -237,13 +240,17 @@ class JobService:
                 detail="Inline job execution is unavailable (models not loaded).",
             )
 
-    def _dispatch(self, job_id: str, payload: dict) -> None:
+    async def _dispatch(self, job_id: str, payload: dict) -> None:
         """Hand the job off to the configured backend."""
         if self.settings.job_backend == "celery":
             from app.celery_app import celery_app
 
-            result = celery_app.send_task("app.tasks.run_job", args=[payload])
-            self.writer.update_job(job_id, celery_task_id=result.id)
+            result = await run_in_threadpool(
+                celery_app.send_task,
+                "app.tasks.run_job",
+                args=[payload],
+            )
+            await self.writer.update_job(job_id, celery_task_id=result.id)
             logger.info("Enqueued job %s to celery (task %s)", job_id, result.id)
         else:
             if self.executor is None or self.builder is None:
@@ -252,7 +259,7 @@ class JobService:
                     title="Service Unavailable",
                     detail="Inline job execution is unavailable (models not loaded).",
                 )
-            future: "Future[None]" = self.executor.submit(self._run, payload)
+            future: Future[None] = self.executor.submit(self._run, payload)
             self.futures[job_id] = future
 
     def _run(self, payload: dict) -> None:
@@ -265,15 +272,15 @@ class JobService:
         finally:
             self.futures.pop(payload["job_id"], None)
 
-    def _effective_status(self, job: dict) -> str:
+    async def _effective_status(self, job: dict) -> str:
         """A job's user-facing status: aggregated from children for a parent."""
         if job.get("parent_job_id") is None:
-            children = self.reader.get_child_jobs(job["job_id"])
+            children = await self.reader.get_child_jobs(job["job_id"])
             if children:
                 return aggregate_status([c["status"] for c in children])
         return job.get("status", JobStatus.QUEUED.value)
 
-    def _cancel_one(self, job: dict, *, strict: bool = True) -> None:
+    async def _cancel_one(self, job: dict, *, strict: bool = True) -> None:
         """Cancel a single (leaf) job. ``strict`` raises 409 when not cancellable.
 
         Queued jobs are prevented from starting (``Future.cancel()`` inline, or
@@ -303,7 +310,7 @@ class JobService:
         # but harmless — the flag self-expires and a retry gets a fresh job_id.
         from app.events import signal_cancel
 
-        signal_cancel(self.settings.redis_url, job_id)
+        await run_in_threadpool(signal_cancel, self.settings.redis_url, job_id)
 
         if self.settings.job_backend == "celery":
             task_id = job.get("celery_task_id")
@@ -315,7 +322,7 @@ class JobService:
                 # still-queued task; a running one stops cooperatively at its
                 # next check (the cancel flag above) and its terminal write is
                 # suppressed because the row is already 'canceled'.
-                celery_app.control.revoke(task_id)
+                await run_in_threadpool(celery_app.control.revoke, task_id)
         else:
             future = self.futures.get(job_id)
             if future is not None:
@@ -323,14 +330,14 @@ class JobService:
                 # can't be thread-killed, so it stops via the cancel flag above.
                 future.cancel()
 
-        canceled = self.writer.update_job_if_status(
+        canceled = await self.writer.update_job_if_status(
             job_id,
             allowed_statuses=tuple(_CANCELLABLE_JOB_STATUSES),
             status=JobStatus.CANCELED.value,
             finished_at=now_iso(),
         )
         if not canceled and strict:
-            latest = self.reader.get_job(job_id)
+            latest = await self.reader.get_job(job_id)
             latest_status = latest["status"] if latest else "missing"
             raise ProblemException(
                 status=409,
@@ -357,21 +364,21 @@ class JobService:
                 detail=f"job '{job['job_id']}' not found",
             )
 
-    def cancel_job(self, job_id: str) -> None:
+    async def cancel_job(self, job_id: str) -> None:
         """Cancel a queued or running job.
 
         For a batch parent, cancels every still-cancellable child best-effort
         (the parent status is derived, so no parent row is written). For a leaf
         job, cancels it and 409s if it is already terminal.
         """
-        job = self.reader.get_job(job_id)
+        job = await self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
         self._require_owned(job)
         if job.get("parent_job_id") is None:
-            children = self.reader.get_child_jobs(job_id)
+            children = await self.reader.get_child_jobs(job_id)
             if children:
                 cancellable = [
                     c for c in children if c["status"] in _CANCELLABLE_JOB_STATUSES
@@ -385,11 +392,11 @@ class JobService:
                         ),
                     )
                 for child in cancellable:
-                    self._cancel_one(child, strict=False)
+                    await self._cancel_one(child, strict=False)
                 return
-        self._cancel_one(job, strict=True)
+        await self._cancel_one(job, strict=True)
 
-    def delete_job(self, job_id: str) -> None:
+    async def delete_job(self, job_id: str) -> None:
         """Delete a job and all its associated run data.
 
         A parent's children are each torn down — canceled if still active, their
@@ -399,34 +406,34 @@ class JobService:
         if it still reaches a terminal write after the row is gone, the guarded
         update is a no-op and the deleted run is not resurrected.
         """
-        job = self.reader.get_job(job_id)
+        job = await self.reader.get_job(job_id)
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
         self._require_owned(job)
         if job.get("parent_job_id") is None:
-            for child in self.reader.get_child_jobs(job_id):
-                self._delete_child(child)
+            for child in await self.reader.get_child_jobs(job_id):
+                await self._delete_child(child)
             # A pure parent owns no run; a legacy standalone job might.
             if job["status"] not in _TERMINAL_JOB_STATUSES:
-                self._cancel_one(job, strict=False)
+                await self._cancel_one(job, strict=False)
             if job.get("run_id"):
-                self._purge_run(job["run_id"])
-            self.writer.delete_job(job_id)
+                await self._purge_run(job["run_id"])
+            await self.writer.delete_job(job_id)
         else:
-            self._delete_child(job)
+            await self._delete_child(job)
 
-    def _delete_child(self, job: dict) -> None:
+    async def _delete_child(self, job: dict) -> None:
         """Cancel (if active), purge the run's data + artifacts, and delete the row."""
         if job["status"] not in _TERMINAL_JOB_STATUSES:
-            self._cancel_one(job, strict=False)
+            await self._cancel_one(job, strict=False)
         run_id = job.get("run_id")
         if run_id:
-            self._purge_run(run_id)
-        self.writer.delete_job(job["job_id"])
+            await self._purge_run(run_id)
+        await self.writer.delete_job(job["job_id"])
 
-    def retry_job(self, job_id: str) -> JobCreatedResponse:
+    async def retry_job(self, job_id: str) -> JobCreatedResponse:
         """Retry a terminal job.
 
         A **child** run (part of a batch) is retried *in place*: the same job row
@@ -435,21 +442,22 @@ class JobService:
         standalone) job is re-created from its stored params, re-fanning the
         whole batch as a new job.
         """
-        job = self.reader.get_job(job_id)
+        job = await self.reader.get_job(job_id)
+
         if job is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"job '{job_id}' not found"
             )
         self._require_owned(job)
         if job.get("parent_job_id") is not None:
-            return self._retry_child_in_place(job)
+            return await self._retry_child_in_place(job)
 
         retryable = {
             JobStatus.FAILED.value,
             JobStatus.CANCELED.value,
             JobStatus.COMPLETED.value,
         }
-        status = self._effective_status(job)
+        status = await self._effective_status(job)
         if status not in retryable:
             raise ProblemException(
                 status=409,
@@ -467,9 +475,9 @@ class JobService:
                 detail=f"job '{job_id}' has no stored params and cannot be retried",
             )
         req = JobCreateRequest.model_validate(params)
-        return self.create_job(req)
+        return await self.create_job(req)
 
-    def _retry_child_in_place(self, job: dict) -> JobCreatedResponse:
+    async def _retry_child_in_place(self, job: dict) -> JobCreatedResponse:
         """Re-run one child run under its existing ``job_id`` and parent batch."""
         job_id = job["job_id"]
         if job["status"] not in _TERMINAL_JOB_STATUSES:
@@ -497,13 +505,13 @@ class JobService:
                 detail=f"run '{job_id}' has no video to retry",
             )
         video = req.videos[0]
-        video_key = self._validate_input(video.video_path)
+        video_key = await self._validate_input(video.video_path)
         old_run_id = job.get("run_id")
         new_run_id = new_ulid()
 
         # Reset the row (guarded to terminal) before touching Redis/dispatch.
-        if not self.writer.reset_job_for_retry(job_id, run_id=new_run_id):
-            latest = self.reader.get_job(job_id)
+        if not await self.writer.reset_job_for_retry(job_id, run_id=new_run_id):
+            latest = await self.reader.get_job(job_id)
             latest_status = latest["status"] if latest else "missing"
             raise ProblemException(
                 status=409,
@@ -517,13 +525,13 @@ class JobService:
         # The retry supersedes the old run: drop its persisted rows + artifacts
         # so it isn't left orphaned (the row now points at new_run_id).
         if old_run_id and old_run_id != new_run_id:
-            self._purge_run(old_run_id)
+            await self._purge_run(old_run_id)
 
         # Drop the previous run's stream so the SSE replay starts clean (the
         # job_id — and thus the stream key — is reused).
         from app.events import reset_stream
 
-        reset_stream(self.settings.redis_url, job_id)
+        await run_in_threadpool(reset_stream, self.settings.redis_url, job_id)
 
         payload = build_task_payload(
             job_id=job_id,
@@ -534,9 +542,9 @@ class JobService:
             video_type=video.video_type,
         )
         try:
-            self._dispatch(job_id, payload)
+            await self._dispatch(job_id, payload)
         except Exception as exc:  # noqa: BLE001 - recorded on the row
-            self.writer.update_job_if_status(
+            await self.writer.update_job_if_status(
                 job_id,
                 allowed_statuses=(JobStatus.QUEUED.value,),
                 status=JobStatus.FAILED.value,
@@ -548,8 +556,13 @@ class JobService:
             job_id=job_id, run_id=new_run_id, status=JobStatus.QUEUED
         )
 
-    def _purge_run(self, run_id: str) -> None:
+    async def _purge_run(self, run_id: str) -> None:
         """Delete a superseded run's DB rows and artifacts (best-effort)."""
+        await self.writer.delete_run(run_id)
+        await run_in_threadpool(self._purge_run_artifacts, run_id)
+
+    def _purge_run_artifacts(self, run_id: str) -> None:
+        """Remove local and remote artifacts without occupying the event loop."""
         import shutil
 
         from app.settings import PROJECT_ROOT
@@ -558,7 +571,6 @@ class JobService:
             run_artifact_dir,
         )
 
-        self.writer.delete_run(run_id)
         art_dir = (PROJECT_ROOT / run_artifact_dir(run_id)).resolve()
         try:
             if art_dir.is_dir():
@@ -576,7 +588,7 @@ class JobService:
                 "Failed to remove remote artifacts for run %s", run_id, exc_info=True
             )
 
-    def _validate_input(self, key: str | None) -> str:
+    async def _validate_input(self, key: str | None) -> str:
         """Validate a job's video storage key and return it unchanged.
 
         The API never resolves the key to a local path — that would only be
@@ -598,12 +610,16 @@ class JobService:
                 title="Bad Request",
                 detail="video_path is not a valid storage key",
             )
-        if self.reader.get_video_by_key(self.user_id, key) is None:
+        if await self.reader.get_video_by_key(self.user_id, key) is None:
             raise ProblemException(
                 status=404, title="Not Found", detail=f"video not found: {key}"
             )
-        if not self.storage.exists(key):
+        if not await run_in_threadpool(self._storage_exists, key):
             raise ProblemException(
                 status=404, title="Not Found", detail=f"video not found: {key}"
             )
         return key
+
+    def _storage_exists(self, key: str) -> bool:
+        """Resolve lazy storage and perform its synchronous existence check."""
+        return self.storage.exists(key)

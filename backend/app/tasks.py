@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("clip_scribe")
 
-_BUILDER: "ClipScribeBuilder | None" = None
+_BUILDER: ClipScribeBuilder | None = None
 
 
-def get_builder() -> "ClipScribeBuilder":
+def get_builder() -> ClipScribeBuilder:
     """Return the process-wide builder, loading it once on first use.
 
     Device is supplied from settings (which read ``CLIPSCRIBE_DEVICE`` from the
@@ -55,6 +55,7 @@ def get_builder() -> "ClipScribeBuilder":
         )
         _BUILDER = ClipScribeBuilder(device=device)
         logger.info("Worker ClipScribeBuilder ready.")
+
     return _BUILDER
 
 

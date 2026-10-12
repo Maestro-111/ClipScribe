@@ -305,14 +305,14 @@ class ClipScribeBuilder:
             db_url = resolve_database_url()
             pool_size, max_overflow = resolve_pool_settings()
 
-            db_engine = create_sync_db_engine(
+            sync_db_engine = create_sync_db_engine(
                 database_url=db_url,
                 pool_size=pool_size,
                 max_overflow=max_overflow,
             )
 
-            writer_db = ClipScribeWriterDB(engine=db_engine)
-            reader_db = ClipScribeReaderDB(engine=db_engine)
+            writer_db = ClipScribeWriterDB(engine=sync_db_engine)
+            reader_db = ClipScribeReaderDB(engine=sync_db_engine)
 
             self.writer_db = writer_db
             self.reader_db = reader_db

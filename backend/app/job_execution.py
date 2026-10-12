@@ -54,7 +54,7 @@ def build_task_payload(
     }
 
 
-def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
+def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
     """Run one job to a terminal state, recording lifecycle on the ``jobs`` row.
 
     ``builder`` is the long-lived, model-loaded builder (the API's in inline
@@ -78,6 +78,7 @@ def run_job_core(builder: "ClipScribeBuilder", payload: dict[str, Any]) -> None:
     from clip_scribe.utils.clip_scribe_video_storage import make_video_storage
 
     writer = builder.writer_db
+
     job_id = payload["job_id"]
     run_id = payload["run_id"]
 

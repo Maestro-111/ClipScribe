@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from contextvars import ContextVar
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import redis
 
@@ -163,7 +163,7 @@ class RedisProgressReporter(ProgressReporter):
         try:
             self._client.xadd(
                 self._key,
-                entry,
+                cast(Any, entry),
                 maxlen=self._settings.STREAM_MAXLEN,
                 approximate=True,
             )
@@ -317,8 +317,12 @@ class JobLogStreamHandler(logging.Handler):
         try:
             self._client.xadd(
                 stream_key(job_id),
-                _entry(
-                    "log", {"level": record.levelname, "message": record.getMessage()}
+                cast(
+                    Any,
+                    _entry(
+                        "log",
+                        {"level": record.levelname, "message": record.getMessage()},
+                    ),
                 ),
                 maxlen=self._settings.STREAM_MAXLEN,
                 approximate=True,

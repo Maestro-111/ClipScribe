@@ -17,11 +17,15 @@ environment, so the API route lazy-imports the chat service.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from clip_scribe.db import ClipScribeReaderDB
-from clip_scribe.parser.tools import build_job_tools, build_tools
+from clip_scribe.parser.tools import build_async_tools, build_job_tools
+
+if TYPE_CHECKING:
+    from clip_scribe.db import ClipScribeAsyncReaderDB
 
 ADVISORY_SYSTEM_PROMPT = """You are a senior creative strategist helping a user \
 understand and improve ONE advertising video that has already been analyzed and \
@@ -51,9 +55,11 @@ You are limited to THIS video. If asked to compare to other videos or campaigns,
 explain that you only have access to this run's data."""
 
 
-def build_advisory_agent(model: ChatOpenAI, reader_db: ClipScribeReaderDB, run_id: str):
+def build_advisory_agent(
+    model: ChatOpenAI, reader_db: ClipScribeAsyncReaderDB, run_id: str
+):
     """Build a ReAct agent scoped to ``run_id`` with the advisory tool set."""
-    tools = build_tools(reader_db, run_id, tool_group="advisory")
+    tools = build_async_tools(reader_db, run_id, tool_group="advisory")
     return create_react_agent(model, tools)
 
 
@@ -97,7 +103,7 @@ campaigns, explain that you only have access to this job's runs."""
 
 
 def build_job_advisory_agent(
-    model: ChatOpenAI, reader_db: ClipScribeReaderDB, runs: list[dict]
+    model: ChatOpenAI, reader_db: ClipScribeAsyncReaderDB, runs: list[dict]
 ):
     """Build a ReAct agent spanning every completed run in one batch job.
 

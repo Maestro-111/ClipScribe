@@ -16,7 +16,6 @@ from sqlalchemy import create_engine
 from app import exports
 from app.deps import get_reader, get_writer
 from app.main import app
-from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import metadata_obj, parser_results_table, runs_table
 from clip_scribe.db.writer import ClipScribeWriterDB
 
@@ -138,11 +137,12 @@ def test_exports_escape_formula_like_text_cells():
 
 
 @pytest.fixture
-def ctx(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'exp.db'}")
+def ctx(tmp_path, async_db_adapters):
+    database_url = f"sqlite:///{tmp_path / 'exp.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
-    reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
+    async_reader, async_writer = async_db_adapters(database_url)
 
     with engine.begin() as conn:
         conn.execute(
@@ -180,8 +180,8 @@ def ctx(tmp_path):
         created_by="local",
     )
 
-    app.dependency_overrides[get_reader] = lambda: reader
-    app.dependency_overrides[get_writer] = lambda: writer
+    app.dependency_overrides[get_reader] = lambda: async_reader
+    app.dependency_overrides[get_writer] = lambda: async_writer
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
@@ -228,11 +228,11 @@ def test_export_unknown_404(ctx):
     assert ctx.get("/jobs/nope/export").status_code == 404
 
 
-def test_job_export_no_completed_runs_409(ctx, tmp_path):
+def test_job_export_no_completed_runs_409(ctx, tmp_path, async_db_adapters):
     # A fresh parent whose only child is still running → nothing to export.
-    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    database_url = f"sqlite:///{tmp_path / 'empty.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
-    reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
     writer.create_job(job_id="p2", mode="full", video_name="batch", created_by="local")
     writer.create_job(
@@ -242,5 +242,6 @@ def test_job_export_no_completed_runs_409(ctx, tmp_path):
         status="running",
         created_by="local",
     )
-    app.dependency_overrides[get_reader] = lambda: reader
+    async_reader, _ = async_db_adapters(database_url)
+    app.dependency_overrides[get_reader] = lambda: async_reader
     assert ctx.get("/jobs/p2/export").status_code == 409

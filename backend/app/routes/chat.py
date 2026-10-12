@@ -46,7 +46,7 @@ def get_chat_service(request: Request) -> "ChatService":
 
 
 @router.post("/{run_id}/chat", summary="Ask the agent about the run (SSE stream)")
-def post_run_chat(
+async def post_run_chat(
     run_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
@@ -65,12 +65,12 @@ def post_run_chat(
     response_model=ChatSessionsResponse,
     summary="List advisory-chat sessions for a run",
 )
-def list_sessions(
+async def list_sessions(
     run_id: str,
     service: ChatService = Depends(get_chat_service),
     _run: dict = Depends(require_owned_run),
 ) -> ChatSessionsResponse:
-    sessions = [ChatSession(**s) for s in service.list_sessions(run_id)]
+    sessions = [ChatSession(**s) for s in await service.list_sessions(run_id)]
     return ChatSessionsResponse(run_id=run_id, sessions=sessions)
 
 
@@ -79,13 +79,13 @@ def list_sessions(
     response_model=ChatHistoryResponse,
     summary="Get one chat session's transcript",
 )
-def get_session(
+async def get_session(
     run_id: str,
     session_id: str,
     service: ChatService = Depends(get_chat_service),
     _run: dict = Depends(require_owned_run),
 ) -> ChatHistoryResponse:
-    messages = [ChatMessage(**m) for m in service.get_history(run_id, session_id)]
+    messages = [ChatMessage(**m) for m in await service.get_history(run_id, session_id)]
     return ChatHistoryResponse(run_id=run_id, session_id=session_id, messages=messages)
 
 
@@ -94,26 +94,26 @@ def get_session(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a chat session",
 )
-def delete_session(
+async def delete_session(
     run_id: str,
     session_id: str,
     service: ChatService = Depends(get_chat_service),
     _run: dict = Depends(require_owned_run),
 ) -> None:
-    service.delete_session(run_id, session_id)
+    await service.delete_session(run_id, session_id)
 
 
 # ── Job-level advisory chat (spans every completed run in a batch job) ───────
 
 
 @job_router.post("/{job_id}/chat", summary="Ask the agent about the job (SSE)")
-def post_job_chat(
+async def post_job_chat(
     job_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
     _job: dict = Depends(require_owned_job),
 ) -> StreamingResponse:
-    runs = service.resolve_job_runs(job_id)
+    runs = await service.resolve_job_runs(job_id)
     if not runs:
         raise ProblemException(
             status=409,
@@ -133,12 +133,12 @@ def post_job_chat(
     response_model=JobChatSessionsResponse,
     summary="List job-level chat sessions",
 )
-def list_job_sessions(
+async def list_job_sessions(
     job_id: str,
     service: ChatService = Depends(get_chat_service),
     _job: dict = Depends(require_owned_job),
 ) -> JobChatSessionsResponse:
-    sessions = [ChatSession(**s) for s in service.list_job_sessions(job_id)]
+    sessions = [ChatSession(**s) for s in await service.list_job_sessions(job_id)]
     return JobChatSessionsResponse(job_id=job_id, sessions=sessions)
 
 
@@ -147,13 +147,15 @@ def list_job_sessions(
     response_model=JobChatHistoryResponse,
     summary="Get one job-level chat session's transcript",
 )
-def get_job_session(
+async def get_job_session(
     job_id: str,
     session_id: str,
     service: ChatService = Depends(get_chat_service),
     _job: dict = Depends(require_owned_job),
 ) -> JobChatHistoryResponse:
-    messages = [ChatMessage(**m) for m in service.get_job_history(job_id, session_id)]
+    messages = [
+        ChatMessage(**m) for m in await service.get_job_history(job_id, session_id)
+    ]
     return JobChatHistoryResponse(
         job_id=job_id, session_id=session_id, messages=messages
     )
@@ -164,10 +166,10 @@ def get_job_session(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a job-level chat session",
 )
-def delete_job_session(
+async def delete_job_session(
     job_id: str,
     session_id: str,
     service: ChatService = Depends(get_chat_service),
     _job: dict = Depends(require_owned_job),
 ) -> None:
-    service.delete_job_session(job_id, session_id)
+    await service.delete_job_session(job_id, session_id)

@@ -104,7 +104,7 @@ class _Reader:
     def __init__(self, status: str) -> None:
         self._status = status
 
-    def get_job(self, job_id: str) -> dict:
+    async def get_job(self, job_id: str) -> dict:
         return {"status": self._status}
 
 
@@ -127,7 +127,7 @@ def test_sse_replays_history_and_closes_on_terminal_event(shared_redis) -> None:
     reporter.emit(ProgressEvent.JOB_COMPLETED, {"run_id": "R1"})
 
     frames = asyncio.run(
-        _collect(_job_event_stream("redis://x", "j", _Reader("running")))
+        _collect(_job_event_stream("redis://x", "j", _Reader("running"), 15_000))
     )
     # Full replay for a late subscriber, then the stream ends on the terminal
     # event without blocking.
@@ -151,7 +151,7 @@ def test_sse_reemits_started_snapshot_after_trim(shared_redis) -> None:
     shared_redis.xdel(stream_key("j"), started_id)
 
     frames = asyncio.run(
-        _collect(_job_event_stream("redis://x", "j", _Reader("running")))
+        _collect(_job_event_stream("redis://x", "j", _Reader("running"), 15_000))
     )
     assert _sse_types(frames) == ["job.started", "phase.started", "job.completed"]
     started = json.loads(frames[0][len("data: ") :])["data"]
@@ -165,7 +165,7 @@ def test_sse_closes_via_terminal_job_row_backstop(shared_redis) -> None:
     reporter.emit(ProgressEvent.JOB_STARTED, {"video_name": "ad"})
 
     frames = asyncio.run(
-        _collect(_job_event_stream("redis://x", "j", _Reader("canceled")))
+        _collect(_job_event_stream("redis://x", "j", _Reader("canceled"), 15_000))
     )
     assert _sse_types(frames) == ["job.started"]
 

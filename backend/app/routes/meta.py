@@ -12,7 +12,14 @@ from typing import Any
 
 import yaml  # type: ignore
 from fastapi import APIRouter, Depends
+from starlette.concurrency import run_in_threadpool
 
+from app.deps import (
+    current_user_id,
+    get_reader,
+    get_writer,
+    video_storage_dep,
+)
 from app.models import (
     InputsResponse,
     InputVideo,
@@ -20,19 +27,15 @@ from app.models import (
     PlatformParamField,
     PlatformsResponse,
 )
-from app.deps import (
-    current_user_id,
-    get_reader,
-    get_writer,
-    video_storage_dep,
-)
 from app.settings import PROJECT_ROOT
-from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
 
 router = APIRouter(tags=["metadata"])
 
-CONFIG_PATH = PROJECT_ROOT / "src" / "clip_scribe" / "configs" / "clip_scribe.yaml"
+CONFIG_PATH = (
+    PROJECT_ROOT / "clip_scribe" / "clip_scribe_core" / "configs" / "clip_scribe.yaml"
+)
 
 # Static per-platform param registry. Adding a platform here keeps the form,
 # request validation, and build_platform kwargs aligned.
@@ -67,7 +70,7 @@ _PLATFORM_REGISTRY: dict[str, list[PlatformParamField]] = {
 
 
 @router.get("/platforms", response_model=PlatformsResponse, summary="List platforms")
-def list_platforms() -> PlatformsResponse:
+async def list_platforms() -> PlatformsResponse:
     return PlatformsResponse(
         platforms=[
             PlatformInfo(name=name, params=params)
@@ -84,9 +87,9 @@ def get_defaults() -> dict[str, Any]:
 
 
 @router.get("/inputs", response_model=InputsResponse, summary="List input videos")
-def list_inputs(
-    reader: ClipScribeReaderDB = Depends(get_reader),
-    writer: ClipScribeWriterDB = Depends(get_writer),
+async def list_inputs(
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    writer: ClipScribeAsyncWriterDB = Depends(get_writer),
     storage: VideoStorage = Depends(video_storage_dep),
     user_id: str = Depends(current_user_id),
 ) -> InputsResponse:
@@ -99,9 +102,13 @@ def list_inputs(
     row never affects run history.
     """
     videos: list[InputVideo] = []
-    for row in reader.list_videos(user_id):
+    for row in await reader.list_videos(user_id):
         stored_key = row["stored_key"]
-        if storage.exists(stored_key):
+
+        if await run_in_threadpool(
+            storage.exists,
+            stored_key,
+        ):
             videos.append(
                 InputVideo(
                     name=row["original_name"],
@@ -110,5 +117,5 @@ def list_inputs(
                 )
             )
         else:
-            writer.delete_video(user_id, stored_key)
+            await writer.delete_video(user_id, stored_key)
     return InputsResponse(videos=videos)

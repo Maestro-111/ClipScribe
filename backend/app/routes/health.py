@@ -16,12 +16,12 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz", summary="Liveness probe")
-def healthz() -> dict[str, str]:
+async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.get("/readyz", summary="Readiness probe")
-def readyz(request: Request) -> dict[str, object]:
+async def readyz(request: Request) -> dict[str, object]:
     state = request.app.state
     settings = state.settings
 
@@ -35,7 +35,7 @@ def readyz(request: Request) -> dict[str, object]:
         try:
             # get_latest_run() is a public read that hits the DB and returns
             # None on an empty DB without raising — a cheap reachability ping.
-            reader.get_latest_run()
+            await reader.get_latest_run()
             database_ok = True
         except Exception:
             database_ok = False
@@ -43,13 +43,20 @@ def readyz(request: Request) -> dict[str, object]:
     # Redis reachability — the live-progress transport (step 9) and, in celery
     # mode, the Celery broker.
     redis_ok = False
+    client = None
     try:
-        import redis
+        import redis.asyncio as aioredis
 
-        client = redis.Redis.from_url(settings.redis_url)
-        redis_ok = bool(client.ping())
+        client = aioredis.Redis.from_url(settings.redis_url)
+        redis_ok = bool(await client.ping())
     except Exception:
         redis_ok = False
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001 - readiness is already false
+                redis_ok = False
 
     # Inline mode runs the engine in-process, so it must have models loaded;
     # celery mode enqueues to a worker and is ready without them.

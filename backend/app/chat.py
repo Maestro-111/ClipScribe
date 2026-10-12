@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import yaml
 from langchain_core.messages import (
@@ -38,22 +38,17 @@ from clip_scribe.parser.advisory import (
 
 if TYPE_CHECKING:
     from app.settings import Settings
-    from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+    from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 
 logger = logging.getLogger("clip_scribe")
 
 _CONFIG_PATH = (
     Path(__file__).resolve().parents[1]
-    / "src"
     / "clip_scribe"
+    / "clip_scribe_core"
     / "configs"
     / "clip_scribe.yaml"
 )
-
-# Chat answers run longer than a one-line verdict, so we lift the token cap above
-# the parser's default while reusing its model + temperature.
-_CHAT_MAX_TOKENS = 1500
-_RECURSION_LIMIT = 25
 
 
 def _sse(data: dict) -> str:
@@ -72,9 +67,9 @@ def _load_agent_config() -> dict:
 class ChatService:
     def __init__(
         self,
-        reader: "ClipScribeReaderDB",
-        writer: "ClipScribeWriterDB",
-        settings: "Settings",
+        reader: ClipScribeAsyncReaderDB,
+        writer: ClipScribeAsyncWriterDB,
+        settings: Settings,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -85,26 +80,29 @@ class ChatService:
             model=agent_cfg.get("llm", "gpt-5.4"),
             temperature=agent_cfg.get("temperature", 0.2),
             timeout=60,
-            max_completion_tokens=_CHAT_MAX_TOKENS,
+            max_completion_tokens=self.settings.CHAT_MAX_TOKENS,
             max_retries=agent_cfg.get("max_retries", 5),
         )
 
     # ── per-run inspector chat (scoped to one run) ──────────────────────────
 
-    def list_sessions(self, run_id: str) -> list[dict]:
-        return self.reader.get_chat_sessions(run_id)
+    async def list_sessions(self, run_id: str) -> list[dict]:
+        return await self.reader.get_chat_sessions(run_id)
 
-    def get_history(self, run_id: str, session_id: str) -> list[dict]:
-        return self.reader.get_chat_messages(run_id, session_id)
+    async def get_history(self, run_id: str, session_id: str) -> list[dict]:
+        return await self.reader.get_chat_messages(run_id, session_id)
 
-    def delete_session(self, run_id: str, session_id: str) -> int:
-        return self.writer.delete_chat_session(run_id, session_id)
+    async def delete_session(self, run_id: str, session_id: str) -> int:
+        return await self.writer.delete_chat_session(run_id, session_id)
 
-    def stream_run(self, run_id: str, session_id: str, message: str) -> Iterator[str]:
+    async def stream_run(
+        self, run_id: str, session_id: str, message: str
+    ) -> AsyncIterator[str]:
         """Stream one per-run chat turn (SSE frames) and persist the transcript."""
-        history = self.reader.get_chat_messages(run_id, session_id)
+        history = await self.reader.get_chat_messages(run_id, session_id)
         agent = build_advisory_agent(self.model, self.reader, run_id)
-        yield from self._stream_turn(
+
+        async for event in self._stream_turn(
             history=history,
             system_prompt=ADVISORY_SYSTEM_PROMPT,
             agent=agent,
@@ -112,29 +110,30 @@ class ChatService:
             message=message,
             persist_scope={"run_id": run_id},
             log_label=f"run {run_id}",
-        )
+        ):
+            yield event
 
     # ── job-level chat (spans every completed run in a batch job) ────────────
 
-    def list_job_sessions(self, job_id: str) -> list[dict]:
-        return self.reader.get_job_chat_sessions(job_id)
+    async def list_job_sessions(self, job_id: str) -> list[dict]:
+        return await self.reader.get_job_chat_sessions(job_id)
 
-    def get_job_history(self, job_id: str, session_id: str) -> list[dict]:
-        return self.reader.get_job_chat_messages(job_id, session_id)
+    async def get_job_history(self, job_id: str, session_id: str) -> list[dict]:
+        return await self.reader.get_job_chat_messages(job_id, session_id)
 
-    def delete_job_session(self, job_id: str, session_id: str) -> int:
-        return self.writer.delete_job_chat_session(job_id, session_id)
+    async def delete_job_session(self, job_id: str, session_id: str) -> int:
+        return await self.writer.delete_job_chat_session(job_id, session_id)
 
-    def resolve_job_runs(self, job_id: str) -> list[dict]:
+    async def resolve_job_runs(self, job_id: str) -> list[dict]:
         """Completed runs of a job as ``[{run_id, video_name}]``, oldest first.
 
         Walks the batch children (or the job itself for a single leaf job) and
         keeps only completed runs, which are the ones with inspectable data.
         """
-        job = self.reader.get_job(job_id)
+        job = await self.reader.get_job(job_id)
         if job is None:
             return []
-        children = self.reader.get_child_jobs(job_id)
+        children = await self.reader.get_child_jobs(job_id)
         candidates = children if children else [job]
         return [
             {"run_id": c["run_id"], "video_name": c.get("video_name") or c["run_id"]}
@@ -142,13 +141,13 @@ class ChatService:
             if c.get("status") == "completed" and c.get("run_id")
         ]
 
-    def stream_job(
+    async def stream_job(
         self, job_id: str, session_id: str, message: str, runs: list[dict]
-    ) -> Iterator[str]:
+    ) -> AsyncIterator[str]:
         """Stream one job-level chat turn (SSE frames) and persist the transcript."""
-        history = self.reader.get_job_chat_messages(job_id, session_id)
+        history = await self.reader.get_job_chat_messages(job_id, session_id)
         agent = build_job_advisory_agent(self.model, self.reader, runs)
-        yield from self._stream_turn(
+        async for event in self._stream_turn(
             history=history,
             system_prompt=JOB_ADVISORY_SYSTEM_PROMPT,
             agent=agent,
@@ -156,11 +155,12 @@ class ChatService:
             message=message,
             persist_scope={"job_id": job_id},
             log_label=f"job {job_id}",
-        )
+        ):
+            yield event
 
     # ── shared streaming machinery ──────────────────────────────────────────
 
-    def _stream_turn(
+    async def _stream_turn(
         self,
         *,
         history: list[dict],
@@ -170,11 +170,11 @@ class ChatService:
         message: str,
         persist_scope: dict[str, str],
         log_label: str,
-    ) -> Iterator[str]:
+    ) -> AsyncIterator[str]:
         """Drive one agent turn: replay history, stream tokens/tools, persist.
 
-        Runs in a threadpool (StreamingResponse over a sync generator), so the
-        blocking LLM stream + DB writes here never block the event loop.
+        The async agent stream and async DB writes yield control while waiting,
+        so each SSE frame can be forwarded without blocking the event loop.
         ``persist_scope`` is the keying for ``add_chat_message`` — ``{run_id}``
         for the per-run chat, ``{job_id}`` for the job chat.
         """
@@ -187,17 +187,21 @@ class ChatService:
                 lc_messages.append(AIMessage(content=m["content"]))
         lc_messages.append(HumanMessage(content=message))
 
-        self.writer.add_chat_message(
-            session_id=session_id, role="user", content=message, **persist_scope
+        await self.writer.add_chat_message(
+            session_id=session_id,
+            role="user",
+            content=message,
+            run_id=persist_scope.get("run_id"),
+            job_id=persist_scope.get("job_id"),
         )
         yield _sse({"type": "session", "session_id": session_id})
 
         answer_parts: list[str] = []
         seen_tools: set[str] = set()
         try:
-            for chunk, _meta in agent.stream(
+            async for chunk, _meta in agent.astream(
                 {"messages": lc_messages},
-                {"recursion_limit": _RECURSION_LIMIT},
+                {"recursion_limit": self.settings.RECURSION_LIMIT},
                 stream_mode="messages",
             ):
                 if not isinstance(chunk, AIMessageChunk):
@@ -221,11 +225,12 @@ class ChatService:
 
         answer = "".join(answer_parts).strip()
         if answer:
-            self.writer.add_chat_message(
+            await self.writer.add_chat_message(
                 session_id=session_id,
                 role="assistant",
                 content=answer,
+                run_id=persist_scope.get("run_id"),
+                job_id=persist_scope.get("job_id"),
                 tool_calls=sorted(seen_tools) or None,
-                **persist_scope,
             )
         yield _sse({"type": "done"})

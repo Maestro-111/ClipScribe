@@ -6,6 +6,7 @@ session GET/DELETE + guard-rail routes. The streaming POST is not exercised
 end-to-end (needs an OpenAI call); we assert its 404 / 409 / 422 guards.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -56,11 +57,13 @@ def _parser_rows(run_id: str, first_passes: bool) -> list[dict]:
 
 
 @pytest.fixture
-def ctx(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'jobchat.db'}")
+def ctx(tmp_path, async_db_adapters):
+    database_url = f"sqlite:///{tmp_path / 'jobchat.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
     reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
+    async_reader, async_writer = async_db_adapters(database_url)
 
     with engine.begin() as conn:
         conn.execute(
@@ -99,17 +102,17 @@ def ctx(tmp_path):
 
     # Fake chat service so the GET/DELETE/POST-guard routes need no LLM client.
     class FakeChatService:
-        def list_job_sessions(self, job_id):
-            return reader.get_job_chat_sessions(job_id)
+        async def list_job_sessions(self, job_id):
+            return await async_reader.get_job_chat_sessions(job_id)
 
-        def get_job_history(self, job_id, session_id):
-            return reader.get_job_chat_messages(job_id, session_id)
+        async def get_job_history(self, job_id, session_id):
+            return await async_reader.get_job_chat_messages(job_id, session_id)
 
-        def delete_job_session(self, job_id, session_id):
-            return writer.delete_job_chat_session(job_id, session_id)
+        async def delete_job_session(self, job_id, session_id):
+            return await async_writer.delete_job_chat_session(job_id, session_id)
 
-        def resolve_job_runs(self, job_id):
-            children = reader.get_child_jobs(job_id)
+        async def resolve_job_runs(self, job_id):
+            children = await async_reader.get_child_jobs(job_id)
             return [
                 {"run_id": c["run_id"], "video_name": c["video_name"]}
                 for c in children
@@ -119,11 +122,11 @@ def ctx(tmp_path):
         def stream_job(self, *a, **k):  # pragma: no cover - not hit by guard tests
             raise AssertionError("stream_job should not run in guard tests")
 
-    app.dependency_overrides[get_reader] = lambda: reader
-    app.dependency_overrides[get_writer] = lambda: writer
+    app.dependency_overrides[get_reader] = lambda: async_reader
+    app.dependency_overrides[get_writer] = lambda: async_writer
     app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
     with TestClient(app) as client:
-        yield client, reader, writer
+        yield client, reader, writer, async_reader
     app.dependency_overrides.clear()
 
 
@@ -131,7 +134,7 @@ def ctx(tmp_path):
 
 
 def test_job_chat_roundtrip_and_isolation(ctx):
-    _, reader, writer = ctx
+    _, reader, writer, _ = ctx
     writer.add_chat_message(job_id=PARENT, session_id="s1", role="user", content="hi")
     writer.add_chat_message(
         job_id=PARENT,
@@ -166,15 +169,19 @@ def _tool(reader, name):
     return next(t for t in build_job_tools(reader, RUNS) if t.name == name)
 
 
+def _invoke(reader, name: str, args: dict) -> object:
+    return json.loads(asyncio.run(_tool(reader, name).ainvoke(args)))
+
+
 def test_list_job_runs(ctx):
-    _, reader, _ = ctx
-    out = json.loads(_tool(reader, "list_job_runs").invoke({}))
+    _, _, _, async_reader = ctx
+    out = _invoke(async_reader, "list_job_runs", {})
     assert {r["video_name"] for r in out} == {"first.mp4", "second.mp4"}
 
 
 def test_job_scorecard_aggregates(ctx):
-    _, reader, _ = ctx
-    card = json.loads(_tool(reader, "query_job_scorecard").invoke({}))
+    _, _, _, async_reader = ctx
+    card = _invoke(async_reader, "query_job_scorecard", {})
     # 1 pass in run1, 0 in run2 → 1 of 4 overall.
     assert card["overall"] == {"passed": 1, "total": 4, "pass_rate": 0.25}
     by_run = {r["video_name"]: r["passed"] for r in card["by_run"]}
@@ -182,25 +189,24 @@ def test_job_scorecard_aggregates(ctx):
 
 
 def test_job_parser_results_across_and_single_run(ctx):
-    _, reader, _ = ctx
-    tool = _tool(reader, "query_parser_results")
-    everything = json.loads(tool.invoke({}))
+    _, _, _, async_reader = ctx
+    everything = _invoke(async_reader, "query_parser_results", {})
     assert len(everything) == 4
     assert {r["run_id"] for r in everything} == {RUN1, RUN2}
 
-    only_one = json.loads(tool.invoke({"run_id": RUN1}))
+    only_one = _invoke(async_reader, "query_parser_results", {"run_id": RUN1})
     assert {r["run_id"] for r in only_one} == {RUN1}
 
-    failed = json.loads(tool.invoke({"only_failed": True}))
+    failed = _invoke(async_reader, "query_parser_results", {"only_failed": True})
     # SQLite returns booleans as 0/1, so test truthiness, not identity.
     assert failed and all(not r["evaluation"] for r in failed)
 
 
 def test_job_tool_rejects_foreign_run_id(ctx):
-    _, reader, _ = ctx
-    res = json.loads(_tool(reader, "query_parser_results").invoke({"run_id": "other"}))
+    _, _, _, async_reader = ctx
+    res = _invoke(async_reader, "query_parser_results", {"run_id": "other"})
     assert "error" in res
-    res2 = json.loads(_tool(reader, "query_global_stats").invoke({"run_id": "other"}))
+    res2 = _invoke(async_reader, "query_global_stats", {"run_id": "other"})
     assert "error" in res2
 
 
@@ -208,7 +214,7 @@ def test_job_tool_rejects_foreign_run_id(ctx):
 
 
 def test_job_chat_session_endpoints(ctx):
-    client, _, writer = ctx
+    client, _, writer, _ = ctx
     writer.add_chat_message(job_id=PARENT, session_id="s1", role="user", content="q1")
     writer.add_chat_message(
         job_id=PARENT, session_id="s1", role="assistant", content="a1"
@@ -226,22 +232,22 @@ def test_job_chat_session_endpoints(ctx):
 
 
 def test_job_chat_404_unknown_job(ctx):
-    client, _, _ = ctx
+    client, _, _, _ = ctx
     assert client.get("/jobs/nope/chat/sessions").status_code == 404
     assert client.post("/jobs/nope/chat", json={"message": "hi"}).status_code == 404
 
 
 def test_job_chat_post_empty_message_422(ctx):
-    client, _, _ = ctx
+    client, _, _, _ = ctx
     assert client.post(f"/jobs/{PARENT}/chat", json={"message": ""}).status_code == 422
 
 
-def test_job_chat_409_when_no_completed_runs(ctx, tmp_path):
-    client, _, _ = ctx
+def test_job_chat_409_when_no_completed_runs(ctx, tmp_path, async_db_adapters):
+    client, _, _, _ = ctx
     # New parent with only a running child → nothing to analyze.
-    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    database_url = f"sqlite:///{tmp_path / 'empty.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
-    reader = ClipScribeReaderDB(engine=engine)
     writer = ClipScribeWriterDB(engine=engine)
     writer.create_job(job_id="p2", mode="full", video_name="batch", created_by="local")
     writer.create_job(
@@ -251,10 +257,11 @@ def test_job_chat_409_when_no_completed_runs(ctx, tmp_path):
         status="running",
         created_by="local",
     )
-    app.dependency_overrides[get_reader] = lambda: reader
+    async_reader, _ = async_db_adapters(database_url)
+    app.dependency_overrides[get_reader] = lambda: async_reader
 
     class Svc:
-        def resolve_job_runs(self, job_id):
+        async def resolve_job_runs(self, job_id):
             return []
 
     app.dependency_overrides[get_chat_service] = lambda: Svc()

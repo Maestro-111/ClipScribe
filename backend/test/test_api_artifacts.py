@@ -16,19 +16,18 @@ from app.deps import (
 )
 from app.main import app
 from app.settings import Settings
-from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import jobs_table, metadata_obj, runs_table
-from clip_scribe.db.writer import ClipScribeWriterDB
 
 RUN_ID = "r1"
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, async_db_adapters):
     os.environ["CLIPSCRIBE_API_LOAD_MODELS"] = "false"
     settings_mod.get_settings.cache_clear()
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'art.db'}")
+    database_url = f"sqlite:///{tmp_path / 'art.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
     with engine.begin() as conn:
         # Owning job so run_owner() resolves to "local" and the ownership guard
@@ -46,8 +45,7 @@ def client(tmp_path):
             runs_table.insert(),
             {"run_id": RUN_ID, "video_name": "ad.mp4", "video_path": "ad.mp4"},
         )
-    reader = ClipScribeReaderDB(engine=engine)
-    writer = ClipScribeWriterDB(engine=engine)
+    async_reader, async_writer = async_db_adapters(database_url)
 
     input_dir = tmp_path / "input"
     input_dir.mkdir()
@@ -66,8 +64,8 @@ def client(tmp_path):
     orig_root = art_mod.PROJECT_ROOT
     art_mod.PROJECT_ROOT = tmp_path
 
-    app.dependency_overrides[get_reader] = lambda: reader
-    app.dependency_overrides[get_writer] = lambda: writer
+    app.dependency_overrides[get_reader] = lambda: async_reader
+    app.dependency_overrides[get_writer] = lambda: async_writer
     app.dependency_overrides[settings_dep] = lambda: settings
     with TestClient(app) as c:
         yield c

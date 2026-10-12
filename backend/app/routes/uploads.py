@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app.deps import (
     current_user_id,
@@ -28,27 +29,25 @@ from app.deps import (
 from app.errors import ProblemException
 from app.models import UploadedVideo, UploadResponse
 from app.settings import Settings
-from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
+from clip_scribe.db import ClipScribeAsyncWriterDB, ClipScribeAsyncReaderDB
 from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
 
 logger = logging.getLogger("clip_scribe")
 
 router = APIRouter(tags=["uploads"])
 
-# 1 MiB chunks: bounded memory while streaming arbitrarily large videos.
-_CHUNK = 1024 * 1024
-
 
 @router.post("/uploads", response_model=UploadResponse, summary="Upload video(s)")
-def upload_videos(
+async def upload_videos(
     files: list[UploadFile] = File(...),
     settings: Settings = Depends(settings_dep),
     storage: VideoStorage = Depends(video_storage_dep),
-    reader: ClipScribeReaderDB = Depends(get_reader),
-    writer: ClipScribeWriterDB = Depends(get_writer),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    writer: ClipScribeAsyncWriterDB = Depends(get_writer),
     user_id: str = Depends(current_user_id),
 ) -> UploadResponse:
     uploaded: list[UploadedVideo] = []
+    chunk_size = settings.VIDEO_CHUNK
 
     for file in files:
         # Strip any client-supplied path; keep only a bare filename.
@@ -68,19 +67,31 @@ def upload_videos(
 
         # Stream to a staging temp file while hashing, so bytes are never fully
         # buffered in memory and the hash is ready before we decide to keep it.
-        staged, content_hash, size = _stage_and_hash(storage, suffix, file)
+        staged, content_hash, size = await run_in_threadpool(
+            _stage_and_hash,
+            storage,
+            suffix,
+            file,
+            chunk_size,
+        )
+        existing = await reader.get_video_by_hash(user_id, content_hash)
 
-        existing = reader.get_video_by_hash(user_id, content_hash)
         if existing is not None:
             # Dedup hit: drop the staged copy, reuse the stored object.
-            staged.unlink(missing_ok=True)
-            writer.touch_video(user_id, content_hash)
+            await run_in_threadpool(staged.unlink, missing_ok=True)
+            await writer.touch_video(user_id, content_hash)
             stored_key = existing["stored_key"]
             original_name = existing["original_name"]
             logger.info("Deduplicated upload %s -> %s", name, stored_key)
         else:
-            stored_key = storage.commit(user_id, staged, suffix)
-            writer.insert_video(
+            stored_key = await run_in_threadpool(
+                storage.commit,
+                user_id,
+                staged,
+                suffix,
+            )
+
+            await writer.insert_video(
                 user_id=user_id,
                 content_hash=content_hash,
                 stored_key=stored_key,
@@ -97,7 +108,7 @@ def upload_videos(
 
 
 def _stage_and_hash(
-    storage: VideoStorage, suffix: str, file: UploadFile
+    storage: VideoStorage, suffix: str, file: UploadFile, chunk_size: int
 ) -> tuple[Path, str, int]:
     """Stream ``file`` into a staging temp file, returning (path, sha256, size)."""
     hasher = hashlib.sha256()
@@ -106,7 +117,7 @@ def _stage_and_hash(
     staged = Path(tmp_name)
     try:
         with open(fd, "wb") as out:
-            while chunk := file.file.read(_CHUNK):
+            while chunk := file.file.read(chunk_size):
                 out.write(chunk)
                 hasher.update(chunk)
                 size += len(chunk)

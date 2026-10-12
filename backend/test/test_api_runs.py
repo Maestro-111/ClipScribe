@@ -13,7 +13,6 @@ from sqlalchemy import create_engine
 from app import settings as settings_mod
 from app.deps import current_user_id, get_reader
 from app.main import app
-from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import (
     metadata_obj,
     runs_table,
@@ -32,11 +31,12 @@ RUN_ID = "r1"
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, async_db_adapters):
     os.environ["CLIPSCRIBE_API_LOAD_MODELS"] = "false"
     settings_mod.get_settings.cache_clear()
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    database_url = f"sqlite:///{tmp_path / 'runs.db'}"
+    engine = create_engine(database_url)
     metadata_obj.create_all(engine)
     with engine.begin() as conn:
         # A run is only reachable through the job that produced it; seed that
@@ -145,8 +145,8 @@ def client(tmp_path):
             },
         )
 
-    reader = ClipScribeReaderDB(engine=engine)
-    app.dependency_overrides[get_reader] = lambda: reader
+    async_reader, _ = async_db_adapters(database_url)
+    app.dependency_overrides[get_reader] = lambda: async_reader
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
