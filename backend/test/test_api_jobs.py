@@ -19,10 +19,10 @@ from app.job_runner import JobService
 from app.main import app
 from app.routes.jobs import get_job_service
 from app.settings import Settings
+from app.video_storage import LocalVideoStorage
 from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import metadata_obj
 from clip_scribe.db.writer import ClipScribeWriterDB
-from clip_scribe.utils.clip_scribe_video_storage import LocalVideoStorage
 
 
 class InlineExecutor:

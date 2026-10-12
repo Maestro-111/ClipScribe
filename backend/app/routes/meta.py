@@ -28,8 +28,8 @@ from app.models import (
     PlatformsResponse,
 )
 from app.settings import PROJECT_ROOT
+from app.video_storage import VideoStorage
 from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
-from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
 
 router = APIRouter(tags=["metadata"])
 

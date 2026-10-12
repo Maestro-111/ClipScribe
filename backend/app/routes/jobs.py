@@ -36,7 +36,7 @@ from app.models import (
     JobResponse,
 )
 from app.settings import get_settings
-from clip_scribe.utils.clip_scribe_video_storage import make_video_storage
+from app.video_storage import make_video_storage
 
 if TYPE_CHECKING:
     from app.settings import Settings

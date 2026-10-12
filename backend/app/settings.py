@@ -141,8 +141,8 @@ class Settings:
         )
 
         # The single storage selector, governing BOTH source videos and run
-        # artifacts (see src/utils/clip_scribe_video_storage.py and
-        # clip_scribe_artifacts.py):
+        # artifacts (see app/video_storage.py and
+        # clip_scribe/utils/clip_scribe_artifacts.py):
         #   "local" — files under input_dir / artifacts_dir (default; dev).
         #   "gcs"   — a cloud bucket; videos and artifacts share one bucket,
         #             separated by the videos/ and artifacts/ prefixes.

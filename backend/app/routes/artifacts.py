@@ -31,8 +31,8 @@ from app.deps import (
 )
 from app.errors import ProblemException
 from app.settings import PROJECT_ROOT, Settings
+from app.video_storage import VideoStorage
 from clip_scribe.utils.clip_scribe_artifacts import ArtifactUploader, run_artifact_dir
-from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
 
 router = APIRouter(prefix="/runs", tags=["artifacts"])
 

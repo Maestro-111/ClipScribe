@@ -2,8 +2,8 @@
 
 import pytest
 
-from clip_scribe.utils import clip_scribe_video_storage as vs_mod
-from clip_scribe.utils.clip_scribe_video_storage import (
+from app import video_storage as vs_mod
+from app.video_storage import (
     GCSVideoStorage,
     LocalVideoStorage,
     make_video_storage,

@@ -1,8 +1,8 @@
 """Video storage seam: where source videos live before extraction.
 
-This mirrors the :mod:`src.utils.clip_scribe_artifacts` upload seam, but for the
-*input* side. The core never learns whether a video lives on a local disk or in
-a cloud bucket — it always receives a plain local filesystem path from
+This mirrors the :mod:`clip_scribe.utils.clip_scribe_artifacts` upload seam, but
+for the *input* side. The core never learns whether a video lives on a local disk
+or in a cloud bucket — it always receives a plain local filesystem path from
 :meth:`VideoStorage.materialize` and hands it to OpenCV / SAM / Whisper, which
 all need a real seekable file.
 
@@ -45,11 +45,11 @@ logger = logging.getLogger("clip_scribe")
 # How long a signed GET URL stays valid. Kept short: the browser fetches a fresh
 # one every time the run inspector mounts (the <video> points at our API route,
 # not the signed URL), so the only stale case is a page left open past this
-# window — a refresh reissues it. See src/utils/clip_scribe_artifacts.py.
+# window — a refresh reissues it. See clip_scribe/utils/clip_scribe_artifacts.py.
 SIGNED_URL_TTL = timedelta(minutes=15)
 
 
-def _make_gcs_client() -> "storage.Client":  # pragma: no cover - thin SDK wrapper
+def _make_gcs_client() -> storage.Client:  # pragma: no cover - thin SDK wrapper
     """Create a real GCS client. Isolated so tests can monkeypatch it.
 
     Credentials come from ``GOOGLE_APPLICATION_CREDENTIALS`` (the local

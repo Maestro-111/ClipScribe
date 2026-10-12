@@ -75,7 +75,7 @@ def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
     )
     from app.settings import get_settings
     from clip_scribe.utils.clip_scribe_cancel import JobCanceled
-    from clip_scribe.utils.clip_scribe_video_storage import make_video_storage
+    from app.video_storage import make_video_storage
 
     writer = builder.writer_db
 

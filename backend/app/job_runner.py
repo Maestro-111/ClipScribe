@@ -32,7 +32,7 @@ from app.models import (
     JobResponse,
     JobStatus,
 )
-from clip_scribe.utils.clip_scribe_video_storage import VideoStorage
+from app.video_storage import VideoStorage
 from clip_scribe.utils.ids import new_ulid
 
 if TYPE_CHECKING:

@@ -39,7 +39,7 @@ TRACKED_VIDEO_NAME = "tracked_output.mp4"
 ARTIFACT_BUNDLE_NAME = "artifacts.tar.gz"
 
 # Signed-URL lifetime, matching the video-storage seam (short by design; the
-# frontend refetches on every inspector mount). See clip_scribe_video_storage.
+# frontend refetches on every inspector mount). See app.video_storage.
 SIGNED_URL_TTL = timedelta(minutes=15)
 
 

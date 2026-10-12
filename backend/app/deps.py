@@ -18,7 +18,7 @@ from clip_scribe.utils.clip_scribe_artifacts import (
     ArtifactUploader,
     make_artifact_uploader,
 )
-from clip_scribe.utils.clip_scribe_video_storage import VideoStorage, make_video_storage
+from app.video_storage import VideoStorage, make_video_storage
 
 if TYPE_CHECKING:
     from concurrent.futures import Future, ThreadPoolExecutor
