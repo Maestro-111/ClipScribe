@@ -31,8 +31,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/backend/.venv \
     PATH="/app/backend/.venv/bin:$PATH" \
-    # backend/ on the import path so `app` and `src` (incl. the src.-prefixed
-    # sam2/dino trees) resolve like a local run from backend/.
+    # backend/ on the import path so `app` and `clip_scribe` resolve like a
+    # local run from backend/.
     PYTHONPATH=/app/backend \
     # Centralize every env-driven model cache under checkpoints/ (one mount in
     # dev, one baked layer in prod). Whisper uses an explicit download_root in
@@ -59,7 +59,7 @@ RUN uv pip install --no-cache \
 # Full core source: extractor / ocr / dino / sam2 / parser / db / utils, the app
 # package (Celery task + job lifecycle), the CLI entry, and prewarm.
 COPY backend/app ./app
-COPY backend/src ./src
+COPY backend/clip_scribe ./clip_scribe
 COPY backend/main.py ./main.py
 COPY backend/scripts ./scripts
 COPY backend/docker/core/cpu/entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -42,13 +42,14 @@ carries over unchanged:
   every job a worker process handles. This is what makes a *warm* worker pool
   (below) worth it.
 - **Source-video storage seam already exists** (`web-app-plan` §9.1).
-  `backend/src/utils/clip_scribe_video_storage.py` gives the API an ingest contract
-  (stage/hash/commit) and the worker a materialization contract (key -> local
-  path -> release). `LocalVideoStorage` backs local dev; `GCSVideoStorage`
-  stores keys under `videos/<user_id>/...`, signs source-video reads, downloads
-  scratch copies for extraction, and releases only those scratch files.
+  `backend/clip_scribe/utils/clip_scribe_video_storage.py` gives the API an
+  ingest contract (stage/hash/commit) and the worker a materialization contract
+  (key -> local path -> release). `LocalVideoStorage` backs local dev;
+  `GCSVideoStorage` stores keys under `videos/<user_id>/...`, signs source-video
+  reads, downloads scratch copies for extraction, and releases only those
+  scratch files.
 - **Artifact storage already has a GCS backend** (`web-app-plan` §9.2).
-  `backend/src/utils/clip_scribe_artifacts.py` uses the same
+  `backend/clip_scribe/utils/clip_scribe_artifacts.py` uses the same
   `CLIPSCRIBE_STORAGE_BACKEND` selector: local is a no-op, while GCS uploads
   `tracked_output.mp4` as a loose signed object and archives the remaining
   debug artifacts as `artifacts.tar.gz` under `artifacts/<run_id>/`.

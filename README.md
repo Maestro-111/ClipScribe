@@ -99,7 +99,7 @@ Common environment variables:
 The main configuration file is:
 
 ```text
-backend/src/clip_scribe/configs/clip_scribe.yaml
+backend/clip_scribe/clip_scribe_core/configs/clip_scribe.yaml
 ```
 
 To use PostgreSQL, set `CLIPSCRIBE_DB_BACKEND=postgresql` and `POSTGRESQL_URL`.
@@ -175,7 +175,7 @@ docker compose build
 docker compose up      # api :8000, frontend :5173, worker, postgres, redis
 ```
 
-The app is at `http://localhost:5173`. Model weights are fetched automatically: the one-shot `prewarm` service populates the shared `./backend/checkpoints` volume before the worker starts. The **first** `up` downloads several GB (the GroundingDINO/SAM2 `.pth` already on your host appear immediately); later `up`s short-circuit on a `.prewarm_complete` marker. Force a refetch with `docker compose run --rm prewarm python scripts/prewarm.py --force`. Compose also bind-mounts `backend/app` and `backend/src` into the API and worker containers so local source edits are visible after process reload/restart; rebuild when dependencies or Dockerfiles change.
+The app is at `http://localhost:5173`. Model weights are fetched automatically: the one-shot `prewarm` service populates the shared `./backend/checkpoints` volume before the worker starts. The **first** `up` downloads several GB (the GroundingDINO/SAM2 `.pth` already on your host appear immediately); later `up`s short-circuit on a `.prewarm_complete` marker. Force a refetch with `docker compose run --rm prewarm python scripts/prewarm.py --force`. Compose also bind-mounts `backend/app` and `backend/clip_scribe` into the API and worker containers so local source edits are visible after process reload/restart; rebuild when dependencies or Dockerfiles change.
 
 The `worker`/`prewarm` images are built for **`linux/amd64`** (paddlepaddle has no arm64 wheel, and amd64 is the deploy target). On an **Apple Silicon** Mac they run under QEMU emulation — correct but slow, and `prewarm` loading models emulated can take a while. Mode 1 is best on a Linux/amd64 host or CI; on a Mac, use **Mode 2** for real work (native MPS worker) and treat Mode 1 as an end-to-end smoke test.
 
@@ -244,7 +244,7 @@ In **prod** (GKE/Cloud Run) you drop the overlay entirely — the api/worker run
 
 ### How imports resolve in the containers
 
-The backend images set `WORKDIR /app/backend` and `PYTHONPATH=/app/backend`, then copy the code there — mirroring how you run locally from `backend/`. That is what makes both `from app.X import …` (the `app` package is not installed as a wheel) and `from src.X import …` resolve, without `pip install .`. The images install only third-party dependencies (the `api` or `worker` dependency group).
+The backend images set `WORKDIR /app/backend` and `PYTHONPATH=/app/backend`, then copy the code there — mirroring how you run locally from `backend/`. That is what makes both `from app.X import …` (the `app` package is not installed as a wheel) and `from clip_scribe.X import …` resolve, without `pip install .`. The images install only third-party dependencies (the `api` or `worker` dependency group).
 
 ## Development Commands
 
@@ -257,7 +257,7 @@ uv run pytest -q
 Run type checks:
 
 ```bash
-uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser
+uv run mypy --config-file=pyproject.toml --explicit-package-bases clip_scribe/clip_scribe_core clip_scribe/extractor clip_scribe/ocr clip_scribe/parser
 ```
 
 Run all pre-commit hooks (from `backend/`):
@@ -288,8 +288,8 @@ Working Makefile targets include `make setup` (model prefetch), `make checkpoint
 clipscribe/
 ├── backend/
 │   ├── app/                    FastAPI: routes, settings, inline/Celery dispatch, Redis events, chat, exports
-│   ├── src/
-│   │   ├── clip_scribe/        Engine, builder, platform configs, clip_scribe.yaml
+│   ├── clip_scribe/
+│   │   ├── clip_scribe_core/   Engine, builder, platform configs, clip_scribe.yaml
 │   │   ├── extractor/          Scene extraction, taxonomy, tracking, scene description
 │   │   ├── parser/             LangGraph parser agents, query tools, evaluators, reports
 │   │   ├── ocr/                PaddleOCR wrapper and box consolidation

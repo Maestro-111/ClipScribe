@@ -67,15 +67,16 @@ COPY backend/scripts ./scripts
 # weights present. Downloads several GB at build time; the download/load runs on
 # CPU (no GPU needed to build). Uses the checkpoints/ env vars set above.
 #
-# This runs BEFORE copying app/ and src/ on purpose: prewarm only needs the venv
-# + scripts/ (it imports torch/whisper/paddle from the venv and calls
-# scripts/download_dino.py — never app or src). Keeping it above the code copy
-# means an app/src edit doesn't invalidate this ~GB weights layer; Docker reuses
-# the cache and only rebuilds the cheap code-copy layers below.
+# This runs BEFORE copying app/ and clip_scribe/ on purpose: prewarm only needs
+# the venv + scripts/ (it imports torch/whisper/paddle from the venv and calls
+# scripts/download_dino.py — never app or clip_scribe). Keeping it above the
+# code copy means an app/clip_scribe edit doesn't invalidate this ~GB weights
+# layer; Docker reuses the cache and only rebuilds the cheap code-copy layers
+# below.
 RUN python scripts/prewarm.py
 
 COPY backend/app ./app
-COPY backend/src ./src
+COPY backend/clip_scribe ./clip_scribe
 COPY backend/main.py ./main.py
 COPY backend/docker/core/gpu/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

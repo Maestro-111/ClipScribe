@@ -51,7 +51,8 @@ services:
       retries: 10
 
   # One-shot schema migration. Runs `alembic upgrade head` once from the slim API
-  # image (has src/db + alembic, no ML deps) — not per api/worker replica, since
+  # image (has clip_scribe/db + alembic, no ML deps) — not per api/worker
+  # replica, since
   # all replicas share one DB (web-app-plan §4). api/worker wait for it to finish.
   migrate:
     build:
@@ -88,7 +89,7 @@ services:
       - ./backend/artifacts:/app/backend/artifacts
       - ./backend/input:/app/backend/input
       - ./backend/app:/app/backend/app
-      - ./backend/src:/app/backend/src
+      - ./backend/clip_scribe:/app/backend/clip_scribe
     ports:
       - "8000:8000"
     depends_on:
@@ -140,7 +141,7 @@ services:
       - ./backend/artifacts:/app/backend/artifacts
       - ./backend/input:/app/backend/input
       - ./backend/app:/app/backend/app
-      - ./backend/src:/app/backend/src
+      - ./backend/clip_scribe:/app/backend/clip_scribe
     depends_on:
       postgres:
         condition: service_healthy

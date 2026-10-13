@@ -4,6 +4,7 @@ import asyncio
 import functools
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import ParamSpec, TypeVar
 from sqlalchemy import Engine, Table, create_engine, event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError
 
 logger = logging.getLogger("clip_scribe")
 
@@ -82,23 +83,57 @@ def resolve_pool_settings() -> tuple[int, int]:
 _T = TypeVar("_T")
 _P = ParamSpec("_P")
 
-# How many times to attempt a transient-failing DB operation before giving up.
+# How many times to attempt a retryable transaction before giving up.
 _RETRY_MAX_ATTEMPTS = 3
 # Exponential backoff base and ceiling (seconds). Kept small: these run in the
 # FastAPI threadpool, so a long sleep would pin a worker thread.
 _RETRY_BASE_DELAY = 0.05
 _RETRY_MAX_DELAY = 1.0
 
+# PostgreSQL explicitly aborts the transaction for both errors, so replaying
+# the whole transaction is safe. asyncpg exposes these through ``sqlstate``;
+# psycopg2 uses ``pgcode``.
+_POSTGRES_RETRYABLE_SQLSTATES = frozenset({"40001", "40P01"})
+_SQLITE_RETRYABLE_ERROR_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
 
-def retry_transient(fn: Callable[..., _T]) -> Callable[..., _T]:
-    """Retry a whole-transaction DB operation on transient errors.
+
+def _is_retryable_transaction_error(exc: DBAPIError) -> bool:
+    """Return whether the database definitely rejected this transaction.
+
+    Connection invalidation alone is deliberately insufficient: if the
+    connection disappears while COMMIT is in flight, the caller cannot know
+    whether the server committed. Replaying a non-idempotent write could then
+    duplicate it. Only explicit PostgreSQL transaction-abort SQLSTATEs and
+    SQLite lock-contention result codes are retried.
+    """
+    original = exc.orig
+
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+
+    if sqlstate in _POSTGRES_RETRYABLE_SQLSTATES:
+        return True
+
+    if not isinstance(original, sqlite3.OperationalError):
+        return False
+
+    sqlite_errorcode = getattr(original, "sqlite_errorcode", None)
+    if not isinstance(sqlite_errorcode, int):
+        return False
+
+    # Extended SQLite result codes retain the primary result in the low byte,
+    # e.g. SQLITE_BUSY_SNAPSHOT still belongs to the SQLITE_BUSY family.
+    return sqlite_errorcode & 0xFF in _SQLITE_RETRYABLE_ERROR_CODES
+
+
+def retry_transient(fn: Callable[_P, _T]) -> Callable[_P, _T]:
+    """Retry a whole transaction after a confirmed database abort.
 
     Wraps a method that opens exactly one ``engine.begin()`` transaction. On a
-    transient failure — a Postgres deadlock/serialization abort or a dropped
-    connection (both surface as :class:`OperationalError`), or SQLite's
-    "database is locked" — the transaction has already rolled back, so simply
-    re-running the whole method is safe. Non-transient errors (integrity,
-    programming) are not caught and propagate immediately.
+    PostgreSQL deadlock/serialization abort or SQLite busy/locked result, the
+    transaction has rolled back before the exception reaches this wrapper, so
+    the method is replayed with a fresh transaction. Integrity, programming,
+    generic operational, and uncertain connection-loss errors propagate
+    immediately.
 
     Only apply to methods whose entire body is one atomic transaction; do NOT
     apply to a helper that runs inside a caller's transaction, since retrying it
@@ -106,18 +141,21 @@ def retry_transient(fn: Callable[..., _T]) -> Callable[..., _T]:
     """
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs) -> _T:
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         attempt = 0
         while True:
             try:
                 return fn(*args, **kwargs)
-            except OperationalError as exc:
+            except DBAPIError as exc:
+                if not _is_retryable_transaction_error(exc):
+                    raise
                 attempt += 1
                 if attempt >= _RETRY_MAX_ATTEMPTS:
                     raise
                 delay = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** (attempt - 1)))
                 logger.warning(
-                    "Transient DB error in %s (attempt %d/%d): %s; retrying in %.2fs",
+                    "Retryable transaction error in %s (attempt %d/%d): %s; "
+                    "retrying in %.2fs",
                     fn.__name__,
                     attempt,
                     _RETRY_MAX_ATTEMPTS,
@@ -145,13 +183,16 @@ def retry_transient_async(
         while True:
             try:
                 return await fn(*args, **kwargs)
-            except OperationalError as exc:
+            except DBAPIError as exc:
+                if not _is_retryable_transaction_error(exc):
+                    raise
                 attempt += 1
                 if attempt >= _RETRY_MAX_ATTEMPTS:
                     raise
                 delay = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** (attempt - 1)))
                 logger.warning(
-                    "Transient DB error in %s (attempt %d/%d): %s; retrying in %.2fs",
+                    "Retryable transaction error in %s (attempt %d/%d): %s; "
+                    "retrying in %.2fs",
                     fn.__name__,
                     attempt,
                     _RETRY_MAX_ATTEMPTS,
