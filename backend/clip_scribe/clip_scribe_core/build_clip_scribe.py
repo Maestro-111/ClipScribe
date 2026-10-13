@@ -150,6 +150,7 @@ class ClipScribeBuilder:
         parser_agent_params: dict,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
+        extraction_mode: str = "with_objects",
     ) -> VideoInformationParser:
         parser_output_dir = PROJECT_ROOT / clib_scribe_parser_params.get(
             "output_dir", "parser_artifacts"
@@ -173,6 +174,7 @@ class ClipScribeBuilder:
             recursion_limit=recursion_limit,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
+            extraction_mode=extraction_mode,
         )
 
         return info_parser
@@ -434,6 +436,7 @@ class ClipScribeBuilder:
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
+        extraction_mode: str = "with_objects",
     ) -> ClipScribeEngine:
         """Build a per-job engine using the builder's long-lived dependencies.
 
@@ -481,6 +484,7 @@ class ClipScribeBuilder:
                     self.parser_agent_params,
                     progress_reporter=reporter,
                     cancel_token=canceller,
+                    extraction_mode=extraction_mode,
                 )
 
             # Same shape as the reporter default above: the builder resolves the
@@ -495,6 +499,7 @@ class ClipScribeBuilder:
 
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
+                extraction_mode=extraction_mode,
                 video_name=video_name,
                 video_path=video_path,
                 # The durable storage key; defaults to the local path for the CLI

@@ -31,6 +31,7 @@ class BaseEvaluator(ABC):
         max_parallel_agents: int = 5,
         recursion_limit: int = 25,
         cancel_token: CancellationToken | None = None,
+        object_data_available: bool = True,
     ):
         self.reader_db = reader_db
         self.model = model
@@ -38,6 +39,7 @@ class BaseEvaluator(ABC):
         self.agentic_eval = agentic_eval
         self.max_parallel_agents = max_parallel_agents
         self.recursion_limit = recursion_limit
+        self.object_data_available = object_data_available
         # Cooperative-cancel token, polled between criteria in evaluate_all.
         self._cancel = cancel_token or NullCancellationToken()
 
@@ -210,6 +212,21 @@ class BaseEvaluator(ABC):
         )
 
         features = self.get_feature_configs()
+
+        if not self.object_data_available:
+            skipped_features = [
+                feature for feature in features if feature.get("requires_object_data")
+            ]
+            features = [
+                feature
+                for feature in features
+                if not feature.get("requires_object_data")
+            ]
+            logger.info(
+                "ClipScribe Parser: Skipping %d object-dependent criteria because "
+                "object extraction was disabled",
+                len(skipped_features),
+            )
 
         baseline_features = [f for f in features if f["mode"] == "baseline"]
         agentic_features = [f for f in features if f["mode"] == "agentic"]

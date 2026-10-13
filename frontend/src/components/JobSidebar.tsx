@@ -16,12 +16,15 @@ import type { ReactNode } from "react";
 // can't know until the video is processed — surfaced as a separate note.
 const PARSER_CALLS_PER_VIDEO = 17;
 const SHOT_CALLS_EACH = 2;
+const NO_OBJECTS_PARSER_CALLS_PER_VIDEO = 9;
+const NO_OBJECTS_SHOT_CALLS_EACH = 1;
 
 interface JobSummaryProps {
   videoCount: number;
   platform: string;
   brandName: string;
   videoType: string;
+  extractionMode: "with_objects" | "no_objects";
   hintTermCount: number;
   generateHintFromName: boolean;
 }
@@ -31,11 +34,20 @@ export function JobSummary({
   platform,
   brandName,
   videoType,
+  extractionMode,
   hintTermCount,
   generateHintFromName,
 }: JobSummaryProps) {
   const hintCalls = generateHintFromName ? videoCount : 0;
-  const fixedCalls = videoCount * PARSER_CALLS_PER_VIDEO + hintCalls;
+  const parserCallsPerVideo =
+    extractionMode === "with_objects"
+      ? PARSER_CALLS_PER_VIDEO
+      : NO_OBJECTS_PARSER_CALLS_PER_VIDEO;
+  const sceneCallsEach =
+    extractionMode === "with_objects"
+      ? SHOT_CALLS_EACH
+      : NO_OBJECTS_SHOT_CALLS_EACH;
+  const fixedCalls = videoCount * parserCallsPerVideo + hintCalls;
 
   const hintLabel =
     [
@@ -66,6 +78,11 @@ export function JobSummary({
             <Row label="Platform">{platform}</Row>
             <Row label="Brand">{brandName.trim() || "—"}</Row>
             <Row label="Video type">{videoType.trim() || "—"}</Row>
+            <Row label="Extraction">
+              {extractionMode === "with_objects"
+                ? "Track objects"
+                : "Skip objects"}
+            </Row>
             <Row label="Hints">{hintLabel}</Row>
           </dl>
 
@@ -82,10 +99,10 @@ export function JobSummary({
               </span>
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-              {videoCount} × {PARSER_CALLS_PER_VIDEO} parser criteria
+              {videoCount} × {parserCallsPerVideo} parser criteria
               {hintCalls > 0 && ` + ${hintCalls} filename hint`}, plus about{" "}
-              {SHOT_CALLS_EACH} scene calls per detected shot as each video is
-              processed.
+              {sceneCallsEach} scene call{sceneCallsEach === 1 ? "" : "s"} per
+              detected shot as each video is processed.
             </p>
           </div>
         </>
@@ -111,6 +128,7 @@ interface Output {
   title: string;
   detail: string;
   icon: ReactNode;
+  requiresObjects?: boolean;
 }
 
 function OutIcon({ children }: { children: ReactNode }) {
@@ -143,6 +161,7 @@ const OUTPUTS: Output[] = [
   {
     title: "Annotated video",
     detail: "Detection boxes tracked across every shot",
+    requiresObjects: true,
     icon: (
       <OutIcon>
         <rect x="2.5" y="4.5" width="15" height="11" rx="2" />
@@ -180,14 +199,22 @@ const OUTPUTS: Output[] = [
   },
 ];
 
-export function RunOutputs() {
+export function RunOutputs({
+  includeObjects = true,
+}: {
+  includeObjects?: boolean;
+}) {
+  const outputs = OUTPUTS.filter(
+    (output) => includeObjects || !output.requiresObjects,
+  );
+
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
       <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
         What you'll get
       </h3>
       <ul className="space-y-3">
-        {OUTPUTS.map((o) => (
+        {outputs.map((o) => (
           <li key={o.title} className="flex gap-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500">
               {o.icon}

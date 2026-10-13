@@ -1,9 +1,11 @@
 """Focused tests for SAM2 checkpoint identity reconciliation."""
 
 import os
+from collections import defaultdict
 from types import SimpleNamespace
 from unittest import mock
 
+import cv2
 import torch
 
 from clip_scribe.extractor.extractor_core import VideoInformationExtractor
@@ -139,3 +141,47 @@ def test_known_profile_still_caches_shot_descriptions():
     assert extractor.resolved_video_type == "car commercial"
     extractor._describe_shot.assert_called_once_with(0, 10)
     profiles.resolve_or_create.assert_called_once()
+
+
+def test_finalize_data_supports_an_extraction_without_objects():
+    extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
+    extractor.object_registry = {}
+    extractor.text_registry = defaultdict(set, {1: {"Learn more"}})
+    extractor.global_stats = {"total_shots": 1}
+    extractor.audio_registry = []
+    extractor.scene_description_registry = []
+    extractor.shot_data = []
+    extractor.frame_detections = []
+
+    summary = extractor._finalize_data()
+
+    assert summary["visual_objects"] == []
+    assert summary["frame_detections"] == []
+    assert summary["text_events"] == [{"second": 1, "text": ["Learn more"]}]
+
+
+def test_no_objects_state_does_not_create_an_empty_tracked_video(tmp_path):
+    extractor = VideoInformationExtractor.__new__(VideoInformationExtractor)
+    capture = mock.MagicMock()
+    capture.isOpened.return_value = True
+    capture.get.side_effect = lambda key: {
+        cv2.CAP_PROP_FPS: 30.0,
+        cv2.CAP_PROP_FRAME_WIDTH: 1920,
+        cv2.CAP_PROP_FRAME_HEIGHT: 1080,
+        cv2.CAP_PROP_FRAME_COUNT: 300,
+    }[key]
+
+    with mock.patch(
+        "clip_scribe.extractor.extractor_core.cv2.VideoCapture",
+        return_value=capture,
+    ), mock.patch(
+        "clip_scribe.extractor.extractor_core.cv2.VideoWriter"
+    ) as video_writer:
+        extractor._state_init(
+            str(tmp_path / "artifacts"),
+            "video.mp4",
+            write_tracked_video=False,
+        )
+
+    video_writer.assert_not_called()
+    assert extractor.total_frames == 300

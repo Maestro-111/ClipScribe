@@ -784,6 +784,8 @@ export interface components {
          */
         JobCreateRequest: {
             mode: components["schemas"]["JobMode"];
+            /** @default with_objects */
+            extraction_mode?: components["schemas"]["ExtractionMode"];
             /** @default youtube */
             platform: components["schemas"]["PlatformName"];
             /** Videos */
@@ -827,6 +829,11 @@ export interface components {
          * @enum {string}
          */
         JobMode: "full" | "extract" | "parse";
+        /**
+         * ExtractionMode
+         * @enum {string}
+         */
+        ExtractionMode: "with_objects" | "no_objects";
         /**
          * JobProgressResponse
          * @description Coarse live progress for a job, derived from its Redis event stream.

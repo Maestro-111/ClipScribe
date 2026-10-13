@@ -37,8 +37,16 @@ class ClipScribeEngine:
         progress_reporter: ProgressReporter,
         artifact_uploader: ArtifactUploader,
         cancel_token: CancellationToken,
+        extraction_mode: str = "with_objects",
     ):
+        if extraction_mode not in {"with_objects", "no_objects"}:
+            raise ValueError(
+                f"Invalid extraction mode: {extraction_mode}. "
+                "Supported modes: 'with_objects', 'no_objects'"
+            )
+
         self.mode = mode
+        self.extraction_mode = extraction_mode
 
         self.video_name = video_name
         # Local filesystem path the extractor opens (a materialized scratch copy
@@ -143,8 +151,7 @@ class ClipScribeEngine:
             self.progress.emit(ProgressEvent.JOB_COMPLETED, {"run_id": self.run_id})
 
     def extract(self) -> ExtractionSummary:
-        if self.extractor is None:
-            raise ValueError("No extractor defined; extract method cannot be called")
+        assert self.extractor is not None
 
         video_metadata = self._run_extractor()
 
@@ -158,8 +165,7 @@ class ClipScribeEngine:
         return video_metadata
 
     def parse(self, run_id: str):
-        if self.parser is None:
-            raise ValueError("No parser defined; parse method cannot be called")
+        assert self.parser is not None
 
         try:
             if run_id:
@@ -203,12 +209,20 @@ class ClipScribeEngine:
     def _run_extractor(self) -> ExtractionSummary:
         assert self.extractor is not None
         try:
-            metadata = self.extractor.extract(
-                video_name=self.video_name,
-                video_path=self.video_path,
-                video_type=self.video_type,
-                run_id=self.run_id,
-            )
+            if self.extraction_mode == "with_objects":
+                metadata = self.extractor.extract(
+                    video_name=self.video_name,
+                    video_path=self.video_path,
+                    video_type=self.video_type,
+                    run_id=self.run_id,
+                )
+            elif self.extraction_mode == "no_objects":
+                metadata = self.extractor.extract_no_object(
+                    video_name=self.video_name,
+                    video_path=self.video_path,
+                    video_type=self.video_type,
+                    run_id=self.run_id,
+                )
             if metadata is None:
                 raise RuntimeError("Extractor returned no metadata")
 
