@@ -87,6 +87,10 @@ class Settings:
     # 1 MiB chunks: bounded memory while streaming arbitrarily large videos.
     VIDEO_CHUNK = 1024 * 1024
 
+    # Per-file cap on uploaded videos. Keep in sync with client_max_body_size in
+    # frontend/nginx.conf, which gates the whole request (this plus multipart overhead).
+    MAX_VIDEO_BYTES = 20 * 1024 * 1024
+
     # Chat answers run longer than a one-line verdict, so we lift the token cap above
     # the parser's default while reusing its model + temperature.
     CHAT_MAX_TOKENS = 1500

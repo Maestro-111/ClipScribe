@@ -73,6 +73,7 @@ async def upload_videos(
             suffix,
             file,
             chunk_size,
+            settings.MAX_VIDEO_BYTES,
         )
         existing = await reader.get_video_by_hash(user_id, content_hash)
 
@@ -108,9 +109,17 @@ async def upload_videos(
 
 
 def _stage_and_hash(
-    storage: VideoStorage, suffix: str, file: UploadFile, chunk_size: int
+    storage: VideoStorage,
+    suffix: str,
+    file: UploadFile,
+    chunk_size: int,
+    max_bytes: int,
 ) -> tuple[Path, str, int]:
-    """Stream ``file`` into a staging temp file, returning (path, sha256, size)."""
+    """Stream ``file`` into a staging temp file, returning (path, sha256, size).
+
+    Raises a 413 ``ProblemException`` (and removes the partial file) once more
+    than ``max_bytes`` have been read.
+    """
     hasher = hashlib.sha256()
     size = 0
     fd, tmp_name = tempfile.mkstemp(dir=storage.staging_dir(), suffix=suffix)
@@ -121,6 +130,15 @@ def _stage_and_hash(
                 out.write(chunk)
                 hasher.update(chunk)
                 size += len(chunk)
+                if size > max_bytes:
+                    raise ProblemException(
+                        status=413,
+                        title="Payload Too Large",
+                        detail=(
+                            f"'{file.filename}' exceeds the "
+                            f"{max_bytes // (1024 * 1024)} MB upload limit"
+                        ),
+                    )
     except Exception:
         staged.unlink(missing_ok=True)
         raise
