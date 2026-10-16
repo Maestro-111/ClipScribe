@@ -31,12 +31,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/backend/.venv \
     PATH="/app/backend/.venv/bin:$PATH" \
-    # backend/ on the import path so `app` and `clip_scribe` resolve like a
-    # local run from backend/.
-    PYTHONPATH=/app/backend \
-    # Centralize every env-driven model cache under checkpoints/ (one mount in
-    # dev, one baked layer in prod). Whisper uses an explicit download_root in
-    # build_clip_scribe.py; MTCNN ships its weights inside the pip wheel.
     TORCH_HOME=/app/backend/checkpoints/torch_hub \
     HF_HOME=/app/backend/checkpoints/huggingface \
     NLTK_DATA=/app/backend/checkpoints/nltk \
@@ -49,7 +43,7 @@ RUN uv venv "$VIRTUAL_ENV"
 # Install the locked worker runtime. The worker-cpu extra selects the CPU Torch
 # and Torchvision wheels.
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev --extra worker-cpu
+RUN uv sync --frozen --no-dev --extra worker-cpu
 
 # spaCy's en_core_web_sm is a pip wheel (not a cache download) — bake it into the
 # venv so it never needs fetching at runtime (mirrors `make spacy`).

@@ -70,9 +70,11 @@ dev = [
 # (backend/docker/core/{cpu,gpu}). Each pins the linux/x86_64 CPU or CUDA-12.6
 # Torch/Torchvision wheels; combined with `[tool.uv.sources]` below, enabling one
 # extra redirects the base-dep torch to the matching index. The worker Dockerfiles
-# install `uv sync --no-install-project --extra worker-cpu` (or `worker-gpu`),
-# i.e. the base deps above with one of these extras layered on. The two extras are
-# mutually exclusive (see `[tool.uv].conflicts`).
+# install `uv sync --frozen --no-dev --extra worker-cpu` (or `worker-gpu`),
+# i.e. the base deps above with one of these extras layered on, plus the project
+# itself as an editable install (a `.pth` to /app/backend, which is what makes
+# `app` and `clip_scribe` importable there). The two extras are mutually
+# exclusive (see `[tool.uv].conflicts`).
 worker-cpu = [
     "torch==2.9.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision==0.24.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -118,6 +120,7 @@ explicit = true
 # so the API can serve chat and ABCD export routes.
 [dependency-groups]
 api = [
+    "colorlog>=6.10.1",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",

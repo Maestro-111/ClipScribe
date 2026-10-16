@@ -58,6 +58,7 @@ services:
     build:
       context: .
       dockerfile: backend/docker/api/Dockerfile
+    platform: linux/amd64
     env_file: .env
     environment:
       CLIPSCRIBE_DB_BACKEND: postgresql
@@ -76,6 +77,7 @@ services:
     build:
       context: .
       dockerfile: backend/docker/api/Dockerfile
+    platform: linux/amd64
     env_file: .env
     environment:
       CLIPSCRIBE_JOB_BACKEND: celery

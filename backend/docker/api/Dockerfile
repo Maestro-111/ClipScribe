@@ -34,7 +34,9 @@ RUN uv venv "$VIRTUAL_ENV"
 # the torch/CUDA extras (the api group is torch-free). `--only-group api` installs
 # just that group and EXCLUDES the heavy base `[project.dependencies]`
 # (torch/paddle/whisper/opencv) and the project itself; `--no-install-project`
-# skips building the package (clip_scribe/ isn't copied yet). Unlike the
+# skips installing the package — this image copies only part of clip_scribe/ and
+# resolves imports through PYTHONPATH instead (the worker images install the
+# project editable and need no PYTHONPATH). Unlike the
 # multi-stage worker images — which discard their uv cache in a throwaway
 # builder stage — this image is single-stage, so `--no-cache` keeps the cache
 # out of the final layer.

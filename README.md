@@ -247,7 +247,10 @@ In **prod** (GKE/Cloud Run) you drop the overlay entirely — the api/worker run
 
 ### How imports resolve in the containers
 
-The backend images set `WORKDIR /app/backend` and `PYTHONPATH=/app/backend`, then copy the code there — mirroring how you run locally from `backend/`. That is what makes both `from app.X import …` (the `app` package is not installed as a wheel) and `from clip_scribe.X import …` resolve, without `pip install .`. The images install only third-party dependencies (the `api` or `worker` dependency group).
+The backend images set `WORKDIR /app/backend` and copy the code there — mirroring how you run locally from `backend/`. How `app` and `clip_scribe` become importable differs per image:
+
+- **Worker images (CPU/GPU):** `uv sync` installs the project in editable mode (before the source is copied — the build doesn't need it). That drops a `.pth` file in the venv pointing at `/app/backend`, so both `from app.X import …` (`app` is not a packaged module) and `from clip_scribe.X import …` resolve with no `PYTHONPATH`.
+- **API image:** it deliberately copies only part of `clip_scribe/` and never installs the project (`--no-install-project --only-group api`), so it sets `PYTHONPATH=/app/backend` instead.
 
 ## Development Commands
 

@@ -31,7 +31,7 @@ RUN uv venv --python python3.12 "$VIRTUAL_ENV"
 # Install the locked worker runtime. The worker-gpu extra selects the CUDA 12.6
 # Torch and Torchvision wheels.
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev --extra worker-gpu
+RUN uv sync --frozen --no-dev --extra worker-gpu
 RUN uv pip install --no-cache \
         "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 
@@ -51,7 +51,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/backend/.venv \
     PATH="/app/backend/.venv/bin:$PATH" \
-    PYTHONPATH=/app/backend \
     TORCH_HOME=/app/backend/checkpoints/torch_hub \
     HF_HOME=/app/backend/checkpoints/huggingface \
     NLTK_DATA=/app/backend/checkpoints/nltk \
