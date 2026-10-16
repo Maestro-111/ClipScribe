@@ -116,6 +116,36 @@ class RapidFireInterval(TypedDict):
     shot_indices: list[int]
 
 
+class DynamicStart(TypedDict):
+    detected: bool
+    first_shot_duration: float
+    criteria: str
+
+
+class QuickPacingIntro(TypedDict):
+    detected: bool
+    shot_count: int
+    shots: list[int]
+    criteria: str
+
+
+class QuickPacingGeneral(TypedDict):
+    detected: bool
+    rapid_fire_segments: list[RapidFireInterval]
+    criteria: str
+
+
+class GlobalStats(TypedDict, total=False):
+    """Run-level pacing stats; empty until analysis runs or when not persisted."""
+
+    total_shots: int
+    video_duration: float
+    avg_shot_duration: float
+    dynamic_start: DynamicStart
+    quick_pacing_intro: QuickPacingIntro
+    quick_pacing_general: QuickPacingGeneral
+
+
 class FrameDetection(TypedDict):
     shot_index: int
     frame_idx: int
@@ -132,7 +162,7 @@ class FrameDetection(TypedDict):
 
 
 class ExtractionSummary(TypedDict):
-    global_stats: dict[str, object]
+    global_stats: GlobalStats
     visual_objects: list[VisualObjectSummary]
     text_events: list[TextEvent]
     audio_segments: list[AudioSegment]

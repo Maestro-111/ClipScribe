@@ -42,6 +42,7 @@ from clip_scribe.extractor.extractor_models import (
     Embedding,
     ExtractionSummary,
     FrameDetection,
+    GlobalStats,
     OCRDetection,
     ObjectRegistryEntry,
     RapidFireInterval,
@@ -101,6 +102,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 "video_name": "Name of the video file processed.",
                 "video_path": "Full path to the video file.",
                 "video_type": "Category of video (e.g., 'car ad').",
+                "extraction_mode": (
+                    "Whether object detection and tracking were included in extraction."
+                ),
                 "created_at": "Timestamp when this run was created.",
             },
             "global_stats": {
@@ -316,17 +320,17 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
 
     def __init__(
         self,
-        sam_model: "SAM2VideoPredictor",
-        dino_model: "DinoDetector",
-        scene_describer: "GPTSceneDescriber",
-        ocr_engine: "OCRSystem",
-        taxonomy_resolver: "TaxonomyResolver",
-        taxonomy_generator: "TaxonomyGenerator",
+        sam_model: SAM2VideoPredictor,
+        dino_model: DinoDetector,
+        scene_describer: GPTSceneDescriber,
+        ocr_engine: OCRSystem,
+        taxonomy_resolver: TaxonomyResolver,
+        taxonomy_generator: TaxonomyGenerator,
         taxonomy_user_hints: list[str] | None,
         reid_model: ReIDModel,
-        audio_model: "whisper.Whisper",
-        embedding_transform: "transforms.Compose",
-        face_detection: "MTCNN",
+        audio_model: whisper.Whisper,
+        embedding_transform: transforms.Compose,
+        face_detection: MTCNN,
         device: str,
         word_similarity_threshold: float,
         dino_text_conf: float,
@@ -344,8 +348,8 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         sampling_rate: float = 2.0,
         sam2_default_refresh_rate: int = 100,
         sam2_dynamic_refresh_rate: bool = False,
-        progress_reporter: "ProgressReporter | None" = None,
-        cancel_token: "CancellationToken | None" = None,
+        progress_reporter: ProgressReporter | None = None,
+        cancel_token: CancellationToken | None = None,
         max_artifact_files: int | None = None,
     ) -> None:
         # helper models
@@ -408,7 +412,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
 
         self.audio_registry: list[AudioSegment] = []
         self.scene_description_registry: list[SceneDescriptionRecord] = []
-        self.global_stats: dict[str, object] = {}
+        self.global_stats: GlobalStats = {}
         self.audio_confidence = audio_confidence
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq
@@ -434,9 +438,12 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         self.shot_data: list[ShotData] = []
         self.shot_boundaries: list[tuple[int, int]] = []
 
+        self.artifact_path = ""
+
         # Cap on per-frame visualization PNGs written to the artifact dir
-        # (None = unlimited). The tracked mp4 and extraction_summary.json are
-        # always kept. Counts PNGs written so far this run.
+        # (None = unlimited). extraction_summary.json is always kept; the tracked
+        # mp4 is produced only when object tracking is enabled. Counts PNGs
+        # written so far this run.
         self.max_artifact_files = max_artifact_files
         self._viz_files_written = 0
 
@@ -487,8 +494,15 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         self._viz_files_written += 1
         return True
 
-    def _state_init(self, artifact_path: str, video_path: str) -> None:
-        """Open the input video and initialize the tracked-output writer."""
+    def _state_init(
+        self,
+        artifact_path: str,
+        video_path: str,
+        *,
+        write_tracked_video: bool = True,
+    ) -> None:
+        """Open the input and optionally initialize the tracked-video writer."""
+
         if not os.path.exists(artifact_path):
             os.makedirs(artifact_path)
 
@@ -507,6 +521,15 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             fps = 30.0
 
         self.fps = fps
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        logger.info(f"ClipScribe Extractor: Video opened: {video_path}")
+        logger.info(
+            f"ClipScribe Extractor: Video FPS: {fps}; Total Frames: {self.total_frames}"
+        )
+
+        if not write_tracked_video:
+            return
 
         output_filename = os.path.join(artifact_path, "tracked_output.mp4")
 
@@ -530,12 +553,6 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 output_filename, cv2.VideoWriter.fourcc(*"mp4v"), fps, (width, height)
             )
         logger.info(f"ClipScribe Extractor: Recording video to: {output_filename}")
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        logger.info(f"ClipScribe Extractor: Video opened: {video_path}")
-        logger.info(
-            f"ClipScribe Extractor: Video FPS: {fps}; Total Frames: {self.total_frames}"
-        )
 
     def _write_video_chunk(
         self,
@@ -757,6 +774,17 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
 
         return embedding.cpu().numpy().flatten()
 
+    def _save_text(
+        self, second_key: int, frame_height: int, frame_text: Sequence[OCRDetection]
+    ) -> None:
+        max_text_height = 0.0
+        if frame_text:
+            max_text_height = max((t["box"][3] - t["box"][1]) for t in frame_text)
+
+        for cur in frame_text:
+            if self._is_valid_text(cur, frame_height, max_text_height):
+                self.text_registry[second_key].add(cur["text"])
+
     def _save_metadata(
         self,
         frame_idx: int,
@@ -774,15 +802,10 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         second_key = int(timestamp)
         masks_np = masks.cpu().numpy()
 
-        h, w, _ = current_frame_img.shape
+        frame_height = current_frame_img.shape[0]
 
-        max_text_height = 0.0
-        if frame_text:
-            max_text_height = max((t["box"][3] - t["box"][1]) for t in frame_text)
-
-        for cur in frame_text:
-            if self._is_valid_text(cur, h, max_text_height):
-                self.text_registry[second_key].add(cur["text"])
+        # 1. Text
+        self._save_text(second_key, frame_height, frame_text)
 
         # 2. Objects
         for i, obj_id in enumerate(obj_ids):
@@ -1325,6 +1348,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         self, video_type: str | None
     ) -> dict[int, tuple[str, str]]:
         """Pre-describe all shots when a run-local profile must be generated."""
+
+        logger.info("ClipScribe Extractor: --- Step 3: SceneAnalysis ---")
+
         profiles = self.taxonomy_generator.profiles
         scene_contexts: dict[int, tuple[str, str]] = {}
 
@@ -1349,22 +1375,21 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         self.resolved_video_type = resolved_type
         return scene_contexts
 
-    def extract(
+    def _extract_head(
         self,
-        video_type: str | None,
         video_path: str,
-        video_name: str,
         run_id: str,
-    ) -> ExtractionSummary:
-        """
-        extraction entry point. Runs the full pipeline: scene analysis, audio transcription,
-        per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
-        """
-
+        *,
+        write_tracked_video: bool = True,
+    ) -> None:
         # Keyed by run_id (not video_name) so repeated jobs over the same video
         # never collide; this dir is what the remote uploader bundles.
-        artifact_path = run_artifact_dir(run_id)
-        self._state_init(artifact_path, video_path)
+        self.artifact_path = run_artifact_dir(run_id)
+        self._state_init(
+            self.artifact_path,
+            video_path,
+            write_tracked_video=write_tracked_video,
+        )
 
         self._cancel.check()
         self.progress.phase_started(Phase.SCENE_DETECTION)
@@ -1386,7 +1411,150 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             Phase.AUDIO, {"segments_kept": len(self.audio_registry)}
         )
 
-        logger.info("ClipScribe Extractor: --- Step 3: SceneAnalysis/Tracking/OCR ---")
+    def extract_no_object(
+        self,
+        video_type: str | None,
+        video_path: str,
+        video_name: str,
+        run_id: str,
+    ) -> ExtractionSummary:
+        """Extract scenes, audio, and OCR while skipping detection and tracking."""
+        self._extract_head(video_path, run_id, write_tracked_video=False)
+
+        self.progress.phase_started(
+            Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
+        )
+
+        scene_context_cache = self._prepare_video_profile(video_type)
+
+        logger.info("ClipScribe Extractor: --- Step 4: Scene Analysis/OCR ---")
+
+        for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
+            self._cancel.check()
+            self.progress.emit(
+                ProgressEvent.SHOT_STARTED,
+                {
+                    "shot_idx": shot_idx,
+                    "start": round(start_f / self.fps, 2),
+                    "end": round(end_f / self.fps, 2),
+                },
+            )
+
+            self.current_frame = start_f
+
+            logger.info(
+                f"ClipScribe Extractor: Processing Shot {shot_idx}: Frames {start_f} to {end_f}"
+            )
+
+            contexts = scene_context_cache.get(shot_idx)
+
+            if contexts is None:
+                contexts = self._describe_shot(start_f, end_f)
+
+            _, combined_raw_context = contexts
+
+            self.scene_description_registry.append(
+                {
+                    "shot_index": shot_idx,
+                    "start_time": round(start_f / self.fps, 2),
+                    "end_time": round(end_f / self.fps, 2),
+                    "description": combined_raw_context,
+                }
+            )
+            self.progress.emit(
+                ProgressEvent.SHOT_SCENE_DESCRIBED,
+                {
+                    "shot_idx": shot_idx,
+                    "description": combined_raw_context,
+                },
+            )
+
+            while self.current_frame < end_f:
+                self._cancel.check()
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
+
+                ret, frame_bgr = self.cap.read()
+
+                if not ret:
+                    break
+
+                timestamp = self.current_frame / self.fps
+                second_key = int(timestamp)
+                frame_height = frame_bgr.shape[0]
+
+                raw_image_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                detected_text_data = self.ocr_engine.detect(raw_image_rgb)
+
+                text_viz_path = os.path.join(
+                    self.artifact_path,
+                    f"ocr_result_{shot_idx}_{self.current_frame}.png",
+                )
+
+                for text_box in detected_text_data:
+                    self._record_detection(
+                        shot_index=shot_idx,
+                        frame_idx=self.current_frame,
+                        source="ocr",
+                        box=text_box["box"],
+                        text=text_box.get("text"),
+                        confidence=text_box.get("confidence"),
+                    )
+
+                if self._take_viz_slot():
+                    self.ocr_engine.save_visualization(
+                        raw_image_rgb, detected_text_data, text_viz_path
+                    )
+
+                self.progress.emit(
+                    ProgressEvent.SHOT_FRAME_PROCESSED,
+                    {
+                        "shot_idx": shot_idx,
+                        "frame_idx": self.current_frame,
+                        "ocr_lines": len(detected_text_data),
+                    },
+                )
+
+                frames_left_in_window = end_f - self.current_frame
+                frames_in_batch = min(self.detection_interval, frames_left_in_window)
+
+                if frames_in_batch <= 0:
+                    break
+
+                self._save_text(second_key, frame_height, detected_text_data)
+
+                self.current_frame += frames_in_batch
+
+            self.progress.emit(
+                ProgressEvent.SHOT_COMPLETED,
+                {"shot_idx": shot_idx, "objects_tracked": 0},
+            )
+
+        self.progress.phase_completed(Phase.SHOT_PROCESSING)
+
+        logger.info(
+            "ClipScribe Extractor: Video Processing Complete. Finalizing data..."
+        )
+
+        self.progress.phase_started(Phase.FINALIZE)
+        information = self._finalize_data()
+        self.progress.phase_completed(Phase.FINALIZE)
+        self._save_results_to_json(information, self.artifact_path)
+
+        return information
+
+    def extract(
+        self,
+        video_type: str | None,
+        video_path: str,
+        video_name: str,
+        run_id: str,
+    ) -> ExtractionSummary:
+        """
+        extraction entry point. Runs the full pipeline: scene analysis, audio transcription,
+        per-shot DINO detection + SAM tracking + OCR, identity resolution, and JSON export.
+        """
+
+        self._extract_head(video_path, run_id)
 
         self.progress.phase_started(
             Phase.SHOT_PROCESSING, {"total_shots": len(self.shot_boundaries)}
@@ -1395,6 +1563,8 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         resolved_video_type = self.resolved_video_type
         if resolved_video_type is None:
             raise RuntimeError("Video profile preparation returned no video type")
+
+        logger.info("ClipScribe Extractor: --- Step 4: Tracking/OCR ---")
 
         for shot_idx, (start_f, end_f) in enumerate(self.shot_boundaries):
             self._cancel.check()
@@ -1411,15 +1581,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             self._sam_registered_tracker_ids = set()
             self.current_frame = start_f
 
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
-            ret, frame = self.cap.read()
-
             logger.info(
                 f"ClipScribe Extractor: Processing Shot {shot_idx}: Frames {start_f} to {end_f}"
             )
-
-            if not ret:
-                break
 
             contexts = scene_context_cache.get(shot_idx)
             if contexts is None:
@@ -1452,7 +1616,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             )
 
             taxonomy_prompt_path = os.path.join(
-                artifact_path,
+                self.artifact_path,
                 f"taxonomy_prompt_{shot_idx}.txt",
             )
 
@@ -1555,17 +1719,17 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 )
 
                 text_viz_path = os.path.join(
-                    artifact_path,
+                    self.artifact_path,
                     f"ocr_result_{shot_idx}_{self.current_frame}.png",
                 )
 
                 face_viz_path = os.path.join(
-                    artifact_path,
+                    self.artifact_path,
                     f"torch_face_result_{shot_idx}_{self.current_frame}.png",
                 )
 
                 object_viz_path = os.path.join(
-                    artifact_path,
+                    self.artifact_path,
                     f"dino_general_result_{shot_idx}_{self.current_frame}.png",
                 )
 
@@ -1736,6 +1900,6 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         self.progress.phase_started(Phase.FINALIZE)
         information = self._finalize_data()
         self.progress.phase_completed(Phase.FINALIZE)
-        self._save_results_to_json(information, artifact_path)
+        self._save_results_to_json(information, self.artifact_path)
 
         return information

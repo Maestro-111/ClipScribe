@@ -3,8 +3,8 @@
 // engine flow (backend/src/clip_scribe/engine.py + extractor_core.py): digest
 // the video, transcribe audio, split into scenes, then per-scene build targets
 // → detect (GroundingDINO) → track (SAM2), finalize, and hand off to the
-// parser layer. Purely presentational — no data, no props — so it never blocks
-// or depends on the form. Hovering a step reveals a fuller explanation.
+// parser layer. Object-only stages are omitted when the form selects the
+// no-objects extraction mode. Hovering a step reveals a fuller explanation.
 import { useEffect, useState, type ReactNode } from "react";
 
 // One node in the flow. `icon` is a compact inline SVG so the component stays
@@ -140,16 +140,26 @@ const STAGES: Stage[] = [
 // stays lively but not distracting next to a form the user is filling in.
 const STEP_MS = 1150;
 
-export function PipelineAnimation() {
+export function PipelineAnimation({
+  includeObjects = true,
+}: {
+  includeObjects?: boolean;
+}) {
   const [active, setActive] = useState(0);
+  const stages = includeObjects
+    ? STAGES
+    : STAGES.filter(
+        (stage) => !["targets", "detect", "track"].includes(stage.key),
+      );
+  const activeIndex = active % stages.length;
 
   useEffect(() => {
     const id = setInterval(
-      () => setActive((i) => (i + 1) % STAGES.length),
+      () => setActive((i) => (i + 1) % stages.length),
       STEP_MS,
     );
     return () => clearInterval(id);
-  }, []);
+  }, [stages.length]);
 
   return (
     <div className="select-none">
@@ -162,19 +172,19 @@ export function PipelineAnimation() {
       </div>
 
       <ol className="relative space-y-1">
-        {STAGES.map((stage, i) => {
-          const isActive = i === active;
+        {stages.map((stage, i) => {
+          const isActive = i === activeIndex;
           // Stages the pulse has already passed this loop stay lightly filled.
-          const isDone = i < active;
+          const isDone = i < activeIndex;
           return (
             <li key={stage.key} className="group relative flex gap-3">
               {/* Connector rail: a vertical line linking the nodes, with the
                   segment above the active node tinted to suggest flow. */}
-              {i < STAGES.length - 1 && (
+              {i < stages.length - 1 && (
                 <span
                   aria-hidden
                   className={`absolute left-[19px] top-10 h-[calc(100%-1rem)] w-0.5 transition-colors duration-500 ${
-                    active > i ? "bg-blue-300" : "bg-neutral-200"
+                    activeIndex > i ? "bg-blue-300" : "bg-neutral-200"
                   }`}
                 />
               )}

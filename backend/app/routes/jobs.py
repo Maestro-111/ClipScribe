@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app import exports
+from app import exports, abcd_exports, metadata_exports
 from app.deps import (
     current_user_id,
     get_reader,
@@ -122,7 +122,7 @@ async def get_job(
 
 async def _job_run_reports(
     reader: ClipScribeAsyncReaderDB, job: dict
-) -> list[exports.RunReport]:
+) -> list[abcd_exports.RunReport]:
     """Completed runs of a job, oldest first, each with its parser results.
 
     Works whether ``job`` is a batch parent (walk its children) or a single
@@ -131,19 +131,67 @@ async def _job_run_reports(
     """
     children = await reader.get_child_jobs(job["job_id"])
     candidates = children if children else [job]
-    reports: list[exports.RunReport] = []
+    reports: list[abcd_exports.RunReport] = []
     for child in candidates:
         run_id = child.get("run_id")
         if child.get("status") != "completed" or not run_id:
             continue
         reports.append(
-            exports.RunReport(
+            abcd_exports.RunReport(
                 run_id=run_id,
                 video_name=child.get("video_name") or run_id,
                 rows=await reader.get_parser_results(run_id),
             )
         )
     return reports
+
+
+async def _job_metadata_envelope(
+    reader: ClipScribeAsyncReaderDB,
+    job: dict,
+    *,
+    include_frame_detections: bool,
+) -> metadata_exports.JobMetadataEnvelope:
+    """Load every child plus canonical metadata for each persisted run."""
+    children = await reader.get_child_jobs(job["job_id"])
+    candidates = children if children else [job]
+
+    async def load_entry(child: dict) -> metadata_exports.BatchRunEntry:
+        run_id = child.get("run_id")
+        report: metadata_exports.RunMetadataReport | None = None
+        if run_id:
+            run = await reader.get_run(run_id)
+            summary = await reader.get_extraction_summary(
+                run_id,
+                include_frame_detections=include_frame_detections,
+            )
+
+            if run is not None and summary is not None:
+                report = metadata_exports.RunMetadataReport(
+                    run_id=run_id,
+                    video_name=(
+                        run.get("video_name") or child.get("video_name") or run_id
+                    ),
+                    video_type=run.get("video_type"),
+                    created_at=run.get("created_at"),
+                    extraction_mode=run.get("extraction_mode") or "with_objects",
+                    summary=summary,
+                )
+        return metadata_exports.BatchRunEntry(
+            job_id=child["job_id"],
+            run_id=run_id,
+            video_name=child.get("video_name") or run_id or child["job_id"],
+            status=child.get("status") or "unknown",
+            report=report,
+        )
+
+    entries = [await load_entry(child) for child in candidates]
+    return metadata_exports.JobMetadataEnvelope(
+        job_id=job["job_id"],
+        job_name=job.get("video_name") or job["job_id"],
+        created_at=job.get("created_at"),
+        entries=entries,
+    )
 
 
 @router.get("/{job_id}/export", summary="Download every run's ABCD report")
@@ -158,7 +206,7 @@ async def export_job(
     XLSX carries a cross-run Summary sheet plus one Detail sheet per run; CSV
     stacks every run's criteria into one table with a leading Video column.
     """
-    if fmt not in exports.VALID_FORMATS:
+    if fmt not in abcd_exports.VALID_FORMATS:
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
@@ -170,13 +218,52 @@ async def export_job(
             title="Conflict",
             detail=f"job '{job_id}' has no completed runs to export",
         )
-    export = exports.job_csv if fmt == "csv" else exports.job_xlsx
+    export = abcd_exports.job_csv if fmt == "csv" else abcd_exports.job_xlsx
     content = await run_in_threadpool(export, reports)
     stem = f"{job.get('video_name') or 'job'}_abcd"
     filename = exports.export_filename(stem, fmt)
     return Response(
         content=content,
-        media_type=exports.CONTENT_TYPES[fmt],
+        media_type=abcd_exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{job_id}/metadata/export",
+    summary="Download extracted video metadata for this job",
+)
+async def export_job_metadata(
+    job_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    job: dict = Depends(require_owned_job),
+) -> Response:
+    """Export every available child run as XLSX or canonical JSON."""
+    if fmt not in metadata_exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+
+    envelope = await _job_metadata_envelope(
+        reader,
+        job,
+        include_frame_detections=fmt == "json",
+    )
+
+    if not any(entry.metadata_available for entry in envelope.entries):
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"job '{job_id}' has no persisted video metadata to export",
+        )
+
+    export = metadata_exports.job_json if fmt == "json" else metadata_exports.job_xlsx
+    content = await run_in_threadpool(export, envelope)
+    filename = exports.export_filename(f"{envelope.job_name}_metadata", fmt)
+    return Response(
+        content=content,
+        media_type=metadata_exports.CONTENT_TYPES[fmt],
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

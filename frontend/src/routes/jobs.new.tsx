@@ -39,6 +39,8 @@ interface SelectedVideo {
   file?: File;
 }
 
+type ExtractionMode = NonNullable<JobCreateRequest["extraction_mode"]>;
+
 // Stable identity for dedup/removal: the storage key for stored videos, or a
 // name+size signature for files not yet uploaded.
 function videoKey(v: SelectedVideo): string {
@@ -54,6 +56,8 @@ function NewJob() {
   // Mode is always "full" from the UI: "extract"/"parse" are developer-only
   // paths run against the API / main.py directly, not user-facing.
   const mode = "full" as const;
+  const [extractionMode, setExtractionMode] =
+    useState<ExtractionMode>("with_objects");
 
   // The batch of videos this job will process. All share the platform, params,
   // and hints below (same brand/product context).
@@ -147,6 +151,7 @@ function NewJob() {
     createJob.mutate(
       {
         mode,
+        extraction_mode: extractionMode,
         platform: platform as JobCreateRequest["platform"],
         videos: resolved.map((v) => ({
           video_path: v.path!,
@@ -338,6 +343,45 @@ function NewJob() {
                 className="w-full rounded border px-2 py-1.5"
               />
             </Field>
+
+            <Field
+              label="Extraction mode"
+              hint="Choose whether to detect and track objects in addition to scenes, speech, and on-screen text."
+              group
+            >
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={extractionMode === "with_objects"}
+                  onClick={() => setExtractionMode("with_objects")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    extractionMode === "with_objects"
+                      ? "border-blue-600 bg-blue-50 text-blue-800 ring-1 ring-blue-600"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400"
+                  }`}
+                >
+                  <span className="block font-medium">Track objects</span>
+                  <span className="mt-0.5 block text-xs opacity-75">
+                    Full detection, faces, and cross-shot tracking
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={extractionMode === "no_objects"}
+                  onClick={() => setExtractionMode("no_objects")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    extractionMode === "no_objects"
+                      ? "border-blue-600 bg-blue-50 text-blue-800 ring-1 ring-blue-600"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400"
+                  }`}
+                >
+                  <span className="block font-medium">Skip objects</span>
+                  <span className="mt-0.5 block text-xs opacity-75">
+                    Scenes, speech, and OCR only
+                  </span>
+                </button>
+              </div>
+            </Field>
           </div>
         </section>
 
@@ -503,16 +547,17 @@ function NewJob() {
             waiting to dig into the queued videos — grows and turns eager as
             videos are added. Fixed-positioned, so it self-places. */}
         <ScribeMascot state={scribeState} videoCount={selected.length} />
-        <PipelineAnimation />
+        <PipelineAnimation includeObjects={extractionMode === "with_objects"} />
         <JobSummary
           videoCount={selected.length}
           platform={platform}
           brandName={brandName}
           videoType={videoType}
+          extractionMode={extractionMode}
           hintTermCount={splitComma(userHints).length}
           generateHintFromName={generateHintFromName}
         />
-        <RunOutputs />
+        <RunOutputs includeObjects={extractionMode === "with_objects"} />
       </aside>
     </div>
   );
@@ -607,20 +652,36 @@ function Field({
   label,
   hint,
   required,
+  group = false,
   children,
 }: {
   label: string;
   hint?: string;
   required?: boolean;
+  group?: boolean;
   children: React.ReactNode;
 }) {
+  const labelContent = (
+    <span className="mb-1 block text-sm font-medium">
+      {label}
+      {required && <span className="ml-1 text-red-500">*</span>}
+    </span>
+  );
+
+  if (group) {
+    return (
+      <fieldset>
+        <legend className="w-full">{labelContent}</legend>
+        {children}
+        {hint && <p className="mt-1 text-xs text-neutral-500">{hint}</p>}
+      </fieldset>
+    );
+  }
+
   return (
     <div>
       <label className="block">
-        <span className="mb-1 block text-sm font-medium">
-          {label}
-          {required && <span className="ml-1 text-red-500">*</span>}
-        </span>
+        {labelContent}
         {children}
       </label>
       {hint && <p className="mt-1 text-xs text-neutral-500">{hint}</p>}

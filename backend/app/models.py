@@ -18,6 +18,11 @@ class JobMode(str, Enum):
     PARSE = "parse"
 
 
+class ExtractionMode(str, Enum):
+    WITH_OBJECTS = "with_objects"
+    NO_OBJECTS = "no_objects"
+
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -107,6 +112,7 @@ class JobCreateRequest(BaseModel):
     """
 
     mode: JobMode
+    extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
     platform: PlatformName = PlatformName.YOUTUBE
     # One run per video. Required (non-empty) for full/extract. Parse validates
     # here for local/dev callers but is rejected by the web job service.
@@ -262,6 +268,7 @@ class RunResponse(BaseModel):
     video_name: str | None = None
     video_path: str | None = None
     video_type: str | None = None
+    extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
     created_at: str | None = None
 
 

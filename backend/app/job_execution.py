@@ -135,6 +135,7 @@ def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
                 video_key=payload["video_path"] or "",
                 video_type=payload["video_type"],
                 clib_scribe_mode=req.mode.value,
+                extraction_mode=req.extraction_mode.value,
                 clib_scribe_platform_name=req.platform.value,
                 clib_scribe_platform_conf=platform_conf,
                 user_hints=req.user_hints,

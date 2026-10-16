@@ -1,7 +1,10 @@
 """Read-only database access for ClipScribe."""
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -9,7 +12,146 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .engine import ClipScribeAsyncBaseDB, ClipScribeBaseDB
 
+if TYPE_CHECKING:
+    from clip_scribe.extractor.extractor_models import (
+        AudioSegment,
+        ExtractionSummary,
+        FrameDetection,
+        GlobalStats,
+        SceneDescriptionRecord,
+        ShotData,
+        TextEvent,
+        VisualObjectOccurrence,
+        VisualObjectSummary,
+    )
+
 logger = logging.getLogger("clip_scribe")
+
+
+def _canonical_global_stats(row: dict | None) -> GlobalStats:
+    """Restore the nested ``ExtractionSummary.global_stats`` shape."""
+    if row is None:
+        return {}
+
+    return {
+        "total_shots": row["total_shots"],
+        "video_duration": row["video_duration"],
+        "avg_shot_duration": row["avg_shot_duration"],
+        "dynamic_start": {
+            "detected": bool(row["dynamic_start_detected"]),
+            "first_shot_duration": row["dynamic_start_first_shot_dur"],
+            "criteria": row["dynamic_start_criteria"],
+        },
+        "quick_pacing_intro": {
+            "detected": bool(row["qp_intro_detected"]),
+            "shot_count": row["qp_intro_shot_count"],
+            "shots": row["qp_intro_shots"] or [],
+            "criteria": row["qp_intro_criteria"],
+        },
+        "quick_pacing_general": {
+            "detected": bool(row["qp_general_detected"]),
+            "rapid_fire_segments": row["qp_general_rapid_fire_segments"] or [],
+            "criteria": row["qp_general_criteria"],
+        },
+    }
+
+
+def _canonical_visual_objects(rows: list[dict]) -> list[VisualObjectSummary]:
+    """Regroup flattened occurrence rows by their resolved global object id."""
+    grouped: dict[int, VisualObjectSummary] = {}
+    for row in rows:
+        global_id = int(row["global_id"])
+        occurrence: VisualObjectOccurrence = {
+            "shot_index": row["shot_index"],
+            "lifespan": [row["lifespan_start"], row["lifespan_end"]],
+            "screen_coverage": row["screen_coverage"],
+            "velocity_px_sec": row["velocity_px_sec"],
+            "growth_factor": row["growth_factor"],
+            "direction": row["direction"],
+            "centrality_score": row["centrality_score"],
+            "screen_time_ratio": row["screen_time_ratio"],
+            "quadrant": row["quadrant"],
+        }
+        obj = grouped.get(global_id)
+        if obj is None:
+            grouped[global_id] = {
+                "global_id": global_id,
+                "label": row["label"],
+                "occurrences": [occurrence],
+            }
+        else:
+            obj["occurrences"].append(occurrence)
+
+    return [grouped[global_id] for global_id in sorted(grouped)]
+
+
+def _canonical_text_events(rows: list[dict]) -> list[TextEvent]:
+    """Regroup persisted OCR lines into one event per integer second."""
+    grouped: dict[int, list[str]] = {}
+    for row in rows:
+        second = int(row["second"])
+        grouped.setdefault(second, []).append(row["text"])
+    return [
+        {"second": second, "text": lines} for second, lines in sorted(grouped.items())
+    ]
+
+
+def _canonical_audio_segments(rows: list[dict]) -> list[AudioSegment]:
+    return [
+        {
+            "start": row["start_time"],
+            "end": row["end_time"],
+            "text": row["text"],
+            "confidence": row["confidence"],
+        }
+        for row in rows
+    ]
+
+
+def _canonical_scene_descriptions(
+    rows: list[dict],
+) -> list[SceneDescriptionRecord]:
+    return [
+        {
+            "shot_index": row["shot_index"],
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
+            "description": row["description"],
+        }
+        for row in rows
+    ]
+
+
+def _canonical_shot_boundaries(rows: list[dict]) -> list[ShotData]:
+    return [
+        {
+            "index": row["shot_index"],
+            "start": row["start_sec"],
+            "end": row["end_sec"],
+            "duration": row["duration_sec"],
+        }
+        for row in rows
+    ]
+
+
+def _canonical_frame_detections(rows: list[dict]) -> list[FrameDetection]:
+    return [
+        {
+            "shot_index": row["shot_index"],
+            "frame_idx": row["frame_idx"],
+            "timestamp_sec": row["timestamp_sec"],
+            "source": row["source"],
+            "label": row["label"],
+            "text": row["text"],
+            "box_x1": row["box_x1"],
+            "box_y1": row["box_y1"],
+            "box_x2": row["box_x2"],
+            "box_y2": row["box_y2"],
+            "confidence": row["confidence"],
+            "object_id": row["object_id"],
+        }
+        for row in rows
+    ]
 
 
 class _ReaderOperations:
@@ -190,6 +332,51 @@ class _ReaderOperations:
         query += " ORDER BY frame_idx, id"
         result = conn.execute(text(query), params)
         return [dict(row) for row in result.mappings().fetchall()]
+
+    @staticmethod
+    def get_extraction_summary(
+        conn: Connection,
+        run_id: str,
+        include_frame_detections: bool = True,
+    ) -> ExtractionSummary | None:
+        """Reconstruct the extractor's canonical output from normalized rows.
+
+        The run row is the existence boundary: an unknown run returns ``None``;
+        a known run with empty child tables returns a structurally complete
+        summary with empty collections.
+        """
+        if _ReaderOperations.get_run(conn, run_id) is None:
+            return None
+
+        frame_detections = (
+            _canonical_frame_detections(
+                _ReaderOperations.get_frame_detections(conn, run_id)
+            )
+            if include_frame_detections
+            else []
+        )
+
+        return {
+            "global_stats": _canonical_global_stats(
+                _ReaderOperations.get_global_stats(conn, run_id)
+            ),
+            "visual_objects": _canonical_visual_objects(
+                _ReaderOperations.get_visual_objects(conn, run_id)
+            ),
+            "text_events": _canonical_text_events(
+                _ReaderOperations.get_text_events(conn, run_id)
+            ),
+            "audio_segments": _canonical_audio_segments(
+                _ReaderOperations.get_audio_segments(conn, run_id)
+            ),
+            "scene_descriptions": _canonical_scene_descriptions(
+                _ReaderOperations.get_scene_descriptions(conn, run_id)
+            ),
+            "shot_boundaries": _canonical_shot_boundaries(
+                _ReaderOperations.get_shot_boundaries(conn, run_id)
+            ),
+            "frame_detections": frame_detections,
+        }
 
     @staticmethod
     def get_parser_results(conn: Connection, run_id: str) -> list[dict]:
@@ -560,6 +747,19 @@ class ClipScribeAsyncReaderDB(ClipScribeAsyncBaseDB):
                 to_sec,
             )
 
+    async def get_extraction_summary(
+        self,
+        run_id: str,
+        include_frame_detections: bool = True,
+    ) -> ExtractionSummary | None:
+        """Reconstruct a run's canonical ``ExtractionSummary``."""
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(
+                self.reader_op.get_extraction_summary,
+                run_id,
+                include_frame_detections,
+            )
+
     async def get_parser_results(self, run_id: str) -> list[dict]:
         async with self._async_engine.connect() as conn:
             return await conn.run_sync(self.reader_op.get_parser_results, run_id)
@@ -783,6 +983,19 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
                 run_id,
                 from_sec,
                 to_sec,
+            )
+
+    def get_extraction_summary(
+        self,
+        run_id: str,
+        include_frame_detections: bool = True,
+    ) -> ExtractionSummary | None:
+        """Reconstruct a run's canonical ``ExtractionSummary``."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_extraction_summary(
+                conn,
+                run_id,
+                include_frame_detections,
             )
 
     def get_parser_results(self, run_id: str) -> list[dict]:

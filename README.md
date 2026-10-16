@@ -42,10 +42,11 @@ The extractor runs four ordered phases, with the detailed per-shot detection and
 - LangGraph/LangChain parser agents for feature evaluation
 - YouTube platform evaluation support
 - SQLite or PostgreSQL persistence through SQLAlchemy
-- Per-run extraction artifacts, parser report generation, and CSV/XLSX ABCD exports for runs and jobs
-- FastAPI API for deduplicated video uploads, jobs, Redis Stream-backed live progress, run inspection, run/job advisory chat, ABCD exports, and artifact serving
+- Per-run extraction artifacts, parser report generation, CSV/XLSX ABCD exports, and XLSX/JSON extracted-metadata exports for runs and jobs
+- Per-job `extraction_mode` (`with_objects` default, or `no_objects` to skip object detection, tracking, and faces), recorded on each run
+- FastAPI API for deduplicated video uploads, jobs, Redis Stream-backed live progress, run inspection, run/job advisory chat, ABCD and metadata exports, and artifact serving
 - Inline or Redis-backed Celery job dispatch
-- Vite/React dashboard for job submission, live job progress, run inspection, ABCD export downloads, and run/job advisory chat
+- Vite/React dashboard for job submission, live job progress, run inspection, ABCD and metadata export downloads, and run/job advisory chat
 
 ## Setup
 
@@ -127,22 +128,24 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 - `POST /uploads` — upload one or more video files through the configured video storage backend; files are streamed to staging, hashed, deduplicated per user by SHA-256, and registered with their original filenames.
 - `GET /inputs` — list the user's registered videos after reconciling missing storage objects; returned `path` values are valid `videos[].video_path` keys.
-- `POST /jobs` — create a batch job from one or more `videos` sharing platform params and hints; parser-only `parse` is local/dev-only and rejected by the job API.
+- `POST /jobs` — create a batch job from one or more `videos` sharing platform params, hints, and an `extraction_mode` (`with_objects` default or `no_objects`); parser-only `parse` is local/dev-only and rejected by the job API.
 - `GET /jobs?status=&limit=&offset=` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
 - `GET /jobs/{job_id}/export?format=xlsx|csv` — export all completed runs' ABCD results; XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
+- `GET /jobs/{job_id}/metadata/export?format=xlsx|json` — export extracted video metadata for every child run that has persisted data; JSON is the lossless canonical extraction summary (including frame detections), XLSX omits raw frame detections.
 - `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in a job.
 - `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
 - `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
 - `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data, chat transcripts, and artifacts.
 - `GET /runs/{run_id}/...` — inspect persisted run data, sibling runs, frame detections, parser results, and artifacts.
 - `GET /runs/{run_id}/parser/export?format=xlsx|csv` — export one run's ABCD results; XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
+- `GET /runs/{run_id}/metadata/export?format=xlsx|json` — export one run's extracted video metadata; XLSX is human-readable tables, JSON is lossless.
 - `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed run.
 
 ### Local batch entry point (`main.py`)
 
-`backend/main.py` is a temporary, hardcoded entry point (not a stable CLI) for local experiments — video name, mode, run id, platform params, and device are edited in the file. Modes:
+`backend/main.py` is a temporary, hardcoded entry point (not a stable CLI) for local experiments — video name, mode, extraction mode, run id, platform params, and device are edited in the file. Modes:
 
 - `extract` — run extraction and write per-run artifacts (no DB run row); local dev only.
 - `parse` — evaluate an existing persisted `run_id`.

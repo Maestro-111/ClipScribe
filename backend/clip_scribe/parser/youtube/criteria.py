@@ -131,6 +131,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual_text",
+            "requires_object_data": True,
         },
         {
             "id": "b_brand_visuals_1st_5_secs",
@@ -147,6 +148,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual_text",
+            "requires_object_data": True,
         },
         {
             "id": "b_product_mention_speech",
@@ -229,6 +231,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "b_product_visuals_1st_5_secs",
@@ -246,6 +249,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "c_overall_pacing",
@@ -277,6 +281,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "c_presence_of_people_1st_5_secs",
@@ -294,6 +299,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "c_visible_face",
@@ -311,6 +317,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "c_visible_face_close_up",
@@ -329,6 +336,7 @@ def get_feature_configs():
             ],
             "mode": "agentic",
             "tool_group": "visual",
+            "requires_object_data": True,
         },
         {
             "id": "d_audio_speech_early_1st_5_secs",

@@ -57,6 +57,7 @@ class _WriterOperations:
         video_type: str | None,
         video_metadata: Mapping[str, Any],
         field_descriptions: Mapping[str, Mapping[str, str]],
+        extraction_mode: str = "with_objects",
     ) -> str:
         _WriterOperations._insert_run(
             conn,
@@ -64,6 +65,7 @@ class _WriterOperations:
             video_name,
             video_path,
             video_type,
+            extraction_mode,
         )
         _WriterOperations._insert_global_stats(
             conn,
@@ -110,6 +112,7 @@ class _WriterOperations:
         video_name: str,
         video_path: str,
         video_type: str | None,
+        extraction_mode: str,
     ) -> None:
         conn.execute(
             runs_table.insert().values(
@@ -117,6 +120,7 @@ class _WriterOperations:
                 video_name=video_name,
                 video_path=video_path,
                 video_type=video_type,
+                extraction_mode=extraction_mode,
             )
         )
 
@@ -612,6 +616,7 @@ class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
         video_type: str | None,
         video_metadata: Mapping[str, Any],
         field_descriptions: Mapping[str, Mapping[str, str]],
+        extraction_mode: str = "with_objects",
     ) -> str:
         """Persist a full extraction run in one transaction."""
         async with self._async_engine.begin() as conn:
@@ -623,6 +628,7 @@ class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
                 video_type,
                 video_metadata,
                 field_descriptions,
+                extraction_mode,
             )
         logger.info("Saved run %s for '%s'", run_id, video_name)
         return saved_run_id
@@ -835,6 +841,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
         video_type: str | None,
         video_metadata: Mapping[str, Any],
         field_descriptions: Mapping[str, Mapping[str, str]],
+        extraction_mode: str = "with_objects",
     ) -> str:
         """Persist a full extraction run under the supplied ``run_id``."""
         with self._engine.begin() as conn:
@@ -846,6 +853,7 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
                 video_type,
                 video_metadata,
                 field_descriptions,
+                extraction_mode,
             )
         logger.info("Saved run %s for '%s'", run_id, video_name)
         return saved_run_id

@@ -175,6 +175,7 @@ def test_create_job_returns_202_and_queues_parent_plus_child(ctx):
     assert parent["parent_job_id"] is None
     # full batch request persisted on the parent for reproducibility / retry
     assert parent["params_json"]["platform_params"]["brand_name"] == "RAM"
+    assert parent["params_json"]["extraction_mode"] == "with_objects"
 
     child = _only_child(state, data["job_id"])
     assert child["status"] == "queued"
@@ -222,8 +223,21 @@ def test_create_job_runs_to_completed(ctx):
     assert child["status"] == "completed"
     assert child["started_at"] and child["finished_at"]
     assert state.engine.ran_with == child["run_id"]
+    assert state.builder.built[0]["extraction_mode"] == "with_objects"
     # parent aggregate reflects the completed child
     assert client.get(f"/jobs/{parent_id}").json()["status"] == "completed"
+
+
+def test_create_job_propagates_no_objects_extraction_mode(ctx):
+    client, state = ctx
+    state.install_service(run=True)
+
+    resp = client.post("/jobs", json=_full_body(extraction_mode="no_objects"))
+
+    assert resp.status_code == 202
+    assert state.builder.built[0]["extraction_mode"] == "no_objects"
+    child = _only_child(state, resp.json()["job_id"])
+    assert child["params_json"]["extraction_mode"] == "no_objects"
 
 
 def test_create_job_records_failure(ctx):
@@ -422,6 +436,15 @@ def test_unsupported_platform_is_422(ctx):
     client, state = ctx
     # Only youtube is registered; anything else is rejected at validation.
     resp = client.post("/jobs", json=_full_body(platform="tiktok"))
+    assert resp.status_code == 422
+    assert resp.headers["content-type"] == "application/problem+json"
+
+
+def test_unsupported_extraction_mode_is_422(ctx):
+    client, _ = ctx
+
+    resp = client.post("/jobs", json=_full_body(extraction_mode="objects_maybe"))
+
     assert resp.status_code == 422
     assert resp.headers["content-type"] == "application/problem+json"
 

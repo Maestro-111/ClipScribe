@@ -37,6 +37,7 @@ class VideoInformationParser:
         recursion_limit: int = 20,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
+        extraction_mode: str = "with_objects",
     ):
         """
         Initialize the video information parser.
@@ -58,6 +59,7 @@ class VideoInformationParser:
         self.recursion_limit = recursion_limit
         self.model = self.create_agent_model(agent)
         self.progress = progress_reporter or NullProgressReporter()
+        self.object_data_available = extraction_mode == "with_objects"
         # Cooperative-cancel token, passed on to the evaluator so it can stop
         # between criteria. Null (never canceled) for CLI/tests.
         self._cancel = cancel_token or NullCancellationToken()
@@ -100,6 +102,7 @@ class VideoInformationParser:
                 max_parallel_agents=self.max_parallel_agents,
                 recursion_limit=self.recursion_limit,
                 cancel_token=self._cancel,
+                object_data_available=self.object_data_available,
             )
 
         return evaluator

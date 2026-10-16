@@ -10,7 +10,13 @@ import {
 import { ChatPanel } from "../components/ChatPanel";
 import { FloatingScribe } from "../components/FloatingScribe";
 import { type ScribeMood } from "../components/Scribe";
-import { ExportMenu, Pagination, Spinner, StatusPill } from "../components/ui";
+import {
+  ExportMenu,
+  Pagination,
+  Spinner,
+  StatusPill,
+  XLSX_JSON_EXPORT_ITEMS,
+} from "../components/ui";
 import { formatDuration, formatMergedDuration } from "../lib/format";
 
 // Per-run table page size for batch jobs with many videos.
@@ -575,7 +581,7 @@ function BatchJob() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Link
             to="/"
@@ -590,8 +596,20 @@ function BatchJob() {
             {total} run{total === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {done > 0 && <ExportMenu baseHref={`/api/jobs/${jobId}/export`} label="Export all" />}
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {done > 0 && (
+            <>
+              <ExportMenu
+                baseHref={`/api/jobs/${jobId}/metadata/export`}
+                label="Export metadata"
+                items={XLSX_JSON_EXPORT_ITEMS}
+              />
+              <ExportMenu
+                baseHref={`/api/jobs/${jobId}/export`}
+                label="Export ABCD"
+              />
+            </>
+          )}
           <StatusPill status={status} />
         </div>
       </div>
