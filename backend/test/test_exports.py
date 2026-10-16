@@ -296,7 +296,7 @@ def test_job_metadata_export_xlsx_route_stacks_runs(ctx):
     assert "Definitions" in wb.sheetnames
     summary_rows = list(wb["Summary"].iter_rows(values_only=True))
     assert [row[0] for row in summary_rows[1:]] == ["first.mp4", "second.mp4"]
-    assert all(row[4] == "Yes" for row in summary_rows[1:])
+    assert all(row[3] == "Yes" for row in summary_rows[1:])
 
 
 def test_job_metadata_export_json_route_includes_each_child(ctx):

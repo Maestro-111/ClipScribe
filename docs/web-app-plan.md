@@ -114,7 +114,9 @@ clipscribe/
       routes/                     # jobs, runs, artifacts, chat, health, meta, uploads
       models.py                   # Pydantic request/response schemas
       events.py                   # Redis Streams progress helpers + log bridge
-      exports.py                  # on-demand CSV/XLSX ABCD report bytes
+      exports.py                  # shared export helpers (filenames, XLSX utilities)
+      abcd_exports.py             # on-demand CSV/XLSX ABCD report bytes
+      metadata_exports.py         # XLSX/JSON extracted-metadata export bytes
     docker/
       api/
         Dockerfile                # slim API image; also runs migrate
@@ -527,13 +529,14 @@ OpenAPI-generated; TS client codegen via `openapi-typescript`. All routes
 return Pydantic-validated JSON. Errors: RFC7807 (`type`/`title`/`detail`).
 Implemented routes cover the inline and Celery dispatch paths, Redis
 Stream-backed SSE progress, read-only run views, artifacts, metadata, uploads,
-ABCD exports, and advisory chat.
+ABCD and metadata exports, and advisory chat.
 
 ### Jobs
-- `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; parser-only `parse` is local/dev-only and rejected by this API.
+- `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; `extraction_mode` (`with_objects` default, `no_objects` skips detection/tracking/faces) is persisted on the `runs` row; parser-only `parse` is local/dev-only and rejected by this API.
 - `GET    /jobs`                       — paginated top-level jobs, filterable by effective status; batch parent status is aggregated from children.
 - `GET    /jobs/{id}`                  — full state. Parents include `children`; child/leaf rows return their own status and no children.
 - `GET    /jobs/{id}/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
+- `GET    /jobs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for every child run with persisted data (409 if none). JSON is the lossless canonical `ExtractionSummary` per run, including `frame_detections`; XLSX omits raw frame detections. Builders live in `backend/app/metadata_exports.py`.
 - `GET    /jobs/{id}/events`           — SSE live progress for a leaf/child job. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
 - `POST   /jobs/{id}/cancel`           — cancel a queued/running child job, or every queued/running child under a parent batch. Running pipelines stop cooperatively at safe checkpoints.
@@ -551,6 +554,7 @@ ABCD exports, and advisory chat.
 - `GET /runs/{id}/frames?from=X&to=Y`  — `frame_detections` in time window.
 - `GET /runs/{id}/parser`              — `parser_results`.
 - `GET /runs/{id}/parser/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
+- `GET /runs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for one run (lossless JSON or human-readable XLSX).
 
 ### Artifacts (local or signed-URL backed)
 - `GET /runs/{id}/video`               — original input; local streams a `Range`-aware file, GCS redirects to a short-lived signed URL.
