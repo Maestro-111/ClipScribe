@@ -185,7 +185,7 @@ async def _job_metadata_envelope(
             report=report,
         )
 
-    entries = await asyncio.gather(*(load_entry(child) for child in candidates))
+    entries = [await load_entry(child) for child in candidates]
     return metadata_exports.JobMetadataEnvelope(
         job_id=job["job_id"],
         job_name=job.get("video_name") or job["job_id"],
