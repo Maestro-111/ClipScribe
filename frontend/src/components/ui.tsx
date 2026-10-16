@@ -101,18 +101,56 @@ export function EmptyState({
   );
 }
 
-// Download menu for the ABCD report. `baseHref` is the export endpoint (e.g.
-// "/api/runs/{id}/parser/export"); each item appends ?format=. The server sets
-// Content-Disposition: attachment, so a plain anchor triggers the download.
+export interface ExportMenuItem {
+  format: string;
+  label: string;
+  badge: string;
+  badgeClassName?: string;
+}
+
+const XLSX_EXPORT_ITEM: ExportMenuItem = {
+  format: "xlsx",
+  label: "Excel (.xlsx)",
+  badge: "X",
+  badgeClassName: "bg-green-100 text-green-700",
+};
+
+const DEFAULT_EXPORT_ITEMS: readonly ExportMenuItem[] = [
+  XLSX_EXPORT_ITEM,
+  {
+    format: "csv",
+    label: "CSV (.csv)",
+    badge: ",",
+    badgeClassName: "bg-neutral-100 text-neutral-600",
+  },
+];
+
+export const XLSX_JSON_EXPORT_ITEMS: readonly ExportMenuItem[] = [
+  XLSX_EXPORT_ITEM,
+  {
+    format: "json",
+    label: "JSON (.json)",
+    badge: "{}",
+    badgeClassName: "bg-blue-100 text-blue-700",
+  },
+];
+
+// Download menu for file exports. `baseHref` is the export endpoint (e.g.
+// "/api/runs/{id}/parser/export"); each configured item appends ?format=.
+// The default items preserve the ABCD report's Excel and CSV downloads.
+// The server sets Content-Disposition: attachment, so a plain anchor triggers
+// the download.
 // Native <details> handles open/close (and click-away) without extra state;
 // the marker is hidden (incl. Safari's ::-webkit-details-marker) so we control
 // the chevron, which flips when open.
 export function ExportMenu({
   baseHref,
   label = "Export",
+  items = DEFAULT_EXPORT_ITEMS,
 }: {
   baseHref: string;
   label?: string;
+  items?: readonly ExportMenuItem[];
 }) {
   return (
     <details className="group relative inline-block [&_summary::-webkit-details-marker]:hidden">
@@ -137,24 +175,20 @@ export function ExportMenu({
         </svg>
       </summary>
       <div className="absolute right-0 z-20 mt-1.5 w-40 overflow-hidden rounded-lg border border-neutral-200 bg-white py-1 shadow-lg ring-1 ring-black/5">
-        <a
-          href={`${baseHref}?format=xlsx`}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
-        >
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-green-100 text-[10px] font-semibold text-green-700">
-            X
-          </span>
-          Excel (.xlsx)
-        </a>
-        <a
-          href={`${baseHref}?format=csv`}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
-        >
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-neutral-100 text-[10px] font-semibold text-neutral-600">
-            ,
-          </span>
-          CSV (.csv)
-        </a>
+        {items.map((item) => (
+          <a
+            key={item.format}
+            href={`${baseHref}?format=${encodeURIComponent(item.format)}`}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+          >
+            <span
+              className={`inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${item.badgeClassName ?? "bg-neutral-100 text-neutral-600"}`}
+            >
+              {item.badge}
+            </span>
+            {item.label}
+          </a>
+        ))}
       </div>
     </details>
   );

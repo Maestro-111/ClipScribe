@@ -82,7 +82,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List input videos */
+        /**
+         * List input videos
+         * @description The user's uploaded videos, reconciled against storage at read time.
+         *
+         *     A registry row whose object has been removed out-of-band (bucket cleanup,
+         *     a dev deleting the file) is pruned and omitted here, so the picker can never
+         *     offer a video that no longer exists. This is the only correctness check for
+         *     the pick→run gap; a run keeps its own ``video_name`` snapshot, so pruning a
+         *     row never affects run history.
+         */
         get: operations["list_inputs_inputs_get"];
         put?: never;
         post?: never;
@@ -143,6 +152,26 @@ export interface paths {
          *     stacks every run's criteria into one table with a leading Video column.
          */
         get: operations["export_job_jobs__job_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/metadata/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download extracted video metadata for this job
+         * @description Export every available child run as XLSX or canonical JSON.
+         */
+        get: operations["export_job_metadata_jobs__job_id__metadata_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -259,10 +288,12 @@ export interface paths {
          *
          *     Derived from the jobs graph, not the ``runs`` table, so it resolves even
          *     while a sibling is still processing (its run row isn't written yet). This is
-         *     deliberately *not* guarded by ``_require_run``: the switcher must keep
+         *     deliberately *not* guarded by ``require_owned_run``: the switcher must keep
          *     working when the current run hasn't been persisted yet, otherwise the user
-         *     lands on an in-progress run and loses the way back. Empty when the run has no
-         *     batch job (e.g. a CLI-produced run), read as "no siblings to switch between".
+         *     lands on an in-progress run and loses the way back. Ownership is still
+         *     enforced — ``get_run_siblings`` filters on ``created_by``, so a run the caller
+         *     doesn't own (or a CLI-produced run) returns an empty list, read as "no
+         *     siblings to switch between".
          */
         get: operations["get_run_siblings_runs__run_id__siblings_get"];
         put?: never;
@@ -415,6 +446,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/metadata/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download this run's extracted video metadata
+         * @description Export human-readable XLSX or lossless canonical extraction JSON.
+         */
+        get: operations["export_metadata_runs__run_id__metadata_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/chat": {
         parameters: {
             query?: never;
@@ -424,8 +475,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the advisory agent (SSE stream) */
-        post: operations["post_chat_runs__run_id__chat_post"];
+        /** Ask the agent about the run (SSE stream) */
+        post: operations["post_run_chat_runs__run_id__chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -476,7 +527,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the job-level advisory agent (SSE) */
+        /** Ask the agent about the job (SSE) */
         post: operations["post_job_chat_jobs__job_id__chat_post"];
         delete?: never;
         options?: never;
@@ -656,6 +707,11 @@ export interface components {
             sessions: components["schemas"]["ChatSession"][];
         };
         /**
+         * ExtractionMode
+         * @enum {string}
+         */
+        ExtractionMode: "with_objects" | "no_objects";
+        /**
          * FrameDetection
          * @description A single bounding-box detection in one video frame.
          */
@@ -785,7 +841,7 @@ export interface components {
         JobCreateRequest: {
             mode: components["schemas"]["JobMode"];
             /** @default with_objects */
-            extraction_mode?: components["schemas"]["ExtractionMode"];
+            extraction_mode: components["schemas"]["ExtractionMode"];
             /** @default youtube */
             platform: components["schemas"]["PlatformName"];
             /** Videos */
@@ -829,11 +885,6 @@ export interface components {
          * @enum {string}
          */
         JobMode: "full" | "extract" | "parse";
-        /**
-         * ExtractionMode
-         * @enum {string}
-         */
-        ExtractionMode: "with_objects" | "no_objects";
         /**
          * JobProgressResponse
          * @description Coarse live progress for a job, derived from its Redis event stream.
@@ -974,6 +1025,8 @@ export interface components {
             video_path?: string | null;
             /** Video Type */
             video_type?: string | null;
+            /** @default with_objects */
+            extraction_mode: components["schemas"]["ExtractionMode"];
             /** Created At */
             created_at?: string | null;
         };
@@ -1314,6 +1367,39 @@ export interface operations {
         };
     };
     export_job_jobs__job_id__export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_job_metadata_jobs__job_id__metadata_export_get: {
         parameters: {
             query?: {
                 format?: string;
@@ -1787,7 +1873,40 @@ export interface operations {
             };
         };
     };
-    post_chat_runs__run_id__chat_post: {
+    export_metadata_runs__run_id__metadata_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_run_chat_runs__run_id__chat_post: {
         parameters: {
             query?: never;
             header?: never;
