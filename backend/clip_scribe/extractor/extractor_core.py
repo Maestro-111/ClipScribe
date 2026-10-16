@@ -42,6 +42,7 @@ from clip_scribe.extractor.extractor_models import (
     Embedding,
     ExtractionSummary,
     FrameDetection,
+    GlobalStats,
     OCRDetection,
     ObjectRegistryEntry,
     RapidFireInterval,
@@ -101,6 +102,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 "video_name": "Name of the video file processed.",
                 "video_path": "Full path to the video file.",
                 "video_type": "Category of video (e.g., 'car ad').",
+                "extraction_mode": (
+                    "Whether object detection and tracking were included in extraction."
+                ),
                 "created_at": "Timestamp when this run was created.",
             },
             "global_stats": {
@@ -408,7 +412,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
 
         self.audio_registry: list[AudioSegment] = []
         self.scene_description_registry: list[SceneDescriptionRecord] = []
-        self.global_stats: dict[str, object] = {}
+        self.global_stats: GlobalStats = {}
         self.audio_confidence = audio_confidence
 
         self.reid_model_frame_check_freq = reid_model_frame_check_freq

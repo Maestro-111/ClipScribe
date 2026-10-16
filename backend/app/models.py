@@ -268,6 +268,7 @@ class RunResponse(BaseModel):
     video_name: str | None = None
     video_path: str | None = None
     video_type: str | None = None
+    extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
     created_at: str | None = None
 
 

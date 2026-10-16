@@ -23,6 +23,12 @@ runs_table = Table(
     Column("video_name", Text),
     Column("video_path", Text),
     Column("video_type", Text),
+    Column(
+        "extraction_mode",
+        Text,
+        nullable=False,
+        server_default=text("'with_objects'"),
+    ),
     Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
 )
 

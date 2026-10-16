@@ -11,6 +11,7 @@ import types
 import pytest
 from sqlalchemy import create_engine, select
 
+from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import (
     metadata_obj,
     frame_detections_table,
@@ -98,11 +99,14 @@ def test_save_run_persists_shot_boundaries_and_frame_detections(writer):
         video_type="car ad",
         video_metadata=video_metadata,
         field_descriptions={},
+        extraction_mode="no_objects",
     )
 
     # The caller-supplied run_id is honored (not regenerated) and keys the rows.
     assert returned == run_id
-    assert _rows(engine, runs_table)[0]["run_id"] == run_id
+    run_row = _rows(engine, runs_table)[0]
+    assert run_row["run_id"] == run_id
+    assert run_row["extraction_mode"] == "no_objects"
 
     shots = _rows(engine, shot_boundaries_table)
     assert len(shots) == 2
@@ -115,6 +119,20 @@ def test_save_run_persists_shot_boundaries_and_frame_detections(writer):
     sam = next(d for d in dets if d["source"] == "sam_mask")
     assert sam["object_id"] == 7
     assert all(d["run_id"] == run_id for d in dets)
+
+    reader = ClipScribeReaderDB(engine=engine)
+    full_summary = reader.get_extraction_summary(run_id)
+    assert full_summary is not None
+    assert full_summary["shot_boundaries"] == video_metadata["shot_boundaries"]
+    assert full_summary["frame_detections"] == video_metadata["frame_detections"]
+
+    workbook_summary = reader.get_extraction_summary(
+        run_id,
+        include_frame_detections=False,
+    )
+    assert workbook_summary is not None
+    assert workbook_summary["frame_detections"] == []
+    assert workbook_summary["shot_boundaries"] == full_summary["shot_boundaries"]
 
 
 def test_save_parser_results_maps_feature_fields(writer):

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app import exports
+from app import exports, abcd_exports, metadata_exports
 from app.deps import current_user_id, get_reader, require_owned_run
 from app.errors import ProblemException
 from app.models import (
@@ -154,19 +154,63 @@ async def export_parser(
     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
     flat Detail table (still opens in Excel, just without the extra tab).
     """
-    if fmt not in exports.VALID_FORMATS:
+    if fmt not in abcd_exports.VALID_FORMATS:
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
     rows = await reader.get_parser_results(run_id)
     video_name = run.get("video_name") or run_id
     if fmt == "csv":
-        content = await run_in_threadpool(exports.run_csv, rows)
+        content = await run_in_threadpool(abcd_exports.run_csv, rows)
     else:
-        content = await run_in_threadpool(exports.run_xlsx, video_name, rows)
+        content = await run_in_threadpool(abcd_exports.run_xlsx, video_name, rows)
     filename = exports.export_filename(f"{video_name}_abcd", fmt)
     return Response(
         content=content,
-        media_type=exports.CONTENT_TYPES[fmt],
+        media_type=abcd_exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{run_id}/metadata/export",
+    summary="Download this run's extracted video metadata",
+)
+async def export_metadata(
+    run_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    run: dict = Depends(require_owned_run),
+) -> Response:
+    """Export human-readable XLSX or lossless canonical extraction JSON."""
+    if fmt not in metadata_exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+
+    summary = await reader.get_extraction_summary(
+        run_id,
+        include_frame_detections=fmt == "json",
+    )
+    if summary is None:  # Defensive: require_owned_run already established it.
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"run '{run_id}' not found"
+        )
+
+    video_name = run.get("video_name") or run_id
+    report = metadata_exports.RunMetadataReport(
+        run_id=run_id,
+        video_name=video_name,
+        video_type=run.get("video_type"),
+        created_at=run.get("created_at"),
+        extraction_mode=run.get("extraction_mode") or "with_objects",
+        summary=summary,
+    )
+    export = metadata_exports.run_json if fmt == "json" else metadata_exports.run_xlsx
+    content = await run_in_threadpool(export, report)
+    filename = exports.export_filename(f"{video_name}_metadata", fmt)
+    return Response(
+        content=content,
+        media_type=metadata_exports.CONTENT_TYPES[fmt],
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

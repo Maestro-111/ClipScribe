@@ -63,6 +63,9 @@ services:
       CLIPSCRIBE_DB_BACKEND: postgresql
       CLIPSCRIBE_DEVICE: cpu
       POSTGRESQL_URL: postgresql://clipscribe:clipscribe@postgres:5432/clipscribe
+    volumes:
+      - ./backend/alembic:/app/backend/alembic
+      - ./backend/clip_scribe:/app/backend/clip_scribe
     command: ["alembic", "upgrade", "head"]
     depends_on:
       postgres:

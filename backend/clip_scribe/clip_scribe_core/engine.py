@@ -269,6 +269,7 @@ class ClipScribeEngine:
             video_type=self.video_type,
             video_metadata=video_metadata,
             field_descriptions=field_descriptions,
+            extraction_mode=self.extraction_mode,
         )
 
     def _run_parser(self, run_id: str) -> None:
