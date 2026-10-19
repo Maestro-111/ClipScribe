@@ -1,7 +1,7 @@
 """Tests for step-3 raw-artifact persistence and supporting seams.
 
 Covers the new writer paths (frame_detections, shot_boundaries via save_run;
-parser_results via save_parser_results), the ULID id helper, and the artifact
+abcd_results via save_abcd_results), the ULID id helper, and the artifact
 uploader factory. The extractor's collection logic needs models to run, so it
 is exercised end-to-end via main.py rather than here.
 """
@@ -16,7 +16,7 @@ from clip_scribe.db.schema import (
     metadata_obj,
     frame_detections_table,
     shot_boundaries_table,
-    parser_results_table,
+    abcd_results_table,
     runs_table,
 )
 from clip_scribe.db.writer import ClipScribeWriterDB
@@ -135,7 +135,7 @@ def test_save_run_persists_shot_boundaries_and_frame_detections(writer):
     assert workbook_summary["shot_boundaries"] == full_summary["shot_boundaries"]
 
 
-def test_save_parser_results_maps_feature_fields(writer):
+def test_save_abcd_results_maps_feature_fields(writer):
     db, engine = writer
     run_id = new_ulid()
 
@@ -151,9 +151,9 @@ def test_save_parser_results_maps_feature_fields(writer):
     )
     bare = types.SimpleNamespace(platform="youtube", evaluation=False)
 
-    db.save_parser_results(run_id, "youtube", [rich, bare])
+    db.save_abcd_results(run_id, "youtube", [rich, bare])
 
-    rows = sorted(_rows(engine, parser_results_table), key=lambda r: r["id"])
+    rows = sorted(_rows(engine, abcd_results_table), key=lambda r: r["id"])
     assert len(rows) == 2
     assert rows[0]["feature_name"] == "Brand Mention (Speech)"
     assert rows[0]["evaluation"] is True
@@ -164,7 +164,7 @@ def test_save_parser_results_maps_feature_fields(writer):
     assert rows[1]["platform"] == "youtube"
 
 
-def test_save_parser_results_replaces_same_run_platform(writer):
+def test_save_abcd_results_replaces_same_run_platform(writer):
     db, engine = writer
     run_id = new_ulid()
 
@@ -190,12 +190,12 @@ def test_save_parser_results_replaces_same_run_platform(writer):
         evaluation=False,
     )
 
-    db.save_parser_results(run_id, "youtube", [old])
-    db.save_parser_results(run_id, "instagram", [other_platform])
-    db.save_parser_results(run_id, "youtube", [new])
+    db.save_abcd_results(run_id, "youtube", [old])
+    db.save_abcd_results(run_id, "instagram", [other_platform])
+    db.save_abcd_results(run_id, "youtube", [new])
 
     rows = sorted(
-        _rows(engine, parser_results_table), key=lambda r: (r["platform"], r["id"])
+        _rows(engine, abcd_results_table), key=lambda r: (r["platform"], r["id"])
     )
     assert [(r["platform"], r["feature_name"]) for r in rows] == [
         ("instagram", "Instagram"),

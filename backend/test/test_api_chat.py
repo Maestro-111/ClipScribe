@@ -21,7 +21,7 @@ from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import (
     jobs_table,
     metadata_obj,
-    parser_results_table,
+    abcd_results_table,
     runs_table,
 )
 from clip_scribe.db.writer import ClipScribeWriterDB
@@ -55,7 +55,7 @@ def ctx(tmp_path, async_db_adapters):
         )
         conn.execute(runs_table.insert(), {"run_id": RUN_ID, "video_name": "ad.mp4"})
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             [
                 {
                     "run_id": RUN_ID,

@@ -140,7 +140,7 @@ async def _job_run_reports(
             abcd_exports.RunReport(
                 run_id=run_id,
                 video_name=child.get("video_name") or run_id,
-                rows=await reader.get_parser_results(run_id),
+                rows=await reader.get_abcd_results(run_id),
             )
         )
     return reports

@@ -141,14 +141,14 @@ async def _exercise_async_writer(database_path: Path) -> None:
             feature_name="logo",
             evaluation=True,
         )
-        await writer.save_parser_results(run_id, "youtube", [parser_result])
-        assert len(await reader.get_parser_results(run_id)) == 1
+        await writer.save_abcd_results(run_id, "youtube", [parser_result])
+        assert len(await reader.get_abcd_results(run_id)) == 1
 
         assert await writer.delete_job("job-1")
         assert await reader.get_job("job-1") is None
         await writer.delete_run(run_id)
         assert await reader.get_run(run_id) is None
-        assert await reader.get_parser_results(run_id) == []
+        assert await reader.get_abcd_results(run_id) == []
 
         await writer.delete_video("user-1", "video-key.mp4")
         assert await reader.list_videos("user-1") == []

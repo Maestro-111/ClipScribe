@@ -19,7 +19,7 @@ from app.main import app
 from clip_scribe.db.schema import (
     frame_detections_table,
     metadata_obj,
-    parser_results_table,
+    abcd_results_table,
     runs_table,
 )
 from clip_scribe.db.writer import ClipScribeWriterDB
@@ -173,7 +173,7 @@ def ctx(tmp_path, async_db_adapters):
         )
         for run_id, rows in ((RUN1, _rows(True)), (RUN2, _rows(False))):
             conn.execute(
-                parser_results_table.insert(),
+                abcd_results_table.insert(),
                 [{"run_id": run_id, "platform": "youtube", **r} for r in rows],
             )
             conn.execute(

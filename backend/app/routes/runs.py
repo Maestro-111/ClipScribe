@@ -138,7 +138,7 @@ async def get_parser(
     _run: dict = Depends(require_owned_run),
 ) -> list[ParserResult]:
     return [
-        ParserResult.model_validate(r) for r in await reader.get_parser_results(run_id)
+        ParserResult.model_validate(r) for r in await reader.get_abcd_results(run_id)
     ]
 
 
@@ -158,7 +158,7 @@ async def export_parser(
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
-    rows = await reader.get_parser_results(run_id)
+    rows = await reader.get_abcd_results(run_id)
     video_name = run.get("video_name") or run_id
     if fmt == "csv":
         content = await run_in_threadpool(abcd_exports.run_csv, rows)

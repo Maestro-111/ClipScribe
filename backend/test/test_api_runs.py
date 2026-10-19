@@ -23,7 +23,7 @@ from clip_scribe.db.schema import (
     audio_segments_table,
     scene_descriptions_table,
     frame_detections_table,
-    parser_results_table,
+    abcd_results_table,
     jobs_table,
 )
 
@@ -136,7 +136,7 @@ def client(tmp_path, async_db_adapters):
             ],
         )
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             {
                 "run_id": RUN_ID,
                 "platform": "youtube",

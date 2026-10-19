@@ -222,8 +222,8 @@ frame_detections_table = Table(
     Index("ix_frame_detections_run_ts", "run_id", "timestamp_sec"),
 )
 
-parser_results_table = Table(
-    "parser_results",
+abcd_results_table = Table(
+    "abcd_results",
     metadata_obj,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("run_id", Text, nullable=False),
@@ -237,7 +237,24 @@ parser_results_table = Table(
     # Link to LangSmith trace.
     Column("langsmith_run_id", Text),
     Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
-    Index("ix_parser_results_run_id", "run_id"),
+    Index("ix_abcd_results_run_id", "run_id"),
+)
+
+# One exploratory-analysis report per run (``parsing_mode='exploratory'``).
+# Stored as a versioned JSON document rather than columns: the inspector always
+# reads the report whole, and ``schema_version`` lets its shape evolve without a
+# migration. Re-analyzing a run replaces its row.
+exploration_results_table = Table(
+    "exploration_results",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Text, nullable=False),
+    Column("schema_version", Integer, nullable=False),
+    Column("payload", JSON, nullable=False),
+    # LLM that produced the report.
+    Column("model", Text),
+    Column("created_at", Text, server_default=text("CURRENT_TIMESTAMP")),
+    UniqueConstraint("run_id", name="uq_exploration_results_run_id"),
 )
 
 shot_boundaries_table = Table(

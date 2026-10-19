@@ -379,10 +379,10 @@ class _ReaderOperations:
         }
 
     @staticmethod
-    def get_parser_results(conn: Connection, run_id: str) -> list[dict]:
+    def get_abcd_results(conn: Connection, run_id: str) -> list[dict]:
         result = conn.execute(
             text(
-                "SELECT * FROM parser_results WHERE run_id = :run_id "
+                "SELECT * FROM abcd_results WHERE run_id = :run_id "
                 "ORDER BY feature_category, feature_name"
             ),
             {"run_id": run_id},
@@ -760,9 +760,9 @@ class ClipScribeAsyncReaderDB(ClipScribeAsyncBaseDB):
                 include_frame_detections,
             )
 
-    async def get_parser_results(self, run_id: str) -> list[dict]:
+    async def get_abcd_results(self, run_id: str) -> list[dict]:
         async with self._async_engine.connect() as conn:
-            return await conn.run_sync(self.reader_op.get_parser_results, run_id)
+            return await conn.run_sync(self.reader_op.get_abcd_results, run_id)
 
     async def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
         async with self._async_engine.connect() as conn:
@@ -998,10 +998,10 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
                 include_frame_detections,
             )
 
-    def get_parser_results(self, run_id: str) -> list[dict]:
+    def get_abcd_results(self, run_id: str) -> list[dict]:
         """Fetch persisted per-criterion parser evaluations for a run."""
         with self._engine.connect() as conn:
-            return self.reader_op.get_parser_results(conn, run_id)
+            return self.reader_op.get_abcd_results(conn, run_id)
 
     def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
         """Fetch a per-run chat session transcript, oldest first."""

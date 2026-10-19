@@ -18,13 +18,14 @@ from .engine import (
     retry_transient_async,
 )
 from .schema import (
+    abcd_results_table,
     audio_segments_table,
     chat_messages_table,
+    exploration_results_table,
     field_descriptions_table,
     frame_detections_table,
     global_stats_table,
     jobs_table,
-    parser_results_table,
     runs_table,
     scene_descriptions_table,
     shot_boundaries_table,
@@ -507,7 +508,8 @@ class _WriterOperations:
             scene_descriptions_table,
             frame_detections_table,
             shot_boundaries_table,
-            parser_results_table,
+            abcd_results_table,
+            exploration_results_table,
             chat_messages_table,
         )
         for table in run_keyed:
@@ -575,7 +577,7 @@ class _WriterOperations:
         return result.rowcount
 
     @staticmethod
-    def save_parser_results(
+    def save_abcd_results(
         conn: Connection,
         run_id: str,
         platform: str,
@@ -597,12 +599,12 @@ class _WriterOperations:
         ]
 
         conn.execute(
-            parser_results_table.delete()
-            .where(parser_results_table.c.run_id == run_id)
-            .where(parser_results_table.c.platform == platform)
+            abcd_results_table.delete()
+            .where(abcd_results_table.c.run_id == run_id)
+            .where(abcd_results_table.c.platform == platform)
         )
         if rows:
-            conn.execute(parser_results_table.insert(), rows)
+            conn.execute(abcd_results_table.insert(), rows)
 
 
 class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
@@ -818,7 +820,7 @@ class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
             )
 
     @retry_transient_async
-    async def save_parser_results(
+    async def save_abcd_results(
         self,
         run_id: str,
         platform: str,
@@ -826,7 +828,7 @@ class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
     ) -> None:
         async with self._async_engine.begin() as conn:
             await conn.run_sync(
-                self.writer_op.save_parser_results,
+                self.writer_op.save_abcd_results,
                 run_id,
                 platform,
                 results,
@@ -1035,12 +1037,12 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
             return self.writer_op.delete_job_chat_session(conn, job_id, session_id)
 
     @retry_transient
-    def save_parser_results(
+    def save_abcd_results(
         self,
         run_id: str,
         platform: str,
         results: list[Any],
     ) -> None:
         with self._engine.begin() as conn:
-            self.writer_op.save_parser_results(conn, run_id, platform, results)
+            self.writer_op.save_abcd_results(conn, run_id, platform, results)
         logger.info("Saved %d parser results for run %s", len(results), run_id)

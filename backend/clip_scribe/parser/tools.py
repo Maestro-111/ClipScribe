@@ -225,7 +225,7 @@ def build_async_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str, tool_grou
             - llm_explanation: the evaluator's reasoning for the verdict
         """
         try:
-            results = await reader_db.get_parser_results(run_id)
+            results = await reader_db.get_abcd_results(run_id)
             filtered = []
             for r in results:
                 if only_failed and r.get("evaluation"):
@@ -495,7 +495,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - llm_explanation: the evaluator's reasoning for the verdict
         """
         try:
-            results = reader_db.get_parser_results(run_id)
+            results = reader_db.get_abcd_results(run_id)
             filtered = []
             for r in results:
                 if only_failed and r.get("evaluation"):
@@ -635,7 +635,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
             grand_passed = grand_total = 0
             for r in runs:
                 rid = r["run_id"]
-                results = await reader_db.get_parser_results(rid)
+                results = await reader_db.get_abcd_results(rid)
                 passed = sum(1 for x in results if x.get("evaluation"))
                 total = len(results)
                 grand_passed += passed
@@ -710,7 +710,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         try:
             out = []
             for rid in target_ids:
-                for r in await reader_db.get_parser_results(rid):
+                for r in await reader_db.get_abcd_results(rid):
                     if only_failed and r.get("evaluation"):
                         continue
                     if (

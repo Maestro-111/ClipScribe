@@ -13,7 +13,7 @@ from clip_scribe.db.schema import (
     global_stats_table,
     jobs_table,
     metadata_obj,
-    parser_results_table,
+    abcd_results_table,
     runs_table,
     scene_descriptions_table,
     shot_boundaries_table,
@@ -99,7 +99,7 @@ async def _exercise_async_reader(database_path: Path) -> None:
                 },
             )
             await conn.execute(
-                parser_results_table.insert(),
+                abcd_results_table.insert(),
                 {
                     "run_id": "run-1",
                     "platform": "youtube",
@@ -172,7 +172,7 @@ async def _exercise_async_reader(database_path: Path) -> None:
         assert len(await reader.list_runs()) == 1
         assert len(await reader.get_shot_boundaries("run-1")) == 1
         assert len(await reader.get_frame_detections("run-1", 0.0, 1.0)) == 1
-        assert len(await reader.get_parser_results("run-1")) == 1
+        assert len(await reader.get_abcd_results("run-1")) == 1
 
         run_messages = await reader.get_chat_messages("run-1", "run-session")
         assert run_messages[0]["tool_calls_json"] == ["get_scenes"]
