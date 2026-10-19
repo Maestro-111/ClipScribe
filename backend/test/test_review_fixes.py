@@ -179,7 +179,7 @@ def test_parser_report_path_stays_under_output_dir(tmp_path):
     writer_db = mock.MagicMock()
 
     report_path = Path(
-        parser.parse(
+        parser.abcd(
             run_id="../outside-run",
             video_name="../outside-video",
             reader_db=mock.MagicMock(),

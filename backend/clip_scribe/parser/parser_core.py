@@ -30,8 +30,8 @@ class VideoInformationParser:
     def __init__(
         self,
         agent: dict,
-        platform_name: str,
-        platform_config: BasePlatformConf,
+        platform_name: str | None,
+        platform_config: BasePlatformConf | None,
         output_dir: str,
         max_parallel_agents: int = 5,
         recursion_limit: int = 20,
@@ -93,7 +93,7 @@ class VideoInformationParser:
     def create_evaluator(self, reader_db) -> BaseEvaluator | None:
         evaluator = None
 
-        if self.platform_name == "youtube":
+        if self.platform_name == "youtube" and self.platform_config is not None:
             evaluator = YouTubeEvaluator(  # noqa ignore
                 reader_db=reader_db,
                 model=self.model,
@@ -115,7 +115,26 @@ class VideoInformationParser:
 
         return report_writer
 
-    def parse(
+    def explore(
+        self,
+        run_id: str,
+        video_name: str,
+        reader_db: ClipScribeReaderDB,
+        writer_db: ClipScribeWriterDB,
+    ) -> None:
+        """Exploratory analysis over a persisted run. Placeholder for now: it
+        only emits the parse phase so live progress completes normally."""
+
+        logger.info(
+            f"ClipScribe Parser: Starting exploration parser for run {run_id}, video '{video_name}'"
+        )
+
+        self._cancel.check()
+        self.progress.phase_started(Phase.PARSE)
+        # TODO: exploratory analysis
+        self.progress.phase_completed(Phase.PARSE, {})
+
+    def abcd(
         self,
         run_id: str,
         video_name: str,
@@ -123,7 +142,7 @@ class VideoInformationParser:
         writer_db: ClipScribeWriterDB,
     ) -> str:
         """
-        Parse and evaluate video information for all platform criteria.
+        Parse and evaluate video information for all platform ABCD criteria.
 
         Args:
             run_id: Run identifier from database
@@ -136,8 +155,11 @@ class VideoInformationParser:
             Path to the generated CSV report
         """
 
+        if self.platform_name is None or self.platform_config is None:
+            raise ValueError("ABCD parsing requires a platform and platform config")
+
         logger.info(
-            f"ClipScribe Parser: Starting parser for run {run_id}, video '{video_name}'"
+            f"ClipScribe Parser: Starting ABCD parser for run {run_id}, video '{video_name}'"
         )
 
         report_name = self.create_report_name()
@@ -160,7 +182,7 @@ class VideoInformationParser:
             report_writer.write_results(results)
             writer_db.save_parser_results(run_id, self.platform_name, results)
             logger.info(
-                f"ClipScribe Parser: Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
+                f"ClipScribe Parser: ABCD Parser completed. Report: {report_output_path}, Scores: {scores_output_path}"
             )
             self.progress.phase_completed(Phase.PARSE, {"criteria_count": len(results)})
         else:

@@ -23,6 +23,11 @@ class ExtractionMode(str, Enum):
     NO_OBJECTS = "no_objects"
 
 
+class ParsingMode(str, Enum):
+    ABCD = "abcd"
+    EXPLORATORY = "exploratory"
+
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -113,7 +118,8 @@ class JobCreateRequest(BaseModel):
 
     mode: JobMode
     extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
-    platform: PlatformName = PlatformName.YOUTUBE
+    parsing_mode: ParsingMode = ParsingMode.ABCD
+    platform: None | PlatformName = None
     # One run per video. Required (non-empty) for full/extract. Parse validates
     # here for local/dev callers but is rejected by the web job service.
     videos: list[VideoInput] = Field(default_factory=list)
@@ -128,7 +134,7 @@ class JobCreateRequest(BaseModel):
     _resolved_params: BasePlatformParams = PrivateAttr()
 
     @model_validator(mode="after")
-    def _validate(self) -> "JobCreateRequest":
+    def _validate(self) -> JobCreateRequest:
         if self.mode == JobMode.PARSE:
             if not self.run_id:
                 raise ValueError("run_id is required for mode 'parse'")
@@ -137,11 +143,20 @@ class JobCreateRequest(BaseModel):
                 f"at least one video is required for mode '{self.mode.value}'"
             )
 
-        model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
-        if model_cls is None:
-            raise ValueError(f"unsupported platform: {self.platform.value}")
-        # Validate the raw params against the selected platform's schema.
-        self._resolved_params = model_cls.model_validate(self.platform_params)
+        if self.parsing_mode == ParsingMode.ABCD:
+            if self.platform is None:
+                raise ValueError(
+                    f"platform is required for parsing mode '{self.parsing_mode.value}'"
+                )
+
+            model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
+
+            if model_cls is None:
+                raise ValueError(f"unsupported platform: {self.platform.value}")
+
+            # Validate the raw params against the selected platform's schema.
+            self._resolved_params = model_cls.model_validate(self.platform_params)
+
         return self
 
     @property
@@ -182,6 +197,8 @@ class JobResponse(BaseModel):
     job_id: str
     parent_job_id: str | None = None
     run_id: str | None = None
+    extraction_mode: ExtractionMode
+    parsing_mode: ParsingMode
     status: str
     mode: str | None = None
     video_name: str | None = None

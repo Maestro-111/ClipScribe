@@ -21,7 +21,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from app.models import JobCreateRequest, JobStatus
+from app.models import JobCreateRequest, JobStatus, ParsingMode
 from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platform
 
 if TYPE_CHECKING:
@@ -119,13 +119,20 @@ def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
         install_job_log_bridge(redis_url)
         token = current_job_id.set(job_id)
 
-        platform_conf = build_platform(
-            req.platform.value, **req.resolved_params.to_build_kwargs()
-        )
-        if platform_conf is None:
-            raise ValueError(f"unsupported platform: {req.platform.value}")
+        # Only ABCD evaluates against a platform; exploratory runs carry none.
+        platform_name = req.platform.value if req.platform else None
+        platform_conf = None
+        if req.parsing_mode == ParsingMode.ABCD:
+            # JobCreateRequest guarantees a platform for ABCD.
+            assert platform_name is not None
+            platform_conf = build_platform(
+                platform_name, **req.resolved_params.to_build_kwargs()
+            )
+            if platform_conf is None:
+                raise ValueError(f"unsupported platform: {platform_name}")
 
         local_video = storage.materialize(payload["video_path"] or "")
+
         try:
             engine = builder.build_clip_scribe(
                 video_name=payload["video_name"] or "",
@@ -135,13 +142,14 @@ def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
                 video_key=payload["video_path"] or "",
                 video_type=payload["video_type"],
                 clib_scribe_mode=req.mode.value,
-                extraction_mode=req.extraction_mode.value,
-                clib_scribe_platform_name=req.platform.value,
+                clib_scribe_platform_name=platform_name,
                 clib_scribe_platform_conf=platform_conf,
                 user_hints=req.user_hints,
                 generate_hint_from_name=req.generate_hint_from_name,
                 progress_reporter=reporter,
                 cancel_token=canceller,
+                extraction_mode=req.extraction_mode.value,
+                parsing_mode=req.parsing_mode.value,
             )
             engine.run(run_id=run_id)
         finally:

@@ -163,6 +163,10 @@ jobs_table = Table(
     # Populated when the extractor writes the run; null until then (or on
     # failure before a run exists). Always NULL on a parent row.
     Column("run_id", Text),
+    Column(
+        "extraction_mode", Text, nullable=False, server_default=text("'with_objects'")
+    ),
+    Column("parsing_mode", Text, nullable=False, server_default=text("'abcd'")),
     # queued | running | completed | failed | canceled
     Column("status", Text, nullable=False, server_default=text("'queued'")),
     Column("celery_task_id", Text),

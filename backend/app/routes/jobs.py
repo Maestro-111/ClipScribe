@@ -184,6 +184,7 @@ async def _job_metadata_envelope(
             status=child.get("status") or "unknown",
             report=report,
         )
+
     # sequential instead of gather, concurrency on all might get out of db connection pool
     # maybe add a semaphore and preserve gather?
 

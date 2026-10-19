@@ -144,8 +144,8 @@ class ClipScribeBuilder:
 
     def build_parser(
         self,
-        clib_scribe_platform_name: str,
-        clib_scribe_platform_conf: BasePlatformConf,
+        clib_scribe_platform_name: str | None,
+        clib_scribe_platform_conf: BasePlatformConf | None,
         clib_scribe_parser_params: dict,
         parser_agent_params: dict,
         progress_reporter: ProgressReporter | None = None,
@@ -429,14 +429,15 @@ class ClipScribeBuilder:
         video_path: str,
         video_type: str | None,
         clib_scribe_mode: str,
-        clib_scribe_platform_name: str,
-        clib_scribe_platform_conf: BasePlatformConf,
+        clib_scribe_platform_name: str | None,
+        clib_scribe_platform_conf: BasePlatformConf | None,
         video_key: str | None = None,
         user_hints: list[str] | None = None,
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
+        parsing_mode: str = "abcd",
     ) -> ClipScribeEngine:
         """Build a per-job engine using the builder's long-lived dependencies.
 
@@ -500,6 +501,7 @@ class ClipScribeBuilder:
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
                 extraction_mode=extraction_mode,
+                parsing_mode=parsing_mode,
                 video_name=video_name,
                 video_path=video_path,
                 # The durable storage key; defaults to the local path for the CLI

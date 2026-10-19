@@ -38,6 +38,7 @@ class ClipScribeEngine:
         artifact_uploader: ArtifactUploader,
         cancel_token: CancellationToken,
         extraction_mode: str = "with_objects",
+        parsing_mode: str = "abcd",
     ):
         if extraction_mode not in {"with_objects", "no_objects"}:
             raise ValueError(
@@ -45,8 +46,15 @@ class ClipScribeEngine:
                 "Supported modes: 'with_objects', 'no_objects'"
             )
 
+        if parsing_mode not in {"abcd", "exploratory"}:
+            raise ValueError(
+                f"Invalid parsing mode: {parsing_mode}. "
+                "Supported modes: 'abcd', 'exploratory'"
+            )
+
         self.mode = mode
         self.extraction_mode = extraction_mode
+        self.parsing_mode = parsing_mode
 
         self.video_name = video_name
         # Local filesystem path the extractor opens (a materialized scratch copy
@@ -282,12 +290,24 @@ class ClipScribeEngine:
 
         assert self.parser is not None
 
-        report_path = self.parser.parse(
-            run_id=run_id,
-            reader_db=self.reader_db,
-            video_name=self.video_name,
-            writer_db=self.writer_db,
-        )
+        if self.parsing_mode == "abcd":
+            report_path = self.parser.abcd(
+                run_id=run_id,
+                reader_db=self.reader_db,
+                video_name=self.video_name,
+                writer_db=self.writer_db,
+            )
 
-        logger.info("ClipScribe Engine: Parsing complete!")
-        logger.info(f"ClipScribe Engine: Parser local report generated: {report_path}")
+            logger.info("ClipScribe Engine: ABCD Parsing complete!")
+            logger.info(
+                f"ClipScribe Engine: ABCD Parser local report generated: {report_path}"
+            )
+
+        # explore
+        else:
+            self.parser.explore(
+                run_id=run_id,
+                reader_db=self.reader_db,
+                video_name=self.video_name,
+                writer_db=self.writer_db,
+            )
