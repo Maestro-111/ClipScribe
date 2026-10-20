@@ -1,0 +1,181 @@
+"""Exploratory report: index resolution, skipped/failed sections, persistence.
+
+The LLM is stubbed at ``VideoExplorer._structured`` so these tests pin down the
+code that turns index-based LLM output into a report with real timestamps.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from sqlalchemy import create_engine
+
+from clip_scribe.db.reader import ClipScribeReaderDB
+from clip_scribe.db.schema import metadata_obj
+from clip_scribe.db.writer import ClipScribeWriterDB
+from clip_scribe.parser.explore import explorer as explorer_mod
+from clip_scribe.parser.explore.explorer import VideoExplorer
+from clip_scribe.parser.explore.models import ExploreReport
+
+from test.test_explore_metrics import _occ, _summary
+
+
+def _stub_outputs() -> dict[type, Any]:
+    return {
+        explorer_mod._TranscriptOutput: explorer_mod._TranscriptOutput(
+            summary="talks",
+            topics=["cars"],
+            key_claims=[
+                explorer_mod._ClaimRef(text="claim A", segment=1),
+                # Out of range: dropped rather than given a made-up time.
+                explorer_mod._ClaimRef(text="ghost", segment=9),
+            ],
+        ),
+        explorer_mod._OnScreenTextOutput: explorer_mod._OnScreenTextOutput(
+            summary="branding",
+            cards=[
+                explorer_mod._CardLabel(card=0, clean_text="Jeep", category="brand"),
+                explorer_mod._CardLabel(
+                    card=1, clean_text="Drive It Home", category="cta"
+                ),
+                explorer_mod._CardLabel(card=7, clean_text="ghost", category="url"),
+            ],
+        ),
+        explorer_mod._VisualsOutput: explorer_mod._VisualsOutput(
+            summary="a car",
+            subjects=[
+                explorer_mod._SubjectRating(label="CAR", prominence="high"),
+                explorer_mod._SubjectRating(label="unicorn", prominence="high"),
+            ],
+        ),
+        explorer_mod._SynthesisOutput: explorer_mod._SynthesisOutput(
+            summary="an ad",
+            chapters=[
+                explorer_mod._ChapterRef(
+                    title="Close", first_shot=2, last_shot=9, summary="end"
+                ),
+                explorer_mod._ChapterRef(
+                    title="Open", first_shot=0, last_shot=1, summary="start"
+                ),
+                # Overlaps "Close" entirely: dropped.
+                explorer_mod._ChapterRef(
+                    title="Dup", first_shot=2, last_shot=2, summary="dup"
+                ),
+            ],
+        ),
+    }
+
+
+class _StubExplorer(VideoExplorer):
+    def __init__(self, outputs: dict[type, Any], fail: set[type] | None = None):
+        super().__init__(model=None)  # type: ignore[arg-type]  # never called
+        self.outputs = outputs
+        self.fail = fail or set()
+        self.calls: list[type] = []
+
+    def _structured(self, schema, system, payload):  # type: ignore[no-untyped-def]
+        self.calls.append(schema)
+        if schema in self.fail:
+            raise RuntimeError("llm down")
+        return self.outputs[schema]
+
+
+def _objects_summary() -> Any:
+    return _summary(
+        visual_objects=[
+            {
+                "global_id": 1,
+                "label": "car",
+                "occurrences": [_occ(shot_index=2, lifespan=[7.0, 12.0])],
+            },
+            {
+                "global_id": 2,
+                "label": "logo",
+                "occurrences": [_occ(shot_index=0, lifespan=[0.0, 1.0])],
+            },
+        ]
+    )
+
+
+def test_report_resolves_indices_to_real_data():
+    report = _StubExplorer(_stub_outputs()).explore(
+        _objects_summary(), objects_tracked=True
+    )
+
+    assert report.summary == "an ad"
+    # Claims carry the timestamp of the referenced speech segment.
+    assert [(c.text, c.start_sec) for c in report.transcript.key_claims] == [
+        ("claim A", 8.0)
+    ]
+    cards = report.on_screen_text.cards
+    assert [(c.text, c.clean_text, c.category) for c in cards] == [
+        ("Jeep", "Jeep", "brand"),
+        ("DRIVE IT HOME", "Drive It Home", "cta"),
+        # Not labeled by the LLM: raw text, category other.
+        ("HOLIDAY EVENT", "HOLIDAY EVENT", "other"),
+    ]
+    # Subjects mirror the tracked objects; numbers come from metrics.
+    subjects = {s.label: s for s in report.visuals.subjects}
+    assert subjects.keys() == {"car", "logo"}
+    assert subjects["car"].prominence == "high"
+    assert subjects["car"].screen_time_sec == 5.0
+    assert subjects["logo"].prominence == "low"
+    # Chapters are sorted, clamped to real shots, and non-overlapping.
+    assert [(c.title, c.start_sec, c.end_sec) for c in report.chapters] == [
+        ("Open", 0.0, 7.0),
+        ("Close", 7.0, 12.0),
+    ]
+    assert report.findings == []
+
+
+def test_empty_modalities_skip_their_llm_calls():
+    summary = _summary(audio_segments=[], text_events=[], scene_descriptions=[])
+    stub = _StubExplorer(_stub_outputs())
+    report = stub.explore(summary, objects_tracked=False)
+
+    assert stub.calls == [explorer_mod._SynthesisOutput]
+    assert report.transcript is None
+    assert report.on_screen_text is None
+    assert report.visuals is None
+
+
+def test_no_objects_visuals_use_scene_descriptions_only():
+    report = _StubExplorer(_stub_outputs()).explore(_summary(), objects_tracked=False)
+    assert report.visuals is not None
+    assert report.visuals.subjects == []
+
+
+def test_failed_digest_drops_only_that_section():
+    stub = _StubExplorer(_stub_outputs(), fail={explorer_mod._TranscriptOutput})
+    report = stub.explore(_summary(), objects_tracked=False)
+
+    assert report.transcript is None
+    assert report.on_screen_text is not None
+    assert report.summary == "an ad"
+
+
+def test_failed_overview_fails_the_report():
+    stub = _StubExplorer(_stub_outputs(), fail={explorer_mod._SynthesisOutput})
+    with pytest.raises(RuntimeError):
+        stub.explore(_summary(), objects_tracked=False)
+
+
+def test_exploration_result_round_trip_replaces(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'explore.db'}")
+    metadata_obj.create_all(engine)
+    writer = ClipScribeWriterDB(engine=engine)
+    reader = ClipScribeReaderDB(engine=engine)
+
+    first = ExploreReport(
+        summary="v1", chapters=[], transcript=None, on_screen_text=None, visuals=None
+    )
+    second = first.model_copy(update={"summary": "v2"})
+    writer.save_exploration_result("r1", 1, first.model_dump(mode="json"), "m")
+    writer.save_exploration_result("r1", 1, second.model_dump(mode="json"), "m")
+
+    row = reader.get_exploration_result("r1")
+    assert row is not None
+    assert ExploreReport.model_validate(row["payload"]).summary == "v2"
+    assert row["model"] == "m"
+    assert reader.get_exploration_result("missing") is None

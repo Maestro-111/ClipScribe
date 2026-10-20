@@ -606,6 +606,30 @@ class _WriterOperations:
         if rows:
             conn.execute(abcd_results_table.insert(), rows)
 
+    @staticmethod
+    def save_exploration_result(
+        conn: Connection,
+        run_id: str,
+        schema_version: int,
+        payload: dict[str, Any],
+        model: str | None,
+    ) -> None:
+        # One report per run: re-analyzing a run replaces its row.
+        conn.execute(
+            exploration_results_table.delete().where(
+                exploration_results_table.c.run_id == run_id
+            )
+        )
+        conn.execute(
+            exploration_results_table.insert(),
+            {
+                "run_id": run_id,
+                "schema_version": schema_version,
+                "payload": payload,
+                "model": model,
+            },
+        )
+
 
 class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
     def __init__(self, async_engine: AsyncEngine) -> None:
@@ -817,6 +841,23 @@ class ClipScribeAsyncWriterDB(ClipScribeAsyncBaseDB):
                 self.writer_op.delete_job_chat_session,
                 job_id,
                 session_id,
+            )
+
+    @retry_transient_async
+    async def save_exploration_result(
+        self,
+        run_id: str,
+        schema_version: int,
+        payload: dict[str, Any],
+        model: str | None = None,
+    ) -> None:
+        async with self._async_engine.begin() as conn:
+            await conn.run_sync(
+                self.writer_op.save_exploration_result,
+                run_id,
+                schema_version,
+                payload,
+                model,
             )
 
     @retry_transient_async
@@ -1035,6 +1076,20 @@ class ClipScribeWriterDB(ClipScribeBaseDB):
     def delete_job_chat_session(self, job_id: str, session_id: str) -> int:
         with self._engine.begin() as conn:
             return self.writer_op.delete_job_chat_session(conn, job_id, session_id)
+
+    @retry_transient
+    def save_exploration_result(
+        self,
+        run_id: str,
+        schema_version: int,
+        payload: dict[str, Any],
+        model: str | None = None,
+    ) -> None:
+        with self._engine.begin() as conn:
+            self.writer_op.save_exploration_result(
+                conn, run_id, schema_version, payload, model
+            )
+        logger.info("Saved exploration report for run %s", run_id)
 
     @retry_transient
     def save_abcd_results(

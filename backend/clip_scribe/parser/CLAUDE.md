@@ -10,6 +10,7 @@ Evaluates extracted video metadata against platform-specific feature criteria. U
 * `advisory.py`: Builds the post-run advisory chat agents over a single run and over a job's completed runs.
 * `tools.py`: `build_tools` constructs run-scoped LangGraph tool closures (`query_audio_segments`, `query_text_events`, `query_visual_objects`, `query_scene_descriptions`, `query_global_stats`, `query_parser_results`) grouped by feature type; `build_job_tools` constructs the job-scoped tool set (`list_job_runs`, `query_job_scorecard`, cross-run `query_parser_results`, plus per-run detail tools).
 * `models.py`: Pydantic models shared across platforms (`BaseFeatureResult`, `BaseAgentEvaluation`).
+* `explore/`: Exploratory analysis (`parsing_mode=exploratory`). `metrics.py` computes deterministic run metrics, deduplicated OCR text cards, and per-shot context from `ExtractionSummary` (no LLM); `explorer.py` (`VideoExplorer`) runs parallel structured-output digest calls plus an overview call and resolves the LLM's index references back to real timestamps; `models.py` holds `ExploreReport`, persisted to `exploration_results`.
 * `youtube/`: YouTube-specific evaluator, criteria definitions, baseline logic, models, and CSV report generation.
 
 ## Guidelines

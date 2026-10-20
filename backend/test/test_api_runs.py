@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from app import settings as settings_mod
 from app.deps import current_user_id, get_reader
 from app.main import app
+from clip_scribe.db.writer import ClipScribeWriterDB
 from clip_scribe.db.schema import (
     metadata_obj,
     runs_table,
@@ -225,3 +226,41 @@ def test_abcd_routes_409_on_exploratory_run(client, tmp_path):
     )
     # Extraction reads stay available for exploratory runs.
     assert client.get(f"/runs/{RUN_ID}/objects").status_code == 200
+
+
+def test_exploration_route(client, tmp_path):
+    # ABCD run: the exploration endpoint is not available.
+    assert client.get(f"/runs/{RUN_ID}/exploration").status_code == 409
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            jobs_table.update()
+            .where(jobs_table.c.run_id == RUN_ID)
+            .values(parsing_mode="exploratory")
+        )
+
+    # Metrics are computed on read; no report persisted yet.
+    body = client.get(f"/runs/{RUN_ID}/exploration").json()
+    assert body["metrics"]["duration_sec"] == 3.0
+    assert body["metrics"]["objects_tracked"] is True
+    assert body["metrics"]["objects"][0]["label"] == "car"
+    assert body["report"] is None
+
+    ClipScribeWriterDB(engine=engine).save_exploration_result(
+        RUN_ID,
+        1,
+        {
+            "schema_version": 1,
+            "summary": "an ad",
+            "chapters": [],
+            "transcript": None,
+            "on_screen_text": None,
+            "visuals": None,
+            "findings": [],
+        },
+        "gpt-test",
+    )
+    body = client.get(f"/runs/{RUN_ID}/exploration").json()
+    assert body["report"]["summary"] == "an ad"
+    assert body["model"] == "gpt-test"

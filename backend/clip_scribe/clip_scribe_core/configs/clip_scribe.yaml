@@ -85,6 +85,12 @@ clip_scribe:
     # agent max reasoning steps
     recursion_limit: 50
 
+    # Exploratory report (parsing_mode=exploratory). Uses the agent's llm and
+    # temperature; only the per-call output budget differs, since the report
+    # sections are longer structured outputs than an ABCD verdict.
+    explore:
+      max_tokens: 4000
+
 # ============================================================================
 # GroundingDINO Object Detection
 # ============================================================================

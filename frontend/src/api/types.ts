@@ -423,6 +423,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/exploration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Exploratory report and metrics */
+        get: operations["get_exploration_runs__run_id__exploration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{run_id}/abcd/export": {
         parameters: {
             query?: never;
@@ -676,6 +693,17 @@ export interface components {
             /** Files */
             files: string[];
         };
+        /** Chapter */
+        Chapter: {
+            /** Title */
+            title: string;
+            /** Start Sec */
+            start_sec: number;
+            /** End Sec */
+            end_sec: number;
+            /** Summary */
+            summary: string;
+        };
         /** ChatHistoryResponse */
         ChatHistoryResponse: {
             /** Run Id */
@@ -735,10 +763,52 @@ export interface components {
             sessions: components["schemas"]["ChatSession"][];
         };
         /**
+         * ExplorationResponse
+         * @description An exploratory run's report plus its metrics.
+         *
+         *     ``metrics`` are computed from the extraction data on every read (nothing
+         *     stored). ``report`` is the persisted LLM report; null if it hasn't been
+         *     written (e.g. the parse phase failed).
+         */
+        ExplorationResponse: {
+            /** Run Id */
+            run_id: string;
+            metrics: components["schemas"]["RunMetrics"];
+            report?: components["schemas"]["ExploreReport"] | null;
+            /** Model */
+            model?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** ExploreReport */
+        ExploreReport: {
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** Summary */
+            summary: string;
+            /** Chapters */
+            chapters: components["schemas"]["Chapter"][];
+            transcript: components["schemas"]["TranscriptDigest"] | null;
+            on_screen_text: components["schemas"]["OnScreenTextDigest"] | null;
+            visuals: components["schemas"]["VisualDigest"] | null;
+            /** Findings */
+            findings?: components["schemas"]["Finding"][];
+        };
+        /**
          * ExtractionMode
          * @enum {string}
          */
         ExtractionMode: "with_objects" | "no_objects";
+        /** Finding */
+        Finding: {
+            /** Observation */
+            observation: string;
+            /** Evidence Secs */
+            evidence_secs: number[];
+        };
         /**
          * FrameDetection
          * @description A single bounding-box detection in one video frame.
@@ -983,6 +1053,29 @@ export interface components {
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "canceled";
         /**
+         * ObjectStats
+         * @description One resolved object label aggregated across the run.
+         */
+        ObjectStats: {
+            /** Label */
+            label: string;
+            /** Instance Count */
+            instance_count: number;
+            /** Screen Time Sec */
+            screen_time_sec: number;
+            /** First Seen Sec */
+            first_seen_sec: number;
+            /** Avg Screen Coverage */
+            avg_screen_coverage: number;
+        };
+        /** OnScreenTextDigest */
+        OnScreenTextDigest: {
+            /** Summary */
+            summary: string;
+            /** Cards */
+            cards: components["schemas"]["TextCard"][];
+        };
+        /**
          * ParsingMode
          * @enum {string}
          */
@@ -1019,6 +1112,29 @@ export interface components {
         PlatformsResponse: {
             /** Platforms */
             platforms: components["schemas"]["PlatformInfo"][];
+        };
+        /** RunMetrics */
+        RunMetrics: {
+            /** Duration Sec */
+            duration_sec: number;
+            /** Shot Count */
+            shot_count: number;
+            /** Avg Shot Sec */
+            avg_shot_sec: number;
+            /** Cuts Per Minute */
+            cuts_per_minute: number;
+            /** Speech Coverage */
+            speech_coverage: number;
+            /** Text Coverage */
+            text_coverage: number;
+            /** Words Per Minute */
+            words_per_minute: number | null;
+            /** Face Coverage */
+            face_coverage: number | null;
+            /** Objects Tracked */
+            objects_tracked: boolean;
+            /** Objects */
+            objects: components["schemas"]["ObjectStats"][];
         };
         /**
          * RunResponse
@@ -1075,6 +1191,25 @@ export interface components {
             duration_sec?: number | null;
         };
         /**
+         * TextCard
+         * @description An OCR text card plus the LLM's cleaned reading and category.
+         */
+        TextCard: {
+            /** Text */
+            text: string;
+            /** Spans */
+            spans: components["schemas"]["TimeSpan"][];
+            /** Total Sec */
+            total_sec: number;
+            /** Clean Text */
+            clean_text: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "brand" | "cta" | "price" | "url" | "caption" | "other";
+        };
+        /**
          * TextEvent
          * @description OCR text event at a specific second.
          */
@@ -1089,6 +1224,29 @@ export interface components {
             line_index?: number | null;
             /** Text */
             text?: string | null;
+        };
+        /** TimeSpan */
+        TimeSpan: {
+            /** Start Sec */
+            start_sec: number;
+            /** End Sec */
+            end_sec: number;
+        };
+        /** TimedText */
+        TimedText: {
+            /** Text */
+            text: string;
+            /** Start Sec */
+            start_sec: number;
+        };
+        /** TranscriptDigest */
+        TranscriptDigest: {
+            /** Summary */
+            summary: string;
+            /** Topics */
+            topics: string[];
+            /** Key Claims */
+            key_claims: components["schemas"]["TimedText"][];
         };
         /** UploadResponse */
         UploadResponse: {
@@ -1134,6 +1292,30 @@ export interface components {
             video_name: string;
             /** Video Type */
             video_type?: string | null;
+        };
+        /** VisualDigest */
+        VisualDigest: {
+            /** Summary */
+            summary: string;
+            /** Subjects */
+            subjects: components["schemas"]["VisualSubject"][];
+        };
+        /**
+         * VisualSubject
+         * @description A tracked object label; numbers from metrics, prominence from the LLM.
+         */
+        VisualSubject: {
+            /** Label */
+            label: string;
+            /** Screen Time Sec */
+            screen_time_sec: number;
+            /** First Seen Sec */
+            first_seen_sec: number;
+            /**
+             * Prominence
+             * @enum {string}
+             */
+            prominence: "high" | "medium" | "low";
         };
     };
     responses: never;
@@ -1837,6 +2019,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AbcdResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_exploration_runs__run_id__exploration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorationResponse"];
                 };
             };
             /** @description Validation Error */

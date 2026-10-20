@@ -6,11 +6,12 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .engine import ClipScribeAsyncBaseDB, ClipScribeBaseDB
+from .schema import exploration_results_table
 
 if TYPE_CHECKING:
     from clip_scribe.extractor.extractor_models import (
@@ -396,6 +397,20 @@ class _ReaderOperations:
         return [dict(row) for row in result.mappings().fetchall()]
 
     @staticmethod
+    def get_exploration_result(conn: Connection, run_id: str) -> dict | None:
+        # Core select (not raw text) so the JSON payload is decoded on SQLite too.
+        row = (
+            conn.execute(
+                select(exploration_results_table).where(
+                    exploration_results_table.c.run_id == run_id
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        return dict(row) if row else None
+
+    @staticmethod
     def get_chat_messages(
         conn: Connection,
         scope_col: str,
@@ -770,6 +785,10 @@ class ClipScribeAsyncReaderDB(ClipScribeAsyncBaseDB):
         async with self._async_engine.connect() as conn:
             return await conn.run_sync(self.reader_op.get_abcd_results, run_id)
 
+    async def get_exploration_result(self, run_id: str) -> dict | None:
+        async with self._async_engine.connect() as conn:
+            return await conn.run_sync(self.reader_op.get_exploration_result, run_id)
+
     async def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
         async with self._async_engine.connect() as conn:
             return await conn.run_sync(
@@ -1008,6 +1027,11 @@ class ClipScribeReaderDB(ClipScribeBaseDB):
         """Fetch persisted per-criterion parser evaluations for a run."""
         with self._engine.connect() as conn:
             return self.reader_op.get_abcd_results(conn, run_id)
+
+    def get_exploration_result(self, run_id: str) -> dict | None:
+        """Fetch a run's persisted exploration report row, if any."""
+        with self._engine.connect() as conn:
+            return self.reader_op.get_exploration_result(conn, run_id)
 
     def get_chat_messages(self, run_id: str, session_id: str) -> list[dict]:
         """Fetch a per-run chat session transcript, oldest first."""

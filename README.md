@@ -139,6 +139,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
 - `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data, chat transcripts, and artifacts.
 - `GET /runs/{run_id}/...` — inspect persisted run data (including its `parsing_mode`), sibling runs, frame detections, ABCD results (`/abcd`), and artifacts.
+- `GET /runs/{run_id}/exploration` — an exploratory run's report (summary, chapters, transcript / on-screen text / visuals digests) plus metrics computed from the extraction data on read; 409 for ABCD runs, `report: null` if none was written.
 - `GET /runs/{run_id}/abcd/export?format=xlsx|csv` — export one run's ABCD results (409 for exploratory runs); XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
 - `GET /runs/{run_id}/metadata/export?format=xlsx|json` — export one run's extracted video metadata; XLSX is human-readable tables, JSON is lossless.
 - `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed ABCD run (exploratory runs 409 for now).

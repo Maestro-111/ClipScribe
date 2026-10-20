@@ -158,6 +158,9 @@ class ClipScribeBuilder:
 
         parser_max_parallel = clib_scribe_parser_params.get("max_parallel_agents", 5)
         recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
+        explore_max_tokens = clib_scribe_parser_params.get("explore", {}).get(
+            "max_tokens", 4000
+        )
 
         parser_detection_model = self.resolve_model(
             "parser.agent.llm",
@@ -175,6 +178,7 @@ class ClipScribeBuilder:
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
             extraction_mode=extraction_mode,
+            explore_max_tokens=explore_max_tokens,
         )
 
         return info_parser

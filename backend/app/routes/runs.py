@@ -15,11 +15,19 @@ from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
 from app import exports, abcd_exports, metadata_exports
-from app.deps import current_user_id, get_reader, require_abcd_run, require_owned_run
+from app.deps import (
+    current_user_id,
+    get_reader,
+    require_abcd_run,
+    require_exploratory_run,
+    require_owned_run,
+)
 from app.errors import ProblemException
+from clip_scribe.parser.explore.metrics import compute_run_metrics
 from app.models import (
     AbcdResult,
     AudioSegment,
+    ExplorationResponse,
     FrameDetection,
     GlobalStatsResponse,
     RunResponse,
@@ -138,6 +146,32 @@ async def get_abcd(
     _run: dict = Depends(require_abcd_run),
 ) -> list[AbcdResult]:
     return [AbcdResult.model_validate(r) for r in await reader.get_abcd_results(run_id)]
+
+
+@router.get("/{run_id}/exploration", summary="Exploratory report and metrics")
+async def get_exploration(
+    run_id: str,
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    run: dict = Depends(require_exploratory_run),
+) -> ExplorationResponse:
+    summary = await reader.get_extraction_summary(run_id)
+    if summary is None:  # the run row was deleted after the ownership check
+        raise ProblemException(
+            status=404, title="Not Found", detail=f"run '{run_id}' not found"
+        )
+    metrics = await run_in_threadpool(
+        compute_run_metrics,
+        summary,
+        objects_tracked=run.get("extraction_mode") == "with_objects",
+    )
+    row = await reader.get_exploration_result(run_id)
+    return ExplorationResponse(
+        run_id=run_id,
+        metrics=metrics,
+        report=row["payload"] if row else None,
+        model=row["model"] if row else None,
+        created_at=row["created_at"] if row else None,
+    )
 
 
 @router.get("/{run_id}/abcd/export", summary="Download this run's ABCD report")

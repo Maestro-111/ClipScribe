@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
+from clip_scribe.parser.explore.models import ExploreReport, RunMetrics
+
 
 class JobMode(str, Enum):
     FULL = "full"
@@ -335,6 +337,21 @@ class GlobalStatsResponse(BaseModel):
 
     global_stats: dict[str, Any] | None = None
     shot_boundaries: list[ShotBoundary]
+
+
+class ExplorationResponse(BaseModel):
+    """An exploratory run's report plus its metrics.
+
+    ``metrics`` are computed from the extraction data on every read (nothing
+    stored). ``report`` is the persisted LLM report; null if it hasn't been
+    written (e.g. the parse phase failed).
+    """
+
+    run_id: str
+    metrics: RunMetrics
+    report: ExploreReport | None = None
+    model: str | None = None
+    created_at: str | None = None
 
 
 class AbcdResult(BaseModel):

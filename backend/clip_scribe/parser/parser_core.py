@@ -6,6 +6,7 @@ from pathlib import Path
 
 from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
 from clip_scribe.parser.evaluator_base import BaseEvaluator
+from clip_scribe.parser.explore.explorer import VideoExplorer
 from clip_scribe.parser.youtube import *  # noqa ignore
 from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
@@ -38,6 +39,7 @@ class VideoInformationParser:
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
+        explore_max_tokens: int = 4000,
     ):
         """
         Initialize the video information parser.
@@ -50,6 +52,8 @@ class VideoInformationParser:
             max_parallel_agents: Maximum number of parallel agent executions
             recursion_limit: Maximum LangGraph reasoning steps per agent run
             progress_reporter: Optional progress event sink; defaults to no-op
+            explore_max_tokens: Output budget for each exploratory-report call
+                (they write longer structured output than an ABCD verdict)
         """
 
         self.platform_name = platform_name
@@ -58,6 +62,9 @@ class VideoInformationParser:
         self.max_parallel_agents = max_parallel_agents
         self.recursion_limit = recursion_limit
         self.model = self.create_agent_model(agent)
+        self.explore_model = self.model.model_copy(
+            update={"max_tokens": explore_max_tokens}
+        )
         self.progress = progress_reporter or NullProgressReporter()
         self.object_data_available = extraction_mode == "with_objects"
         # Cooperative-cancel token, passed on to the evaluator so it can stop
@@ -69,7 +76,7 @@ class VideoInformationParser:
 
     @staticmethod
     def create_agent_model(agent: dict):
-        llm = agent.get("llm", "gpt-4o-mini")
+        llm = agent.get("llm", "gpt-5.4")
         temperature = agent.get("temperature", 0.0)
         max_tokens = agent.get("max_tokens", 1000)
         max_retries = agent.get("max_retries", 7)
@@ -122,8 +129,11 @@ class VideoInformationParser:
         reader_db: ClipScribeReaderDB,
         writer_db: ClipScribeWriterDB,
     ) -> None:
-        """Exploratory analysis over a persisted run. Placeholder for now: it
-        only emits the parse phase so live progress completes normally."""
+        """Build and persist the exploratory report for a persisted run.
+
+        Findings (stage C) are not generated yet; the report's ``findings``
+        stays empty.
+        """
 
         logger.info(
             f"ClipScribe Parser: Starting exploration parser for run {run_id}, video '{video_name}'"
@@ -131,8 +141,29 @@ class VideoInformationParser:
 
         self._cancel.check()
         self.progress.phase_started(Phase.PARSE)
-        # TODO: exploratory analysis
-        self.progress.phase_completed(Phase.PARSE, {})
+
+        summary = reader_db.get_extraction_summary(run_id)
+
+        if summary is None:
+            raise ValueError(f"run_id '{run_id}' not found in database")
+
+        explorer = VideoExplorer(self.explore_model, cancel_token=self._cancel)
+        report = explorer.explore(summary, objects_tracked=self.object_data_available)
+
+        writer_db.save_exploration_result(
+            run_id,
+            report.schema_version,
+            report.model_dump(mode="json"),
+            model=self.explore_model.model_name,
+        )
+
+        logger.info(
+            "ClipScribe Parser: Exploration completed for run %s: %d chapters",
+            run_id,
+            len(report.chapters),
+        )
+
+        self.progress.phase_completed(Phase.PARSE, {"chapters": len(report.chapters)})
 
     def abcd(
         self,
