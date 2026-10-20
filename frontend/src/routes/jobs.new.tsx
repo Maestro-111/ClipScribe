@@ -40,6 +40,7 @@ interface SelectedVideo {
 }
 
 type ExtractionMode = NonNullable<JobCreateRequest["extraction_mode"]>;
+type ParsingMode = NonNullable<JobCreateRequest["parsing_mode"]>;
 
 // Stable identity for dedup/removal: the storage key for stored videos, or a
 // name+size signature for files not yet uploaded.
@@ -58,6 +59,9 @@ function NewJob() {
   const mode = "full" as const;
   const [extractionMode, setExtractionMode] =
     useState<ExtractionMode>("with_objects");
+  // ABCD scores against a platform's criteria; exploratory needs no platform.
+  const [parsingMode, setParsingMode] = useState<ParsingMode>("abcd");
+  const isAbcd = parsingMode === "abcd";
 
   // The batch of videos this job will process. All share the platform, params,
   // and hints below (same brand/product context).
@@ -152,13 +156,15 @@ function NewJob() {
       {
         mode,
         extraction_mode: extractionMode,
-        platform: platform as JobCreateRequest["platform"],
+        parsing_mode: parsingMode,
+        // Exploratory jobs carry no platform, so the backend stores none.
+        platform: isAbcd ? (platform as JobCreateRequest["platform"]) : null,
         videos: resolved.map((v) => ({
           video_path: v.path!,
           video_name: v.name,
           video_type: videoType || null,
         })),
-        platform_params: (platform === "youtube"
+        platform_params: (isAbcd && platform === "youtube"
           ? {
               brand_name: brandName,
               branded_products: splitComma(brandedProducts),
@@ -385,86 +391,133 @@ function NewJob() {
           </div>
         </section>
 
-        {/* ── Platform ────────────────────────────────────────────── */}
+        {/* ── Analysis ────────────────────────────────────────────── */}
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            Platform
+            Analysis
           </h2>
-          <div className="space-y-4">
-            <Field
-              label="Evaluation platform"
-              hint="The platform whose ABCD criteria the parser evaluates against."
-            >
-              <select
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
-                className="w-full rounded border px-2 py-1.5"
+          <Field
+            label="Analysis type"
+            hint="ABCD scores each video against a platform's criteria. Exploratory surfaces what's in the videos without needing domain knowledge."
+            group
+          >
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                aria-pressed={parsingMode === "abcd"}
+                onClick={() => setParsingMode("abcd")}
+                className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                  parsingMode === "abcd"
+                    ? "border-blue-600 bg-blue-50 text-blue-800 ring-1 ring-blue-600"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400"
+                }`}
               >
-                {platformOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            {/* YouTube-specific params. Rendered only when YouTube is selected;
-                each platform owns its own field block. */}
-            {platform === "youtube" && (
-              <>
-                <Field
-                  label="Brand name"
-                  hint="The brand being advertised. Used by parser agents to identify brand presence."
-                >
-                  <input
-                    value={brandName}
-                    onChange={(e) => setBrandName(e.target.value)}
-                    placeholder="e.g. RAM"
-                    className="w-full rounded border px-2 py-1.5"
-                  />
-                  {!brandName.trim() && <FieldWarning>The brand-presence criteria (brand in speech, brand logo on screen) can't identify anything without a brand name — those checks will effectively pass on nothing.</FieldWarning>}
-                </Field>
-
-                <Field
-                  label="Branded products"
-                  hint="Specific products shown or mentioned. Comma-separated."
-                >
-                  <input
-                    value={brandedProducts}
-                    onChange={(e) => setBrandedProducts(e.target.value)}
-                    placeholder="e.g. RAM 1500, RAM 2500"
-                    className="w-full rounded border px-2 py-1.5"
-                  />
-                </Field>
-
-                <Field
-                  label="Branded product categories"
-                  hint="Category phrasings used to match products when exact names aren't spoken. Comma-separated."
-                >
-                  <input
-                    value={brandedProductsCategories}
-                    onChange={(e) => setBrandedProductsCategories(e.target.value)}
-                    placeholder="e.g. pickup truck, heavy-duty truck"
-                    className="w-full rounded border px-2 py-1.5"
-                  />
-                </Field>
-
-                <Field
-                  label="Call-to-actions"
-                  hint="CTA phrases the parser should detect in speech or on-screen text. Comma-separated."
-                >
-                  <input
-                    value={callToActions}
-                    onChange={(e) => setCallToActions(e.target.value)}
-                    placeholder="e.g. learn more, visit us today"
-                    className="w-full rounded border px-2 py-1.5"
-                  />
-                  {!callToActions.trim() && <FieldWarning>The call-to-action criteria (CTA in speech, CTA on screen) have no phrases to match against and will effectively pass on nothing.</FieldWarning>}
-                </Field>
-              </>
-            )}
-          </div>
+                <span className="block font-medium">ABCD</span>
+                <span className="mt-0.5 block text-xs opacity-75">
+                  Pass/fail against platform criteria
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={parsingMode === "exploratory"}
+                onClick={() => setParsingMode("exploratory")}
+                className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                  parsingMode === "exploratory"
+                    ? "border-blue-600 bg-blue-50 text-blue-800 ring-1 ring-blue-600"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400"
+                }`}
+              >
+                <span className="block font-medium">Exploratory</span>
+                <span className="mt-0.5 block text-xs opacity-75">
+                  Summaries and insights, no criteria needed
+                </span>
+              </button>
+            </div>
+          </Field>
         </section>
+
+        {/* ── Platform (ABCD only) ────────────────────────────────── */}
+        {isAbcd && (
+          <section>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+              Platform
+            </h2>
+            <div className="space-y-4">
+              <Field
+                label="Evaluation platform"
+                hint="The platform whose ABCD criteria the parser evaluates against."
+              >
+                <select
+                  value={platform}
+                  onChange={(e) => setPlatform(e.target.value)}
+                  className="w-full rounded border px-2 py-1.5"
+                >
+                  {platformOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              {/* YouTube-specific params. Rendered only when YouTube is selected;
+                  each platform owns its own field block. */}
+              {platform === "youtube" && (
+                <>
+                  <Field
+                    label="Brand name"
+                    hint="The brand being advertised. Used by parser agents to identify brand presence."
+                  >
+                    <input
+                      value={brandName}
+                      onChange={(e) => setBrandName(e.target.value)}
+                      placeholder="e.g. RAM"
+                      className="w-full rounded border px-2 py-1.5"
+                    />
+                    {!brandName.trim() && <FieldWarning>The brand-presence criteria (brand in speech, brand logo on screen) can't identify anything without a brand name — those checks will effectively pass on nothing.</FieldWarning>}
+                  </Field>
+
+                  <Field
+                    label="Branded products"
+                    hint="Specific products shown or mentioned. Comma-separated."
+                  >
+                    <input
+                      value={brandedProducts}
+                      onChange={(e) => setBrandedProducts(e.target.value)}
+                      placeholder="e.g. RAM 1500, RAM 2500"
+                      className="w-full rounded border px-2 py-1.5"
+                    />
+                  </Field>
+
+                  <Field
+                    label="Branded product categories"
+                    hint="Category phrasings used to match products when exact names aren't spoken. Comma-separated."
+                  >
+                    <input
+                      value={brandedProductsCategories}
+                      onChange={(e) => setBrandedProductsCategories(e.target.value)}
+                      placeholder="e.g. pickup truck, heavy-duty truck"
+                      className="w-full rounded border px-2 py-1.5"
+                    />
+                  </Field>
+
+                  <Field
+                    label="Call-to-actions"
+                    hint="CTA phrases the parser should detect in speech or on-screen text. Comma-separated."
+                  >
+                    <input
+                      value={callToActions}
+                      onChange={(e) => setCallToActions(e.target.value)}
+                      placeholder="e.g. learn more, visit us today"
+                      className="w-full rounded border px-2 py-1.5"
+                    />
+                    {!callToActions.trim() && <FieldWarning>The call-to-action criteria (CTA in speech, CTA on screen) have no phrases to match against and will effectively pass on nothing.</FieldWarning>}
+                  </Field>
+                </>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* ── Hints ───────────────────────────────────────────────── */}
         <section>
@@ -547,9 +600,13 @@ function NewJob() {
             waiting to dig into the queued videos — grows and turns eager as
             videos are added. Fixed-positioned, so it self-places. */}
         <ScribeMascot state={scribeState} videoCount={selected.length} />
-        <PipelineAnimation includeObjects={extractionMode === "with_objects"} />
+        <PipelineAnimation
+          includeObjects={extractionMode === "with_objects"}
+          exploratory={!isAbcd}
+        />
         <JobSummary
           videoCount={selected.length}
+          parsingMode={parsingMode}
           platform={platform}
           brandName={brandName}
           videoType={videoType}
@@ -557,7 +614,10 @@ function NewJob() {
           hintTermCount={splitComma(userHints).length}
           generateHintFromName={generateHintFromName}
         />
-        <RunOutputs includeObjects={extractionMode === "with_objects"} />
+        <RunOutputs
+          includeObjects={extractionMode === "with_objects"}
+          includeAbcd={isAbcd}
+        />
       </aside>
     </div>
   );

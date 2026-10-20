@@ -159,8 +159,14 @@ class _ReaderOperations:
 
     @staticmethod
     def get_run(conn: Connection, run_id: str) -> dict | None:
+        # parsing_mode lives on the job that produced the run (one child job per
+        # run). CLI/dev runs have no job row, and the CLI only runs ABCD.
         result = conn.execute(
-            text("SELECT * FROM runs WHERE run_id = :run_id"),
+            text(
+                "SELECT runs.*, COALESCE(jobs.parsing_mode, 'abcd') AS parsing_mode "
+                "FROM runs LEFT JOIN jobs ON jobs.run_id = runs.run_id "
+                "WHERE runs.run_id = :run_id LIMIT 1"
+            ),
             {"run_id": run_id},
         )
         row = result.mappings().fetchone()

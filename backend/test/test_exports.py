@@ -218,7 +218,7 @@ def ctx(tmp_path, async_db_adapters):
 
 
 def test_run_export_xlsx_route(ctx):
-    resp = ctx.get(f"/runs/{RUN1}/parser/export?format=xlsx")
+    resp = ctx.get(f"/runs/{RUN1}/abcd/export?format=xlsx")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == abcd_exports.CONTENT_TYPES["xlsx"]
     assert "attachment" in resp.headers["content-disposition"]
@@ -227,13 +227,13 @@ def test_run_export_xlsx_route(ctx):
 
 
 def test_run_export_csv_route(ctx):
-    resp = ctx.get(f"/runs/{RUN1}/parser/export?format=csv")
+    resp = ctx.get(f"/runs/{RUN1}/abcd/export?format=csv")
     assert resp.status_code == 200
     assert resp.text.splitlines()[0].startswith("Category,")
 
 
 def test_job_export_xlsx_route(ctx):
-    resp = ctx.get(f"/jobs/{PARENT}/export?format=xlsx")
+    resp = ctx.get(f"/jobs/{PARENT}/abcd/export?format=xlsx")
     assert resp.status_code == 200
     wb = openpyxl.load_workbook(io.BytesIO(resp.content))
     assert wb.sheetnames[0] == "Summary"
@@ -241,7 +241,7 @@ def test_job_export_xlsx_route(ctx):
 
 
 def test_job_export_csv_stacks_runs(ctx):
-    resp = ctx.get(f"/jobs/{PARENT}/export?format=csv")
+    resp = ctx.get(f"/jobs/{PARENT}/abcd/export?format=csv")
     assert resp.status_code == 200
     body = resp.text
     assert "first.mp4," in body
@@ -319,14 +319,14 @@ def test_job_metadata_export_json_route_includes_each_child(ctx):
 
 
 def test_export_bad_format_400(ctx):
-    assert ctx.get(f"/runs/{RUN1}/parser/export?format=pdf").status_code == 400
-    assert ctx.get(f"/jobs/{PARENT}/export?format=pdf").status_code == 400
+    assert ctx.get(f"/runs/{RUN1}/abcd/export?format=pdf").status_code == 400
+    assert ctx.get(f"/jobs/{PARENT}/abcd/export?format=pdf").status_code == 400
     assert ctx.get(f"/runs/{RUN1}/metadata/export?format=pdf").status_code == 400
     assert ctx.get(f"/jobs/{PARENT}/metadata/export?format=pdf").status_code == 400
 
 
 def test_export_unknown_404(ctx):
-    assert ctx.get("/runs/nope/parser/export").status_code == 404
+    assert ctx.get("/runs/nope/abcd/export").status_code == 404
     assert ctx.get("/jobs/nope/export").status_code == 404
     assert ctx.get("/runs/nope/metadata/export").status_code == 404
     assert ctx.get("/jobs/nope/metadata/export").status_code == 404
@@ -348,5 +348,23 @@ def test_job_export_no_completed_runs_409(ctx, tmp_path, async_db_adapters):
     )
     async_reader, _ = async_db_adapters(database_url)
     app.dependency_overrides[get_reader] = lambda: async_reader
-    assert ctx.get("/jobs/p2/export").status_code == 409
+    assert ctx.get("/jobs/p2/abcd/export").status_code == 409
     assert ctx.get("/jobs/p2/metadata/export").status_code == 409
+
+
+def test_job_abcd_export_409_on_exploratory_job(ctx, tmp_path, async_db_adapters):
+    database_url = f"sqlite:///{tmp_path / 'explore.db'}"
+    engine = create_engine(database_url)
+    metadata_obj.create_all(engine)
+    writer = ClipScribeWriterDB(engine=engine)
+    writer.create_job(
+        job_id="p3",
+        mode="full",
+        parsing_mode="exploratory",
+        video_name="batch",
+        created_by="local",
+    )
+    async_reader, _ = async_db_adapters(database_url)
+    app.dependency_overrides[get_reader] = lambda: async_reader
+    assert ctx.get("/jobs/p3/abcd/export").status_code == 409
+    assert ctx.post("/jobs/p3/chat", json={"message": "hi"}).status_code == 409

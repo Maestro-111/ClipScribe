@@ -8,7 +8,13 @@ import {
   type JobResponse,
 } from "../api/hooks";
 import { formatDateTime, formatMergedDuration } from "../lib/format";
-import { EmptyState, Pagination, Skeleton, StatusPill } from "../components/ui";
+import {
+  AnalysisTypePill,
+  EmptyState,
+  Pagination,
+  Skeleton,
+  StatusPill,
+} from "../components/ui";
 import { Scribe } from "../components/Scribe";
 
 // "/" — the jobs list (web-app-plan §7, page 1).
@@ -140,6 +146,7 @@ function JobsList() {
               <tr>
                 <th className="px-4 py-3 font-medium">Video</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Type</th>
                 <th className="px-4 py-3 font-medium">Platform</th>
                 <th className="px-4 py-3 font-medium">Mode</th>
                 <th className="px-4 py-3 font-medium">Created</th>
@@ -174,6 +181,9 @@ function JobsList() {
                       }
                       return null;
                     })()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <AnalysisTypePill mode={job.parsing_mode} />
                   </td>
                   <td className="px-4 py-3 text-neutral-600">
                     {job.platform ?? "—"}

@@ -137,7 +137,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/jobs/{job_id}/export": {
+    "/jobs/{job_id}/abcd/export": {
         parameters: {
             query?: never;
             header?: never;
@@ -151,7 +151,7 @@ export interface paths {
          *     XLSX carries a cross-run Summary sheet plus one Detail sheet per run; CSV
          *     stacks every run's criteria into one table with a leading Video column.
          */
-        get: operations["export_job_jobs__job_id__export_get"];
+        get: operations["export_abcd_jobs__job_id__abcd_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -406,15 +406,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/parser": {
+    "/runs/{run_id}/abcd": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Parser results */
-        get: operations["get_parser_runs__run_id__parser_get"];
+        /** ABCD results */
+        get: operations["get_abcd_runs__run_id__abcd_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -423,7 +423,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/parser/export": {
+    "/runs/{run_id}/abcd/export": {
         parameters: {
             query?: never;
             header?: never;
@@ -432,12 +432,12 @@ export interface paths {
         };
         /**
          * Download this run's ABCD report
-         * @description Export one run's parser results as a CSV or XLSX download.
+         * @description Export one run's ABCD results as a CSV or XLSX download.
          *
          *     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
          *     flat Detail table (still opens in Excel, just without the extra tab).
          */
-        get: operations["export_parser_runs__run_id__parser_export_get"];
+        get: operations["export_abcd_runs__run_id__abcd_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -625,6 +625,34 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AbcdResult
+         * @description Persisted per-criterion ABCD evaluation from the parser.
+         */
+        AbcdResult: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Platform */
+            platform?: string | null;
+            /** Feature Category */
+            feature_category?: string | null;
+            /** Feature Name */
+            feature_name?: string | null;
+            /** Feature Criteria */
+            feature_criteria?: string | null;
+            /** Evaluation */
+            evaluation?: boolean | null;
+            /** Llm Prompt */
+            llm_prompt?: string | null;
+            /** Llm Explanation */
+            llm_explanation?: string | null;
+            /** Langsmith Run Id */
+            langsmith_run_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
         /**
          * AudioSegment
          * @description Whisper transcript segment.
@@ -842,8 +870,9 @@ export interface components {
             mode: components["schemas"]["JobMode"];
             /** @default with_objects */
             extraction_mode: components["schemas"]["ExtractionMode"];
-            /** @default youtube */
-            platform: components["schemas"]["PlatformName"];
+            /** @default abcd */
+            parsing_mode: components["schemas"]["ParsingMode"];
+            platform?: components["schemas"]["PlatformName"] | null;
             /** Videos */
             videos?: components["schemas"]["VideoInput"][];
             /** Platform Params */
@@ -921,6 +950,8 @@ export interface components {
             parent_job_id?: string | null;
             /** Run Id */
             run_id?: string | null;
+            extraction_mode: components["schemas"]["ExtractionMode"];
+            parsing_mode: components["schemas"]["ParsingMode"];
             /** Status */
             status: string;
             /** Mode */
@@ -952,33 +983,10 @@ export interface components {
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "canceled";
         /**
-         * ParserResult
-         * @description Persisted per-criterion evaluation from the parser.
+         * ParsingMode
+         * @enum {string}
          */
-        ParserResult: {
-            /** Id */
-            id: number;
-            /** Run Id */
-            run_id: string;
-            /** Platform */
-            platform?: string | null;
-            /** Feature Category */
-            feature_category?: string | null;
-            /** Feature Name */
-            feature_name?: string | null;
-            /** Feature Criteria */
-            feature_criteria?: string | null;
-            /** Evaluation */
-            evaluation?: boolean | null;
-            /** Llm Prompt */
-            llm_prompt?: string | null;
-            /** Llm Explanation */
-            llm_explanation?: string | null;
-            /** Langsmith Run Id */
-            langsmith_run_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
-        };
+        ParsingMode: "abcd" | "exploratory";
         /** PlatformInfo */
         PlatformInfo: {
             /** Name */
@@ -1027,6 +1035,8 @@ export interface components {
             video_type?: string | null;
             /** @default with_objects */
             extraction_mode: components["schemas"]["ExtractionMode"];
+            /** @default abcd */
+            parsing_mode: components["schemas"]["ParsingMode"];
             /** Created At */
             created_at?: string | null;
         };
@@ -1366,7 +1376,7 @@ export interface operations {
             };
         };
     };
-    export_job_jobs__job_id__export_get: {
+    export_abcd_jobs__job_id__abcd_export_get: {
         parameters: {
             query?: {
                 format?: string;
@@ -1809,7 +1819,7 @@ export interface operations {
             };
         };
     };
-    get_parser_runs__run_id__parser_get: {
+    get_abcd_runs__run_id__abcd_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1826,7 +1836,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ParserResult"][];
+                    "application/json": components["schemas"]["AbcdResult"][];
                 };
             };
             /** @description Validation Error */
@@ -1840,7 +1850,7 @@ export interface operations {
             };
         };
     };
-    export_parser_runs__run_id__parser_export_get: {
+    export_abcd_runs__run_id__abcd_export_get: {
         parameters: {
             query?: {
                 format?: string;

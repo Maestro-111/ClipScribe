@@ -195,10 +195,33 @@ def test_frames_window(client):
 
 
 def test_parser(client):
-    body = client.get(f"/runs/{RUN_ID}/parser").json()
+    body = client.get(f"/runs/{RUN_ID}/abcd").json()
     assert body[0]["feature_name"] == "logo"
 
 
 def test_subresource_404_on_unknown_run(client):
     assert client.get("/runs/missing/objects").status_code == 404
     assert client.get("/runs/missing/global-stats").status_code == 404
+
+
+def test_run_exposes_parsing_mode(client):
+    assert client.get(f"/runs/{RUN_ID}").json()["parsing_mode"] == "abcd"
+
+
+def test_abcd_routes_409_on_exploratory_run(client, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            jobs_table.update()
+            .where(jobs_table.c.run_id == RUN_ID)
+            .values(parsing_mode="exploratory")
+        )
+
+    assert client.get(f"/runs/{RUN_ID}").json()["parsing_mode"] == "exploratory"
+    assert client.get(f"/runs/{RUN_ID}/abcd").status_code == 409
+    assert client.get(f"/runs/{RUN_ID}/abcd/export").status_code == 409
+    assert (
+        client.post(f"/runs/{RUN_ID}/chat", json={"message": "hi"}).status_code == 409
+    )
+    # Extraction reads stay available for exploratory runs.
+    assert client.get(f"/runs/{RUN_ID}/objects").status_code == 200

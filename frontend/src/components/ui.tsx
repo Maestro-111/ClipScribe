@@ -49,6 +49,26 @@ export function StatusPill({ status }: { status: string }) {
   );
 }
 
+// Analysis type of a job/run: ABCD evaluation vs. exploratory analysis.
+const ANALYSIS_TYPE: Record<string, { label: string; wrap: string }> = {
+  abcd: { label: "ABCD", wrap: "bg-indigo-50 text-indigo-700 ring-indigo-600/20" },
+  exploratory: {
+    label: "Exploratory",
+    wrap: "bg-teal-50 text-teal-700 ring-teal-600/20",
+  },
+};
+
+export function AnalysisTypePill({ mode }: { mode: string }) {
+  const t = ANALYSIS_TYPE[mode] ?? { label: mode, wrap: PILL_FALLBACK.wrap };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${t.wrap}`}
+    >
+      {t.label}
+    </span>
+  );
+}
+
 // Pass / fail / n-a verdict badge — SVG glyphs render identically on every OS,
 // unlike the ✅/❌ emoji they replace.
 export function Verdict({ value }: { value: boolean | null }) {

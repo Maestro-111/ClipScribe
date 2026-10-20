@@ -286,6 +286,7 @@ class RunResponse(BaseModel):
     video_path: str | None = None
     video_type: str | None = None
     extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
+    parsing_mode: ParsingMode = ParsingMode.ABCD
     created_at: str | None = None
 
 
@@ -336,8 +337,8 @@ class GlobalStatsResponse(BaseModel):
     shot_boundaries: list[ShotBoundary]
 
 
-class ParserResult(BaseModel):
-    """Persisted per-criterion evaluation from the parser."""
+class AbcdResult(BaseModel):
+    """Persisted per-criterion ABCD evaluation from the parser."""
 
     id: int
     run_id: str

@@ -15,13 +15,13 @@ from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
 from app import exports, abcd_exports, metadata_exports
-from app.deps import current_user_id, get_reader, require_owned_run
+from app.deps import current_user_id, get_reader, require_abcd_run, require_owned_run
 from app.errors import ProblemException
 from app.models import (
+    AbcdResult,
     AudioSegment,
     FrameDetection,
     GlobalStatsResponse,
-    ParserResult,
     RunResponse,
     RunSibling,
     ShotBoundary,
@@ -131,25 +131,23 @@ async def get_frames(
     ]
 
 
-@router.get("/{run_id}/parser", summary="Parser results")
-async def get_parser(
+@router.get("/{run_id}/abcd", summary="ABCD results")
+async def get_abcd(
     run_id: str,
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    _run: dict = Depends(require_owned_run),
-) -> list[ParserResult]:
-    return [
-        ParserResult.model_validate(r) for r in await reader.get_abcd_results(run_id)
-    ]
+    _run: dict = Depends(require_abcd_run),
+) -> list[AbcdResult]:
+    return [AbcdResult.model_validate(r) for r in await reader.get_abcd_results(run_id)]
 
 
-@router.get("/{run_id}/parser/export", summary="Download this run's ABCD report")
-async def export_parser(
+@router.get("/{run_id}/abcd/export", summary="Download this run's ABCD report")
+async def export_abcd(
     run_id: str,
     fmt: str = Query(default="xlsx", alias="format"),
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    run: dict = Depends(require_owned_run),
+    run: dict = Depends(require_abcd_run),
 ) -> Response:
-    """Export one run's parser results as a CSV or XLSX download.
+    """Export one run's ABCD results as a CSV or XLSX download.
 
     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
     flat Detail table (still opens in Excel, just without the extra tab).

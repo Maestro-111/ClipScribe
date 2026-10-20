@@ -13,6 +13,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
+from app.models import ParsingMode
 from app.settings import Settings, get_settings
 from clip_scribe.utils.clip_scribe_artifacts import (
     ArtifactUploader,
@@ -168,4 +169,26 @@ async def require_owned_job(
         raise ProblemException(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
+    return job
+
+
+def _require_abcd(row: dict, kind: str, row_id: str) -> None:
+    if row.get("parsing_mode", ParsingMode.ABCD.value) != ParsingMode.ABCD.value:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"{kind} '{row_id}' was analyzed in exploratory mode; "
+            "ABCD results and the advisory chat are not available for it",
+        )
+
+
+async def require_abcd_run(run: dict = Depends(require_owned_run)) -> dict:
+    """``require_owned_run`` for ABCD-only routes: 409s on exploratory runs."""
+    _require_abcd(run, "run", run["run_id"])
+    return run
+
+
+async def require_abcd_job(job: dict = Depends(require_owned_job)) -> dict:
+    """``require_owned_job`` for ABCD-only routes: 409s on exploratory jobs."""
+    _require_abcd(job, "job", job["job_id"])
     return job

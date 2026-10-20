@@ -5,18 +5,19 @@ import {
   useRunAudioSegments,
   useRunFrames,
   useRunGlobalStats,
-  useRunParser,
+  useRunAbcd,
   useRunSiblings,
 } from "../api/hooks";
 import type {
+  AbcdResult,
   AudioSegment,
   DetectionSource,
   FrameDetection,
-  ParserResult,
   ShotBoundary,
 } from "../lib/run-types";
 import { ChatPanel } from "../components/ChatPanel";
 import {
+  AnalysisTypePill,
   ExportMenu,
   Verdict,
   XLSX_JSON_EXPORT_ITEMS,
@@ -334,11 +335,11 @@ function RunTimeline({
   );
 }
 
-// ── ParserTable ───────────────────────────────────────────────────────────
+// ── AbcdTable ───────────────────────────────────────────────────────────
 // Criteria table grouped by feature_category. Each row expands to show the
 // LLM explanation, criteria text, and (optionally) the full prompt.
 
-function ParserTable({ results }: { results: ParserResult[] }) {
+function AbcdTable({ results }: { results: AbcdResult[] }) {
   // Allow any number of rows open at once (independent toggles).
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -352,11 +353,11 @@ function ParserTable({ results }: { results: ParserResult[] }) {
 
   if (!results.length) {
     return (
-      <p className="text-sm text-neutral-500">No parser results for this run.</p>
+      <p className="text-sm text-neutral-500">No ABCD results for this run.</p>
     );
   }
 
-  const byCategory = results.reduce<Record<string, ParserResult[]>>((acc, r) => {
+  const byCategory = results.reduce<Record<string, AbcdResult[]>>((acc, r) => {
     const cat = r.feature_category ?? "Other";
     (acc[cat] ??= []).push(r);
     return acc;
@@ -484,7 +485,9 @@ function RunInspector({ runId }: { runId: string }) {
   const detailQueriesEnabled = shouldFetchRun && !!run.data;
   const globalStats = useRunGlobalStats(runId, detailQueriesEnabled);
   const audioSegments = useRunAudioSegments(runId, detailQueriesEnabled);
-  const parser = useRunParser(runId, detailQueriesEnabled);
+  // Exploratory runs have no ABCD results (the API 409s), so don't ask.
+  const isAbcd = run.data?.parsing_mode !== "exploratory";
+  const abcd = useRunAbcd(runId, detailQueriesEnabled && isAbcd);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   // Fullscreen the wrapper (video + SVG overlay together), not the <video>:
@@ -566,7 +569,7 @@ function RunInspector({ runId }: { runId: string }) {
 
   const shots = globalStats.data?.shot_boundaries ?? [];
   const audio = audioSegments.data ?? [];
-  const parserResults = parser.data ?? [];
+  const abcdResults = abcd.data ?? [];
 
   // Sibling runs share this run's batch job; the switcher flips between them.
   // Only completed runs have inspectable data (the extractor writes the run row
@@ -609,7 +612,10 @@ function RunInspector({ runId }: { runId: string }) {
               ← Batch
             </Link>
           )}
-          <h1 className="mt-1 text-2xl font-semibold">Run inspector</h1>
+          <div className="mt-1 flex items-center gap-2">
+            <h1 className="text-2xl font-semibold">Run inspector</h1>
+            {run.data && <AnalysisTypePill mode={run.data.parsing_mode} />}
+          </div>
           {run.data?.video_name && (
             <p className="text-neutral-500">{run.data.video_name}</p>
           )}
@@ -780,29 +786,35 @@ function RunInspector({ runId }: { runId: string }) {
         )}
       </section>
 
-      {/* ── ABCD criteria ── */}
-      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-medium">ABCD criteria</h2>
-          {parserResults.length > 0 && (
-            <ExportMenu
-              baseHref={`/api/runs/${runId}/parser/export`}
-              label="Export ABCD"
-            />
-          )}
-        </div>
-        {parser.isLoading ? (
-          <p className="text-sm text-neutral-500">Loading…</p>
-        ) : (
-          <ParserTable results={parserResults} />
-        )}
-      </section>
+      {/* ABCD results and the advisory chat are ABCD-only for now; the
+          exploratory inspector and its chat agent come later. */}
+      {isAbcd && (
+        <>
+          {/* ── ABCD criteria ── */}
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-medium">ABCD criteria</h2>
+              {abcdResults.length > 0 && (
+                <ExportMenu
+                  baseHref={`/api/runs/${runId}/abcd/export`}
+                  label="Export ABCD"
+                />
+              )}
+            </div>
+            {abcd.isLoading ? (
+              <p className="text-sm text-neutral-500">Loading…</p>
+            ) : (
+              <AbcdTable results={abcdResults} />
+            )}
+          </section>
 
-      {/* ── Advisory chat (web-app-plan §13) ── */}
-      <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 font-medium">Ask about this video</h2>
-        <ChatPanel key={runId} endpoint={`/api/runs/${runId}/chat`} />
-      </section>
+          {/* ── Advisory chat (web-app-plan §13) ── */}
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 font-medium">Ask about this video</h2>
+            <ChatPanel key={runId} endpoint={`/api/runs/${runId}/chat`} />
+          </section>
+        </>
+      )}
         </>
       )}
     </div>

@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
-from app.deps import get_reader, get_writer, require_owned_job, require_owned_run
+from app.deps import (
+    get_reader,
+    get_writer,
+    require_abcd_job,
+    require_abcd_run,
+    require_owned_job,
+    require_owned_run,
+)
 from app.errors import ProblemException
 from app.models import (
     ChatHistoryResponse,
@@ -50,7 +57,8 @@ async def post_run_chat(
     run_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
-    _run: dict = Depends(require_owned_run),
+    # Exploratory runs get their own chat agent later; blocked until then.
+    _run: dict = Depends(require_abcd_run),
 ) -> StreamingResponse:
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
@@ -111,7 +119,8 @@ async def post_job_chat(
     job_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
-    _job: dict = Depends(require_owned_job),
+    # Exploratory jobs get their own chat agent later; blocked until then.
+    _job: dict = Depends(require_abcd_job),
 ) -> StreamingResponse:
     runs = await service.resolve_job_runs(job_id)
     if not runs:

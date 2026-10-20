@@ -12,10 +12,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, unwrap } from "./client";
 import type {
+  AbcdResult,
   AudioSegment,
   FrameDetection,
   GlobalStatsResponse,
-  ParserResult,
   Run,
   TextEvent,
 } from "../lib/run-types";
@@ -51,7 +51,7 @@ export const keys = {
       { fromSec: window?.fromSec, toSec: window?.toSec },
     ] as const,
   runGlobalStats: (id: string) => ["runs", id, "global-stats"] as const,
-  runParser: (id: string) => ["runs", id, "parser"] as const,
+  runAbcd: (id: string) => ["runs", id, "abcd"] as const,
   runAudioSegments: (id: string) => ["runs", id, "audio-segments"] as const,
   runTextEvents: (id: string) => ["runs", id, "text-events"] as const,
   platforms: () => ["platforms"] as const,
@@ -187,15 +187,15 @@ export function useRunGlobalStats(runId: string, enabled = true) {
   });
 }
 
-export function useRunParser(runId: string, enabled = true) {
+export function useRunAbcd(runId: string, enabled = true) {
   return useQuery({
-    queryKey: keys.runParser(runId),
+    queryKey: keys.runAbcd(runId),
     queryFn: async () =>
       unwrap(
-        await api.GET("/runs/{run_id}/parser", {
+        await api.GET("/runs/{run_id}/abcd", {
           params: { path: { run_id: runId } },
         }),
-      ) as unknown as ParserResult[],
+      ) as unknown as AbcdResult[],
     enabled,
     staleTime: Infinity,
   });
