@@ -147,3 +147,4 @@ class ExploreReport(BaseModel):
     visuals: VisualDigest | None
     # Filled by the findings stage (stage C); empty until then.
     findings: list[Finding] = Field(default_factory=list)
+    metrics: RunMetrics

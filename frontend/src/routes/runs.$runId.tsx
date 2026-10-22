@@ -6,6 +6,7 @@ import {
   useRunFrames,
   useRunGlobalStats,
   useRunAbcd,
+  useRunExploration,
   useRunSiblings,
 } from "../api/hooks";
 import type {
@@ -16,6 +17,7 @@ import type {
   ShotBoundary,
 } from "../lib/run-types";
 import { ChatPanel } from "../components/ChatPanel";
+import { ExplorationPanel } from "../components/ExplorationPanel";
 import {
   AnalysisTypePill,
   ExportMenu,
@@ -488,6 +490,7 @@ function RunInspector({ runId }: { runId: string }) {
   // Exploratory runs have no ABCD results (the API 409s), so don't ask.
   const isAbcd = run.data?.parsing_mode !== "exploratory";
   const abcd = useRunAbcd(runId, detailQueriesEnabled && isAbcd);
+  const exploration = useRunExploration(runId, detailQueriesEnabled && !isAbcd);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   // Fullscreen the wrapper (video + SVG overlay together), not the <video>:
@@ -626,11 +629,20 @@ function RunInspector({ runId }: { runId: string }) {
           )}
         </div>
         {runReady && (
-          <ExportMenu
-            baseHref={`/api/runs/${runId}/metadata/export`}
-            label="Export metadata"
-            items={XLSX_JSON_EXPORT_ITEMS}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {!isAbcd && exploration.data?.report && (
+              <ExportMenu
+                baseHref={`/api/runs/${runId}/exploration/export`}
+                label="Export report"
+                items={XLSX_JSON_EXPORT_ITEMS}
+              />
+            )}
+            <ExportMenu
+              baseHref={`/api/runs/${runId}/metadata/export`}
+              label="Export metadata"
+              items={XLSX_JSON_EXPORT_ITEMS}
+            />
+          </div>
         )}
       </div>
 
@@ -786,8 +798,20 @@ function RunInspector({ runId }: { runId: string }) {
         )}
       </section>
 
-      {/* ABCD results and the advisory chat are ABCD-only for now; the
-          exploratory inspector and its chat agent come later. */}
+      {/* Exploratory runs show their report here; its chat agent comes later. */}
+      {!isAbcd &&
+        (exploration.isLoading ? (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        ) : exploration.data ? (
+          <ExplorationPanel data={exploration.data} onSeek={handleSeek} />
+        ) : (
+          <p className="text-sm text-red-600">
+            {(exploration.error as Error | null)?.message ??
+              "Couldn't load the exploration report."}
+          </p>
+        ))}
+
+      {/* ABCD results and the advisory chat are ABCD-only for now. */}
       {isAbcd && (
         <>
           {/* ── ABCD criteria ── */}

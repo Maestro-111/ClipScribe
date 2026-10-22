@@ -45,6 +45,8 @@ class VideoInformationParser:
         explore_transcript_key_claims_num: int = 6,
         explore_overview_summary_sentence_num: int = 4,
         explore_overview_summary_chapters_num: int = 6,
+        explore_on_screen_text_cards_num: int = 20,
+        explore_visuals_subjects_num: int = 20,
     ):
         """
         Initialize the video information parser.
@@ -81,6 +83,8 @@ class VideoInformationParser:
                 "transcript_key_claims_num": explore_transcript_key_claims_num,
                 "overview_summary_sentence_num": explore_overview_summary_sentence_num,
                 "overview_summary_chapters_num": explore_overview_summary_chapters_num,
+                "on_screen_text_cards_num": explore_on_screen_text_cards_num,
+                "visuals_subjects_num": explore_visuals_subjects_num,
             }
         )
 

@@ -179,6 +179,14 @@ class ClipScribeBuilder:
             "explore", {}
         ).get("overview_summary_chapters_num", 6)
 
+        explore_on_screen_text_cards_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("on_screen_text_cards_num", 20)
+
+        explore_visuals_subjects_num = clib_scribe_parser_params.get("explore", {}).get(
+            "visuals_subjects_num", 20
+        )
+
         parser_detection_model = self.resolve_model(
             "parser.agent.llm",
             parser_agent_params.get("llm", self.DEFAULT_PARSER_MODEL),
@@ -200,6 +208,8 @@ class ClipScribeBuilder:
             explore_transcript_key_claims_num=explore_transcript_key_claims_num,
             explore_overview_summary_sentence_num=explore_overview_summary_sentence_num,
             explore_overview_summary_chapters_num=explore_overview_summary_chapters_num,
+            explore_on_screen_text_cards_num=explore_on_screen_text_cards_num,
+            explore_visuals_subjects_num=explore_visuals_subjects_num,
         )
 
         return info_parser

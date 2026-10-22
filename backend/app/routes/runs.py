@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app import exports, abcd_exports, metadata_exports
+from app import abcd_exports, exploration_exports, exports, metadata_exports
 from app.deps import (
     current_user_id,
     get_reader,
@@ -23,7 +23,6 @@ from app.deps import (
     require_owned_run,
 )
 from app.errors import ProblemException
-from clip_scribe.parser.explore.metrics import compute_run_metrics
 from app.models import (
     AbcdResult,
     AudioSegment,
@@ -148,29 +147,62 @@ async def get_abcd(
     return [AbcdResult.model_validate(r) for r in await reader.get_abcd_results(run_id)]
 
 
-@router.get("/{run_id}/exploration", summary="Exploratory report and metrics")
-async def get_exploration(
-    run_id: str,
-    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    run: dict = Depends(require_exploratory_run),
+async def _load_exploration(
+    reader: ClipScribeAsyncReaderDB, run_id: str
 ) -> ExplorationResponse:
-    summary = await reader.get_extraction_summary(run_id)
-    if summary is None:  # the run row was deleted after the ownership check
-        raise ProblemException(
-            status=404, title="Not Found", detail=f"run '{run_id}' not found"
-        )
-    metrics = await run_in_threadpool(
-        compute_run_metrics,
-        summary,
-        objects_tracked=run.get("extraction_mode") == "with_objects",
-    )
+    """An exploratory run's persisted report, if one was written."""
     row = await reader.get_exploration_result(run_id)
     return ExplorationResponse(
         run_id=run_id,
-        metrics=metrics,
         report=row["payload"] if row else None,
         model=row["model"] if row else None,
         created_at=row["created_at"] if row else None,
+    )
+
+
+@router.get("/{run_id}/exploration", summary="Exploratory report")
+async def get_exploration(
+    run_id: str,
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    _run: dict = Depends(require_exploratory_run),
+) -> ExplorationResponse:
+    return await _load_exploration(reader, run_id)
+
+
+@router.get(
+    "/{run_id}/exploration/export",
+    summary="Download this run's exploratory report",
+)
+async def export_exploration(
+    run_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    run: dict = Depends(require_exploratory_run),
+) -> Response:
+    """Export the exploratory report as XLSX (readable) or JSON (lossless)."""
+    if fmt not in exploration_exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+    response = await _load_exploration(reader, run_id)
+    if response.report is None:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"run '{run_id}' has no exploration report to export",
+        )
+    video_name = run.get("video_name") or run_id
+    if fmt == "json":
+        content = await run_in_threadpool(exploration_exports.run_json, response)
+    else:
+        content = await run_in_threadpool(
+            exploration_exports.run_xlsx, video_name, response
+        )
+    filename = exports.export_filename(f"{video_name}_exploration", fmt)
+    return Response(
+        content=content,
+        media_type=exploration_exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

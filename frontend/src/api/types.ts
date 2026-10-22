@@ -430,8 +430,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Exploratory report and metrics */
+        /** Exploratory report */
         get: operations["get_exploration_runs__run_id__exploration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/exploration/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download this run's exploratory report
+         * @description Export the exploratory report as XLSX (readable) or JSON (lossless).
+         */
+        get: operations["export_exploration_runs__run_id__exploration_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -764,16 +784,13 @@ export interface components {
         };
         /**
          * ExplorationResponse
-         * @description An exploratory run's report plus its metrics.
+         * @description An exploratory run's persisted report (which carries its own metrics).
          *
-         *     ``metrics`` are computed from the extraction data on every read (nothing
-         *     stored). ``report`` is the persisted LLM report; null if it hasn't been
-         *     written (e.g. the parse phase failed).
+         *     ``report`` is null if it hasn't been written (e.g. the parse phase failed).
          */
         ExplorationResponse: {
             /** Run Id */
             run_id: string;
-            metrics: components["schemas"]["RunMetrics"];
             report?: components["schemas"]["ExploreReport"] | null;
             /** Model */
             model?: string | null;
@@ -796,6 +813,7 @@ export interface components {
             visuals: components["schemas"]["VisualDigest"] | null;
             /** Findings */
             findings?: components["schemas"]["Finding"][];
+            metrics: components["schemas"]["RunMetrics"];
         };
         /**
          * ExtractionMode
@@ -2050,6 +2068,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExplorationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_exploration_runs__run_id__exploration_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

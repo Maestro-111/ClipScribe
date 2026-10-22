@@ -16,6 +16,7 @@ from clip_scribe.db.schema import metadata_obj
 from clip_scribe.db.writer import ClipScribeWriterDB
 from clip_scribe.parser.explore import explorer as explorer_mod
 from clip_scribe.parser.explore.explorer import VideoExplorer
+from clip_scribe.parser.explore.metrics import compute_run_metrics
 from clip_scribe.parser.explore.models import ExploreReport
 from clip_scribe.parser.explore.prompts import (
     _SHARED_RULES,
@@ -34,6 +35,8 @@ _PROMPT_PARAMS = {
     "transcript_key_claims_num": 4,
     "overview_summary_sentence_num": 5,
     "overview_summary_chapters_num": 7,
+    "on_screen_text_cards_num": 20,
+    "visuals_subjects_num": 15,
 }
 
 
@@ -99,9 +102,11 @@ class _StubExplorer(VideoExplorer):
         self.outputs = outputs
         self.fail = fail or set()
         self.calls: list[type] = []
+        self.payloads: dict[type, Any] = {}
 
     def _structured(self, schema, system, payload):  # type: ignore[no-untyped-def]
         self.calls.append(schema)
+        self.payloads[schema] = payload
         if schema in self.fail:
             raise RuntimeError("llm down")
         return self.outputs[schema]
@@ -130,6 +135,9 @@ def test_report_resolves_indices_to_real_data():
     )
 
     assert report.summary == "an ad"
+    # The metrics the digests were built from are stored with the report.
+    assert report.metrics.shot_count == 3
+    assert [o.label for o in report.metrics.objects] == ["car", "logo"]
     # Claims carry the timestamp of the referenced speech segment.
     assert [(c.text, c.start_sec) for c in report.transcript.key_claims] == [
         ("claim A", 8.0)
@@ -194,7 +202,12 @@ def test_exploration_result_round_trip_replaces(tmp_path):
     reader = ClipScribeReaderDB(engine=engine)
 
     first = ExploreReport(
-        summary="v1", chapters=[], transcript=None, on_screen_text=None, visuals=None
+        summary="v1",
+        chapters=[],
+        transcript=None,
+        on_screen_text=None,
+        visuals=None,
+        metrics=compute_run_metrics(_summary(), objects_tracked=False),
     )
     second = first.model_copy(update={"summary": "v2"})
     writer.save_exploration_result("r1", 1, first.model_dump(mode="json"), "m")
@@ -256,3 +269,44 @@ def test_list_limits_are_enforced_in_code():
     ]
     # Chapters are cut from the end, keeping the earliest.
     assert [c.title for c in report.chapters] == ["Open"]
+
+
+def test_text_cards_beyond_the_llm_limit_stay_in_the_report():
+    # Three cards (Jeep 3s, DRIVE IT HOME 2s, HOLIDAY EVENT 2s); the LLM only
+    # cleans the single longest one.
+    outputs = _stub_outputs()
+    outputs[explorer_mod._OnScreenTextOutput] = explorer_mod._OnScreenTextOutput(
+        summary="branding",
+        cards=[
+            explorer_mod._CardLabel(card=0, clean_text="Jeep", category="brand"),
+            # Never sent to the model: must not be applied.
+            explorer_mod._CardLabel(card=1, clean_text="ghost", category="url"),
+        ],
+    )
+    stub = _StubExplorer(
+        outputs, params={**_PROMPT_PARAMS, "on_screen_text_cards_num": 1}
+    )
+    report = stub.explore(_summary(), objects_tracked=False)
+
+    assert [c["index"] for c in stub.payloads[explorer_mod._OnScreenTextOutput]] == [0]
+    cards = report.on_screen_text.cards
+    assert [c.text for c in cards] == ["Jeep", "DRIVE IT HOME", "HOLIDAY EVENT"]
+    assert [(c.clean_text, c.category) for c in cards] == [
+        ("Jeep", "brand"),
+        ("DRIVE IT HOME", "other"),
+        ("HOLIDAY EVENT", "other"),
+    ]
+
+
+def test_objects_beyond_the_llm_limit_stay_in_the_report():
+    # car (5s) is the longest, then logo (1s); only the top one is rated.
+    stub = _StubExplorer(
+        _stub_outputs(), params={**_PROMPT_PARAMS, "visuals_subjects_num": 1}
+    )
+    report = stub.explore(_objects_summary(), objects_tracked=True)
+
+    sent = stub.payloads[explorer_mod._VisualsOutput]["objects"]
+    assert [o["label"] for o in sent] == ["car"]
+    subjects = {s.label: s.prominence for s in report.visuals.subjects}
+    # The stub rates "CAR" high; the unsent logo defaults to low but is kept.
+    assert subjects == {"car": "high", "logo": "low"}

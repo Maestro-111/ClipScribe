@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from clip_scribe.parser.explore.models import ExploreReport, RunMetrics
+from clip_scribe.parser.explore.models import ExploreReport
 
 
 class JobMode(str, Enum):
@@ -340,15 +340,12 @@ class GlobalStatsResponse(BaseModel):
 
 
 class ExplorationResponse(BaseModel):
-    """An exploratory run's report plus its metrics.
+    """An exploratory run's persisted report (which carries its own metrics).
 
-    ``metrics`` are computed from the extraction data on every read (nothing
-    stored). ``report`` is the persisted LLM report; null if it hasn't been
-    written (e.g. the parse phase failed).
+    ``report`` is null if it hasn't been written (e.g. the parse phase failed).
     """
 
     run_id: str
-    metrics: RunMetrics
     report: ExploreReport | None = None
     model: str | None = None
     created_at: str | None = None

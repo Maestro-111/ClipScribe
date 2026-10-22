@@ -69,10 +69,6 @@ logger = logging.getLogger("clip_scribe")
 _Out = TypeVar("_Out", bound=BaseModel)
 _T = TypeVar("_T")
 
-# Cap the object labels sent to the LLM / kept as visual subjects; metrics
-# already sorts them by screen time.
-_MAX_SUBJECTS = 15
-
 
 # ── LLM structured outputs (index-based; resolved by the code below) ─────────
 
@@ -208,6 +204,7 @@ class VideoExplorer:
             transcript=transcript,
             on_screen_text=on_screen_text,
             visuals=visuals,
+            metrics=metrics,
         )
 
     def _safe(self, name: str, fn: Callable[[], _T | None]) -> _T | None:
@@ -253,6 +250,14 @@ class VideoExplorer:
     def _on_screen_text(self, cards: list[OcrTextCard]) -> OnScreenTextDigest | None:
         if not cards:
             return None
+        # The LLM cleans and categorizes only the cards visible the longest, to
+        # bound the call; every card stays in the digest. Sent cards keep their
+        # original index so the answers map back without translation.
+        sent = set(
+            sorted(range(len(cards)), key=lambda i: -cards[i].total_sec)[
+                : self._limit("on_screen_text_cards_num")
+            ]
+        )
         out = self._structured(
             _OnScreenTextOutput,
             self.prompt_parametrizer.parametrize(ON_SCREEN_TEXT_PROMPT, _SHARED_RULES),
@@ -263,17 +268,17 @@ class VideoExplorer:
                     "visible": [[s.start_sec, s.end_sec] for s in card.spans],
                 }
                 for i, card in enumerate(cards)
+                if i in sent
             ],
         )
-        labels = {
-            label.card: label for label in out.cards if 0 <= label.card < len(cards)
-        }
+        labels = {label.card: label for label in out.cards if label.card in sent}
         return OnScreenTextDigest(
             summary=out.summary,
             cards=[
                 TextCard(
                     **card.model_dump(),
-                    # Cards the LLM skipped keep their raw reading.
+                    # Cards the LLM wasn't sent (or skipped) keep their raw
+                    # reading.
                     clean_text=labels[i].clean_text if i in labels else card.text,
                     category=labels[i].category if i in labels else "other",
                 )
@@ -284,14 +289,16 @@ class VideoExplorer:
     def _visuals(
         self, metrics: RunMetrics, shots: list[ShotContext]
     ) -> VisualDigest | None:
-        objects = metrics.objects[:_MAX_SUBJECTS]
         scenes = [
             {"index": i, "description": s.description}
             for i, s in enumerate(shots)
             if s.description
         ]
-        if not objects and not scenes:
+        if not metrics.objects and not scenes:
             return None
+        # ``metrics.objects`` is sorted by screen time. The LLM rates only the
+        # top ones to bound the call; every tracked object stays in the digest.
+        rated = metrics.objects[: self._limit("visuals_subjects_num")]
         out = self._structured(
             _VisualsOutput,
             self.prompt_parametrizer.parametrize(VISUALS_PROMPT, _SHARED_RULES),
@@ -303,7 +310,7 @@ class VideoExplorer:
                         "screen_time_sec": o.screen_time_sec,
                         "avg_screen_coverage": o.avg_screen_coverage,
                     }
-                    for o in objects
+                    for o in rated
                 ],
             },
         )
@@ -315,11 +322,11 @@ class VideoExplorer:
                     label=o.label,
                     screen_time_sec=o.screen_time_sec,
                     first_seen_sec=o.first_seen_sec,
-                    # Unrated labels default to low rather than being dropped,
-                    # so the subject list always mirrors the tracked objects.
+                    # Objects that weren't rated (beyond the top ones, or skipped
+                    # by the model) default to low.
                     prominence=ratings.get(o.label.casefold(), "low"),
                 )
-                for o in objects
+                for o in metrics.objects
             ],
         )
 

@@ -240,27 +240,114 @@ def test_exploration_route(client, tmp_path):
             .values(parsing_mode="exploratory")
         )
 
-    # Metrics are computed on read; no report persisted yet.
-    body = client.get(f"/runs/{RUN_ID}/exploration").json()
-    assert body["metrics"]["duration_sec"] == 3.0
-    assert body["metrics"]["objects_tracked"] is True
-    assert body["metrics"]["objects"][0]["label"] == "car"
-    assert body["report"] is None
+    # No report persisted yet.
+    assert client.get(f"/runs/{RUN_ID}/exploration").json()["report"] is None
 
     ClipScribeWriterDB(engine=engine).save_exploration_result(
-        RUN_ID,
-        1,
-        {
-            "schema_version": 1,
-            "summary": "an ad",
-            "chapters": [],
-            "transcript": None,
-            "on_screen_text": None,
-            "visuals": None,
-            "findings": [],
-        },
-        "gpt-test",
+        RUN_ID, 1, _explore_report(), "gpt-test"
     )
     body = client.get(f"/runs/{RUN_ID}/exploration").json()
     assert body["report"]["summary"] == "an ad"
+    # Metrics are part of the stored report.
+    assert body["report"]["metrics"]["duration_sec"] == 3.0
     assert body["model"] == "gpt-test"
+
+
+def _explore_report(**overrides):
+    report = {
+        "schema_version": 1,
+        "summary": "an ad",
+        "chapters": [
+            {"title": "Open", "start_sec": 0.0, "end_sec": 1.5, "summary": "start"}
+        ],
+        "transcript": {
+            "summary": "talks",
+            "topics": ["cars"],
+            "key_claims": [{"text": "claim A", "start_sec": 1.0}],
+        },
+        "on_screen_text": {
+            "summary": "branding",
+            "cards": [
+                {
+                    "text": "JEEP.",
+                    "spans": [{"start_sec": 0.0, "end_sec": 2.0}],
+                    "total_sec": 2.0,
+                    "clean_text": "Jeep",
+                    "category": "brand",
+                }
+            ],
+        },
+        "visuals": {"summary": "a car", "subjects": []},
+        "findings": [],
+        "metrics": {
+            "duration_sec": 3.0,
+            "shot_count": 2,
+            "avg_shot_sec": 1.5,
+            "cuts_per_minute": 20.0,
+            "speech_coverage": 0.5,
+            "text_coverage": 0.25,
+            "words_per_minute": 120.0,
+            "face_coverage": None,
+            "objects_tracked": False,
+            "objects": [],
+        },
+    }
+    report.update(overrides)
+    return report
+
+
+def test_exploration_export(client, tmp_path):
+    import io
+
+    from openpyxl import load_workbook
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            jobs_table.update()
+            .where(jobs_table.c.run_id == RUN_ID)
+            .values(parsing_mode="exploratory")
+        )
+
+    # No report yet: nothing to export.
+    assert client.get(f"/runs/{RUN_ID}/exploration/export").status_code == 409
+
+    ClipScribeWriterDB(engine=engine).save_exploration_result(
+        RUN_ID, 1, _explore_report(), "gpt-test"
+    )
+
+    resp = client.get(f"/runs/{RUN_ID}/exploration/export?format=xlsx")
+    assert resp.status_code == 200
+    assert "ad.mp4_exploration.xlsx" in resp.headers["content-disposition"]
+    wb = load_workbook(io.BytesIO(resp.content))
+    # No findings were produced, so no Findings sheet.
+    assert wb.sheetnames == [
+        "Overview",
+        "Chapters",
+        "Transcript",
+        "On-screen text",
+        "Visuals",
+    ]
+    overview = {
+        row[0].value: row[1].value for row in wb["Overview"].iter_rows(min_row=2)
+    }
+    assert overview["Summary"] == "an ad"
+    assert overview["Duration (s)"] == 3.0
+    # Objects weren't tracked: faces were not collected, not "0%".
+    assert overview["Face coverage"] == "Not collected"
+    card = [
+        r
+        for r in wb["On-screen text"].iter_rows(min_row=2, values_only=True)
+        if r[0] == "Card"
+    ][0]
+    assert card[1:5] == ("Jeep", "JEEP.", "brand", "0:00-0:02")
+
+    body = client.get(f"/runs/{RUN_ID}/exploration/export?format=json").json()
+    assert body["report"]["summary"] == "an ad"
+    assert (
+        client.get(f"/runs/{RUN_ID}/exploration/export?format=pdf").status_code == 400
+    )
+
+
+def test_exploration_export_409_on_abcd_run(client):
+    assert client.get(f"/runs/{RUN_ID}/exploration/export").status_code == 409

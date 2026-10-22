@@ -28,6 +28,7 @@ import type { components } from "./types";
 export type JobCreateRequest = components["schemas"]["JobCreateRequest"];
 export type JobResponse = components["schemas"]["JobResponse"];
 export type JobChild = components["schemas"]["JobChild"];
+export type ExplorationResponse = components["schemas"]["ExplorationResponse"];
 
 export interface RunFramesWindow {
   fromSec: number;
@@ -52,6 +53,7 @@ export const keys = {
     ] as const,
   runGlobalStats: (id: string) => ["runs", id, "global-stats"] as const,
   runAbcd: (id: string) => ["runs", id, "abcd"] as const,
+  runExploration: (id: string) => ["runs", id, "exploration"] as const,
   runAudioSegments: (id: string) => ["runs", id, "audio-segments"] as const,
   runTextEvents: (id: string) => ["runs", id, "text-events"] as const,
   platforms: () => ["platforms"] as const,
@@ -196,6 +198,20 @@ export function useRunAbcd(runId: string, enabled = true) {
           params: { path: { run_id: runId } },
         }),
       ) as unknown as AbcdResult[],
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+export function useRunExploration(runId: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.runExploration(runId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/runs/{run_id}/exploration", {
+          params: { path: { run_id: runId } },
+        }),
+      ),
     enabled,
     staleTime: Infinity,
   });

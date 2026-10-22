@@ -94,6 +94,10 @@ clip_scribe:
       transcript_key_claims_num: 6
       overview_summary_sentence_num: 4
       overview_summary_chapters_num: 6
+      # How many on-screen text cards / tracked objects the LLM cleans and rates
+      # (longest on screen first). The rest stay in the report unrated.
+      on_screen_text_cards_num: 20
+      visuals_subjects_num: 20
 
 
 # ============================================================================
