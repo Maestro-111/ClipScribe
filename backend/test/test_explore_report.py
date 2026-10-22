@@ -17,8 +17,24 @@ from clip_scribe.db.writer import ClipScribeWriterDB
 from clip_scribe.parser.explore import explorer as explorer_mod
 from clip_scribe.parser.explore.explorer import VideoExplorer
 from clip_scribe.parser.explore.models import ExploreReport
+from clip_scribe.parser.explore.prompts import (
+    _SHARED_RULES,
+    ON_SCREEN_TEXT_PROMPT,
+    SYNTHESIS_PROMPT,
+    TRANSCRIPT_PROMPT,
+    VISUALS_PROMPT,
+)
+from clip_scribe.utils.clip_scribe_prompts import _PromptLimitsParametrizer
 
 from test.test_explore_metrics import _occ, _summary
+
+
+_PROMPT_PARAMS = {
+    "transcript_topics_num": 3,
+    "transcript_key_claims_num": 4,
+    "overview_summary_sentence_num": 5,
+    "overview_summary_chapters_num": 7,
+}
 
 
 def _stub_outputs() -> dict[type, Any]:
@@ -68,8 +84,18 @@ def _stub_outputs() -> dict[type, Any]:
 
 
 class _StubExplorer(VideoExplorer):
-    def __init__(self, outputs: dict[type, Any], fail: set[type] | None = None):
-        super().__init__(model=None)  # type: ignore[arg-type]  # never called
+    def __init__(
+        self,
+        outputs: dict[type, Any],
+        fail: set[type] | None = None,
+        params: dict[str, int] | None = None,
+    ):
+        super().__init__(
+            model=None,  # type: ignore[arg-type]  # never called
+            prompt_parametrizer=_PromptLimitsParametrizer(
+                params=params or _PROMPT_PARAMS
+            ),
+        )
         self.outputs = outputs
         self.fail = fail or set()
         self.calls: list[type] = []
@@ -179,3 +205,54 @@ def test_exploration_result_round_trip_replaces(tmp_path):
     assert ExploreReport.model_validate(row["payload"]).summary == "v2"
     assert row["model"] == "m"
     assert reader.get_exploration_result("missing") is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [TRANSCRIPT_PROMPT, ON_SCREEN_TEXT_PROMPT, VISUALS_PROMPT, SYNTHESIS_PROMPT],
+)
+def test_prompts_fill_every_placeholder_and_end_with_shared_rules(prompt):
+    text = _PromptLimitsParametrizer(params=_PROMPT_PARAMS).parametrize(
+        prompt, _SHARED_RULES
+    )
+
+    assert "{" not in text and "}" not in text
+    assert text.endswith(_SHARED_RULES)
+
+
+def test_prompt_limits_come_from_params():
+    parametrizer = _PromptLimitsParametrizer(params=_PROMPT_PARAMS)
+
+    transcript = parametrizer.parametrize(TRANSCRIPT_PROMPT, _SHARED_RULES)
+    overview = parametrizer.parametrize(SYNTHESIS_PROMPT, _SHARED_RULES)
+
+    assert "up to 3 short topic labels" in transcript
+    assert "up to 4 concrete claims" in transcript
+    assert "5 sentences" in overview
+    assert "into up to 7 consecutive chapters" in overview
+
+
+def test_list_limits_are_enforced_in_code():
+    outputs = _stub_outputs()
+    outputs[explorer_mod._TranscriptOutput] = explorer_mod._TranscriptOutput(
+        summary="talks",
+        topics=["a", "b", "c", "d", "e"],
+        key_claims=[
+            explorer_mod._ClaimRef(text=f"claim {i}", segment=0) for i in range(6)
+        ],
+    )
+    params = {**_PROMPT_PARAMS, "overview_summary_chapters_num": 1}
+    report = _StubExplorer(outputs, params=params).explore(
+        _summary(), objects_tracked=False
+    )
+
+    # The stub returns more than the limits (3 topics, 4 claims, 1 chapter).
+    assert report.transcript.topics == ["a", "b", "c"]
+    assert [c.text for c in report.transcript.key_claims] == [
+        "claim 0",
+        "claim 1",
+        "claim 2",
+        "claim 3",
+    ]
+    # Chapters are cut from the end, keeping the earliest.
+    assert [c.title for c in report.chapters] == ["Open"]

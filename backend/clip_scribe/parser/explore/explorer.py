@@ -48,6 +48,7 @@ from clip_scribe.parser.explore.prompts import (
     SYNTHESIS_PROMPT,
     TRANSCRIPT_PROMPT,
     VISUALS_PROMPT,
+    _SHARED_RULES,
 )
 from clip_scribe.utils.clip_scribe_cancel import (
     CancellationToken,
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
         AudioSegment,
         ExtractionSummary,
     )
+    from clip_scribe.utils.clip_scribe_prompts import _PromptLimitsParametrizer
 
 logger = logging.getLogger("clip_scribe")
 
@@ -126,10 +128,18 @@ class VideoExplorer:
     def __init__(
         self,
         model: BaseChatModel,
+        *,
+        prompt_parametrizer: _PromptLimitsParametrizer,
         cancel_token: CancellationToken | None = None,
     ) -> None:
         self.model = model
         self._cancel = cancel_token or NullCancellationToken()
+        self.prompt_parametrizer = prompt_parametrizer
+
+    def _limit(self, key: str) -> int:
+        """A list-length limit from the same params the prompts are filled from,
+        so what the prompt asks for and what the code enforces can't differ."""
+        return self.prompt_parametrizer.params[key]
 
     def _structured(self, schema: type[_Out], system: str, payload: object) -> _Out:
         """One structured-output call; the input is sent as compact JSON."""
@@ -173,7 +183,7 @@ class VideoExplorer:
 
         overview = self._structured(
             _SynthesisOutput,
-            SYNTHESIS_PROMPT,
+            self.prompt_parametrizer.parametrize(SYNTHESIS_PROMPT, _SHARED_RULES),
             {
                 "metrics": metrics.model_dump(exclude={"objects"}),
                 "transcript_summary": transcript.summary if transcript else None,
@@ -190,7 +200,11 @@ class VideoExplorer:
 
         return ExploreReport(
             summary=overview.summary,
-            chapters=_resolve_chapters(overview.chapters, shots),
+            chapters=_resolve_chapters(
+                overview.chapters,
+                shots,
+                max_chapters=self._limit("overview_summary_chapters_num"),
+            ),
             transcript=transcript,
             on_screen_text=on_screen_text,
             visuals=visuals,
@@ -213,7 +227,7 @@ class VideoExplorer:
             return None
         out = self._structured(
             _TranscriptOutput,
-            TRANSCRIPT_PROMPT,
+            self.prompt_parametrizer.parametrize(TRANSCRIPT_PROMPT, _SHARED_RULES),
             [
                 {
                     "index": i,
@@ -229,8 +243,11 @@ class VideoExplorer:
             for c in out.key_claims
             if 0 <= c.segment < len(audio)
         ]
+        # The prompt only asks for these limits; enforce them here.
         return TranscriptDigest(
-            summary=out.summary, topics=out.topics, key_claims=claims
+            summary=out.summary,
+            topics=out.topics[: self._limit("transcript_topics_num")],
+            key_claims=claims[: self._limit("transcript_key_claims_num")],
         )
 
     def _on_screen_text(self, cards: list[OcrTextCard]) -> OnScreenTextDigest | None:
@@ -238,7 +255,7 @@ class VideoExplorer:
             return None
         out = self._structured(
             _OnScreenTextOutput,
-            ON_SCREEN_TEXT_PROMPT,
+            self.prompt_parametrizer.parametrize(ON_SCREEN_TEXT_PROMPT, _SHARED_RULES),
             [
                 {
                     "index": i,
@@ -277,7 +294,7 @@ class VideoExplorer:
             return None
         out = self._structured(
             _VisualsOutput,
-            VISUALS_PROMPT,
+            self.prompt_parametrizer.parametrize(VISUALS_PROMPT, _SHARED_RULES),
             {
                 "scenes": scenes,
                 "objects": [
@@ -308,12 +325,14 @@ class VideoExplorer:
 
 
 def _resolve_chapters(
-    refs: list[_ChapterRef], shots: list[ShotContext]
+    refs: list[_ChapterRef], shots: list[ShotContext], *, max_chapters: int
 ) -> list[Chapter]:
     """Map shot-index chapters to time ranges, repairing order and overlap.
 
     Indices are clamped to the shot list; a chapter starting inside the
-    previous one is pushed past it, and one left empty is dropped.
+    previous one is pushed past it, and one left empty is dropped. At most
+    ``max_chapters`` are kept, in order, so an over-long answer loses its
+    trailing chapters rather than being reshuffled.
     """
     if not shots:
         return []
@@ -334,6 +353,6 @@ def _resolve_chapters(
             )
         )
         next_free = last + 1
-        if next_free > last_index:
+        if next_free > last_index or len(chapters) >= max_chapters:
             break
     return chapters

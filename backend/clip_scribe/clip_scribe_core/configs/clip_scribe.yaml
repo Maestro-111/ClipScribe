@@ -69,7 +69,7 @@ clip_scribe:
   # Parser Settings
   # --------------------------------------------------------------------------
   parser:
-    # LLM model for agentic feature evaluation
+    # LLM model for agentic feature evaluation/metadata exploration
     agent:
       llm: "gpt-5.4"
       temperature: 0.2
@@ -90,6 +90,11 @@ clip_scribe:
     # sections are longer structured outputs than an ABCD verdict.
     explore:
       max_tokens: 4000
+      transcript_topics_num: 6
+      transcript_key_claims_num: 6
+      overview_summary_sentence_num: 4
+      overview_summary_chapters_num: 6
+
 
 # ============================================================================
 # GroundingDINO Object Detection

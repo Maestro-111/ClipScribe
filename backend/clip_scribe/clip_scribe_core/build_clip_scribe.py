@@ -158,9 +158,26 @@ class ClipScribeBuilder:
 
         parser_max_parallel = clib_scribe_parser_params.get("max_parallel_agents", 5)
         recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
+
         explore_max_tokens = clib_scribe_parser_params.get("explore", {}).get(
             "max_tokens", 4000
         )
+
+        explore_transcript_topics_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_topics_num", 6)
+
+        explore_transcript_key_claims_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_key_claims_num", 6)
+
+        explore_overview_summary_sentence_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("overview_summary_sentence_num", 4)
+
+        explore_overview_summary_chapters_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("overview_summary_chapters_num", 6)
 
         parser_detection_model = self.resolve_model(
             "parser.agent.llm",
@@ -179,6 +196,10 @@ class ClipScribeBuilder:
             cancel_token=cancel_token,
             extraction_mode=extraction_mode,
             explore_max_tokens=explore_max_tokens,
+            explore_transcript_topics_num=explore_transcript_topics_num,
+            explore_transcript_key_claims_num=explore_transcript_key_claims_num,
+            explore_overview_summary_sentence_num=explore_overview_summary_sentence_num,
+            explore_overview_summary_chapters_num=explore_overview_summary_chapters_num,
         )
 
         return info_parser

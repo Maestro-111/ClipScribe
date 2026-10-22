@@ -13,6 +13,7 @@ from clip_scribe.utils.clip_scribe_cancel import (
     CancellationToken,
     NullCancellationToken,
 )
+from clip_scribe.utils.clip_scribe_prompts import _PromptLimitsParametrizer
 from clip_scribe.utils.progress import NullProgressReporter, Phase, ProgressReporter
 from langchain_openai import ChatOpenAI
 
@@ -40,6 +41,10 @@ class VideoInformationParser:
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
         explore_max_tokens: int = 4000,
+        explore_transcript_topics_num: int = 6,
+        explore_transcript_key_claims_num: int = 6,
+        explore_overview_summary_sentence_num: int = 4,
+        explore_overview_summary_chapters_num: int = 6,
     ):
         """
         Initialize the video information parser.
@@ -70,6 +75,14 @@ class VideoInformationParser:
         # Cooperative-cancel token, passed on to the evaluator so it can stop
         # between criteria. Null (never canceled) for CLI/tests.
         self._cancel = cancel_token or NullCancellationToken()
+        self.explorer_prompt_parametrizer = _PromptLimitsParametrizer(
+            params={
+                "transcript_topics_num": explore_transcript_topics_num,
+                "transcript_key_claims_num": explore_transcript_key_claims_num,
+                "overview_summary_sentence_num": explore_overview_summary_sentence_num,
+                "overview_summary_chapters_num": explore_overview_summary_chapters_num,
+            }
+        )
 
     def __repr__(self) -> str:
         return f"VideoInformationParser(model={self.model.model_name}, output_dir={self.output_dir})"
@@ -147,7 +160,11 @@ class VideoInformationParser:
         if summary is None:
             raise ValueError(f"run_id '{run_id}' not found in database")
 
-        explorer = VideoExplorer(self.explore_model, cancel_token=self._cancel)
+        explorer = VideoExplorer(
+            self.explore_model,
+            prompt_parametrizer=self.explorer_prompt_parametrizer,
+            cancel_token=self._cancel,
+        )
         report = explorer.explore(summary, objects_tracked=self.object_data_available)
 
         writer_db.save_exploration_result(
