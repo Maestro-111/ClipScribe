@@ -39,8 +39,25 @@ clip_scribe:
 
     # Number of frames to track detected objects before running detection again
     # Higher = faster processing but may miss new objects appearing mid-shot
-    # Range: 1-30 frames. Default: 10
-    detection_interval: 15
+    # Fallback used when detection_interval_bins is empty or no bin matches. Default: 10
+    detection_interval: 10
+
+    # Per-shot detection interval by the shot's frame count: shorter shots are
+    # detected more densely, longer shots more sparsely (faster).
+    # The first bin where shot_frames <= max_frames applies (null = catch-all).
+    # Intervals are capped at sam2.default_refresh_rate (the SAM2 window).
+    detection_interval_bins:
+      - {max_frames: 100, interval: 10}
+      - {max_frames: 200, interval: 20}
+      - {max_frames: 300, interval: 30}
+      - {max_frames: 400, interval: 40}
+      - {max_frames: 500, interval: 50}
+      - {max_frames: 600, interval: 60}
+      - {max_frames: 700, interval: 70}
+      - {max_frames: 800, interval: 80}
+      - {max_frames: 900, interval: 90}
+      - { max_frames: 1000, interval: 99}
+      - {max_frames: null, interval: 100}
 
     # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
     # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
@@ -161,7 +178,7 @@ sam2:
   # Larger models produce better masks but are slower and require more VRAM
   # 'tiny' is recommended for real-time or resource-constrained environments
   size: tiny
-  default_refresh_rate: 50
+  default_refresh_rate: 100
   dynamic_refresh_rate: true
 
 # ============================================================================

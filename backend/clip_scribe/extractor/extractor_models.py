@@ -87,6 +87,14 @@ class TextEvent(TypedDict):
     text: list[str]
 
 
+class DetectionIntervalBin(TypedDict):
+    """Shots up to ``max_frames`` frames (``None`` = no upper bound) use
+    ``interval`` as their detection interval."""
+
+    max_frames: int | None
+    interval: int
+
+
 class AudioSegment(TypedDict):
     start: float
     end: float

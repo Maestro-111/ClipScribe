@@ -5,6 +5,7 @@ from clip_scribe.extractor.taxonomy_core import (
 )
 from clip_scribe.extractor.taxonomy_config import ProfilesPile
 from clip_scribe.extractor.extractor_core import VideoInformationExtractor
+from clip_scribe.extractor.extractor_models import DetectionIntervalBin
 
 from clip_scribe.parser.parser_core import VideoInformationParser
 
@@ -266,6 +267,9 @@ class ClipScribeBuilder:
         detection_interval: int = clib_scribe_extractor_params.get(
             "detection_interval", 10
         )
+        detection_interval_bins: list[DetectionIntervalBin] = (
+            clib_scribe_extractor_params.get("detection_interval_bins") or []
+        )
 
         reid_model_frame_check_freq: int = clib_scribe_extractor_params.get(
             "reid_model_frame_check_freq", 20
@@ -330,6 +334,7 @@ class ClipScribeBuilder:
             sampling_rate,
             sam2_default_refresh_rate,
             sam2_dynamic_refresh_rate,
+            detection_interval_bins=detection_interval_bins,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
             max_artifact_files=self.artifacts_params.get("max_artifact_files"),
