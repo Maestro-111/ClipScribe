@@ -12,15 +12,62 @@ Two groups:
 
 from __future__ import annotations
 
-from typing import Literal
+from enum import Enum
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
 # Bump when ExploreReport changes shape; stored with each report.
 EXPLORE_SCHEMA_VERSION = 1
 
-TextCategory = Literal["brand", "cta", "price", "url", "caption", "other"]
+
+class TextCategory(str, Enum):
+    """What an on-screen text card is for.
+
+    The single source of truth for the categories: the on-screen text prompt, the
+    API schema, and the frontend types are all derived from this enum, and
+    ``TEXT_CATEGORY_DESCRIPTIONS`` must describe every member (tested). To add
+    or rename one, edit here, then update ``CATEGORY_STYLE`` in the frontend
+    (the typecheck fails until every category has a style).
+    """
+
+    BRAND = "brand"
+    PRODUCT = "product"
+    SLOGAN = "slogan"
+    CTA = "cta"
+    PRICE = "price"
+    PROMO = "promo"
+    URL = "url"
+    SOCIAL = "social"
+    LEGAL = "legal"
+    CAPTION = "caption"
+    OTHER = "other"
+
+
+# Shown to the LLM, so write each as a short noun phrase it can match text to.
+# Must not contain braces: the prompt is later filled with ``str.format_map``.
+TEXT_CATEGORY_DESCRIPTIONS: dict[TextCategory, str] = {
+    TextCategory.BRAND: "brand or company names",
+    TextCategory.PRODUCT: "product, model, or service names",
+    TextCategory.SLOGAN: "slogans, taglines, and campaign names",
+    TextCategory.CTA: "calls to action, e.g. buy now, learn more",
+    TextCategory.PRICE: "prices, discounts, financing, and incentives",
+    TextCategory.PROMO: "time-limited or event messaging, e.g. sale ends soon",
+    TextCategory.URL: "web addresses",
+    TextCategory.SOCIAL: "social media handles and hashtags",
+    TextCategory.LEGAL: "disclaimers, fine print, and terms",
+    TextCategory.CAPTION: "subtitles or descriptive text",
+    TextCategory.OTHER: "anything that fits none of the above",
+}
+
 Prominence = Literal["high", "medium", "low"]
+
+
+class SummarySentencesNum(TypedDict):
+    transcript_summary_sentences_num: int
+    text_summary_sentences_num: int
+    visual_summary_sentences_num: int
+    overview_summary_sentences_num: int
 
 
 class TimeSpan(BaseModel):

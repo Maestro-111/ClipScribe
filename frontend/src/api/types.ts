@@ -1221,12 +1221,20 @@ export interface components {
             total_sec: number;
             /** Clean Text */
             clean_text: string;
-            /**
-             * Category
-             * @enum {string}
-             */
-            category: "brand" | "cta" | "price" | "url" | "caption" | "other";
+            category: components["schemas"]["TextCategory"];
         };
+        /**
+         * TextCategory
+         * @description What an on-screen text card is for.
+         *
+         *     The single source of truth for the categories: the on-screen text prompt, the
+         *     API schema, and the frontend types are all derived from this enum, and
+         *     ``TEXT_CATEGORY_DESCRIPTIONS`` must describe every member (tested). To add
+         *     or rename one, edit here, then update ``CATEGORY_STYLE`` in the frontend
+         *     (the typecheck fails until every category has a style).
+         * @enum {string}
+         */
+        TextCategory: "brand" | "product" | "slogan" | "cta" | "price" | "promo" | "url" | "social" | "legal" | "caption" | "other";
         /**
          * TextEvent
          * @description OCR text event at a specific second.

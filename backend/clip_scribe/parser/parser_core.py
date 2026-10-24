@@ -7,6 +7,7 @@ from pathlib import Path
 from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
 from clip_scribe.parser.evaluator_base import BaseEvaluator
 from clip_scribe.parser.explore.explorer import VideoExplorer
+from clip_scribe.parser.explore.models import SummarySentencesNum
 from clip_scribe.parser.youtube import *  # noqa ignore
 from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
@@ -32,6 +33,13 @@ class VideoInformationParser:
     def __init__(
         self,
         agent: dict,
+        explore_max_tokens: int,
+        explore_transcript_topics_num: int,
+        explore_transcript_key_claims_num: int,
+        explore_overview_summary_chapters_num: int,
+        explore_summary_sentences_num: SummarySentencesNum,
+        explore_on_screen_text_cards_num: int,
+        explore_visuals_subjects_num: int,
         platform_name: str | None,
         platform_config: BasePlatformConf | None,
         output_dir: str,
@@ -40,13 +48,6 @@ class VideoInformationParser:
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
-        explore_max_tokens: int = 4000,
-        explore_transcript_topics_num: int = 6,
-        explore_transcript_key_claims_num: int = 6,
-        explore_overview_summary_sentence_num: int = 4,
-        explore_overview_summary_chapters_num: int = 6,
-        explore_on_screen_text_cards_num: int = 20,
-        explore_visuals_subjects_num: int = 20,
     ):
         """
         Initialize the video information parser.
@@ -81,10 +82,22 @@ class VideoInformationParser:
             params={
                 "transcript_topics_num": explore_transcript_topics_num,
                 "transcript_key_claims_num": explore_transcript_key_claims_num,
-                "overview_summary_sentence_num": explore_overview_summary_sentence_num,
                 "overview_summary_chapters_num": explore_overview_summary_chapters_num,
                 "on_screen_text_cards_num": explore_on_screen_text_cards_num,
                 "visuals_subjects_num": explore_visuals_subjects_num,
+                # Spelled out: mypy can't unpack a TypedDict into dict[str, int].
+                "transcript_summary_sentences_num": explore_summary_sentences_num[
+                    "transcript_summary_sentences_num"
+                ],
+                "text_summary_sentences_num": explore_summary_sentences_num[
+                    "text_summary_sentences_num"
+                ],
+                "visual_summary_sentences_num": explore_summary_sentences_num[
+                    "visual_summary_sentences_num"
+                ],
+                "overview_summary_sentences_num": explore_summary_sentences_num[
+                    "overview_summary_sentences_num"
+                ],
             }
         )
 

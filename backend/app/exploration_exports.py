@@ -151,7 +151,7 @@ def _write_on_screen_text(ws: Worksheet, report: ExploreReport) -> None:
                 "Card",
                 c.clean_text,
                 c.text,
-                c.category,
+                c.category.value,
                 _spans(c.spans),
                 c.total_sec,
             )

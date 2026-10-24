@@ -108,9 +108,12 @@ clip_scribe:
     explore:
       max_tokens: 4000
       transcript_topics_num: 6
-      transcript_key_claims_num: 6
-      overview_summary_sentence_num: 4
+      transcript_key_claims_num: 7
       overview_summary_chapters_num: 6
+      transcript_summary_sentences_num: 4
+      text_summary_sentences_num: 4
+      visual_summary_sentences_num: 4
+      overview_summary_sentences_num: 4
       # How many on-screen text cards / tracked objects the LLM cleans and rates
       # (longest on screen first). The rest stay in the report unrated.
       on_screen_text_cards_num: 20

@@ -169,11 +169,22 @@ function PagerFooter({
   );
 }
 
-const CATEGORY_STYLE: Record<string, string> = {
+type TextCategory = NonNullable<
+  NonNullable<Report["on_screen_text"]>["cards"][number]["category"]
+>;
+
+// Keyed by the generated category union, so adding a category in the backend
+// enum fails the typecheck here until it has a style.
+const CATEGORY_STYLE: Record<TextCategory, string> = {
   brand: "bg-indigo-50 text-indigo-700",
+  product: "bg-violet-50 text-violet-700",
+  slogan: "bg-fuchsia-50 text-fuchsia-700",
   cta: "bg-green-50 text-green-700",
   price: "bg-amber-50 text-amber-700",
+  promo: "bg-orange-50 text-orange-700",
   url: "bg-blue-50 text-blue-700",
+  social: "bg-sky-50 text-sky-700",
+  legal: "bg-stone-100 text-stone-700",
   caption: "bg-neutral-100 text-neutral-700",
   other: "bg-neutral-100 text-neutral-500",
 };
@@ -201,7 +212,7 @@ function OnScreenTextTab({
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{c.clean_text}</span>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs ${CATEGORY_STYLE[c.category] ?? CATEGORY_STYLE.other}`}
+                className={`rounded-full px-2 py-0.5 text-xs ${CATEGORY_STYLE[c.category]}`}
               >
                 {c.category}
               </span>

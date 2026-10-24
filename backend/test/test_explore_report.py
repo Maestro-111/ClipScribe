@@ -33,7 +33,10 @@ from test.test_explore_metrics import _occ, _summary
 _PROMPT_PARAMS = {
     "transcript_topics_num": 3,
     "transcript_key_claims_num": 4,
-    "overview_summary_sentence_num": 5,
+    "transcript_summary_sentences_num": 2,
+    "text_summary_sentences_num": 3,
+    "visual_summary_sentences_num": 4,
+    "overview_summary_sentences_num": 5,
     "overview_summary_chapters_num": 7,
     "on_screen_text_cards_num": 20,
     "visuals_subjects_num": 15,
@@ -237,11 +240,16 @@ def test_prompt_limits_come_from_params():
     parametrizer = _PromptLimitsParametrizer(params=_PROMPT_PARAMS)
 
     transcript = parametrizer.parametrize(TRANSCRIPT_PROMPT, _SHARED_RULES)
+    on_screen_text = parametrizer.parametrize(ON_SCREEN_TEXT_PROMPT, _SHARED_RULES)
+    visuals = parametrizer.parametrize(VISUALS_PROMPT, _SHARED_RULES)
     overview = parametrizer.parametrize(SYNTHESIS_PROMPT, _SHARED_RULES)
 
     assert "up to 3 short topic labels" in transcript
     assert "up to 4 concrete claims" in transcript
-    assert "5 sentences" in overview
+    assert "up to 2 sentences on what is said" in transcript
+    assert "up to 3 sentences on what the on-screen text" in on_screen_text
+    assert "up to 4 sentences on the main subjects" in visuals
+    assert "5 sentences describing" in overview
     assert "into up to 7 consecutive chapters" in overview
 
 
@@ -310,3 +318,20 @@ def test_objects_beyond_the_llm_limit_stay_in_the_report():
     subjects = {s.label: s.prominence for s in report.visuals.subjects}
     # The stub rates "CAR" high; the unsent logo defaults to low but is kept.
     assert subjects == {"car": "high", "logo": "low"}
+
+
+def test_every_text_category_is_described_and_reaches_the_prompt():
+    from clip_scribe.parser.explore.models import (
+        TEXT_CATEGORY_DESCRIPTIONS,
+        TextCategory,
+    )
+
+    # The description table must cover the enum exactly, or adding a category
+    # without telling the LLM what it means would go unnoticed.
+    assert set(TEXT_CATEGORY_DESCRIPTIONS) == set(TextCategory)
+
+    prompt = _PromptLimitsParametrizer(params=_PROMPT_PARAMS).parametrize(
+        ON_SCREEN_TEXT_PROMPT, _SHARED_RULES
+    )
+    for category in TextCategory:
+        assert f"- {category.value}: {TEXT_CATEGORY_DESCRIPTIONS[category]}" in prompt

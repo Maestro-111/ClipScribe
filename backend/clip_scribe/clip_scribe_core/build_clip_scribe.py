@@ -7,6 +7,7 @@ from clip_scribe.extractor.taxonomy_config import ProfilesPile
 from clip_scribe.extractor.extractor_core import VideoInformationExtractor
 from clip_scribe.extractor.extractor_models import DetectionIntervalBin
 
+from clip_scribe.parser.explore.models import SummarySentencesNum
 from clip_scribe.parser.parser_core import VideoInformationParser
 
 from clip_scribe.dino.dino_wrapper import DinoDetector
@@ -172,10 +173,6 @@ class ClipScribeBuilder:
             "explore", {}
         ).get("transcript_key_claims_num", 6)
 
-        explore_overview_summary_sentence_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("overview_summary_sentence_num", 4)
-
         explore_overview_summary_chapters_num = clib_scribe_parser_params.get(
             "explore", {}
         ).get("overview_summary_chapters_num", 6)
@@ -188,6 +185,29 @@ class ClipScribeBuilder:
             "visuals_subjects_num", 20
         )
 
+        explore_transcript_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_summary_sentences_num", 4)
+
+        explore_text_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("text_summary_sentences_num", 4)
+
+        explore_visual_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("visual_summary_sentences_num", 4)
+
+        explore_overview_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("overview_summary_sentences_num", 4)
+
+        explore_summary_sentences_num: SummarySentencesNum = {
+            "transcript_summary_sentences_num": explore_transcript_summary_sentences_num,
+            "text_summary_sentences_num": explore_text_summary_sentences_num,
+            "visual_summary_sentences_num": explore_visual_summary_sentences_num,
+            "overview_summary_sentences_num": explore_overview_summary_sentences_num,
+        }
+
         parser_detection_model = self.resolve_model(
             "parser.agent.llm",
             parser_agent_params.get("llm", self.DEFAULT_PARSER_MODEL),
@@ -196,6 +216,14 @@ class ClipScribeBuilder:
 
         info_parser = VideoInformationParser(
             agent=parser_agent_params,
+            extraction_mode=extraction_mode,
+            explore_max_tokens=explore_max_tokens,
+            explore_transcript_topics_num=explore_transcript_topics_num,
+            explore_transcript_key_claims_num=explore_transcript_key_claims_num,
+            explore_overview_summary_chapters_num=explore_overview_summary_chapters_num,
+            explore_summary_sentences_num=explore_summary_sentences_num,
+            explore_on_screen_text_cards_num=explore_on_screen_text_cards_num,
+            explore_visuals_subjects_num=explore_visuals_subjects_num,
             platform_name=clib_scribe_platform_name,
             platform_config=clib_scribe_platform_conf,
             output_dir=str(parser_output_dir),
@@ -203,14 +231,6 @@ class ClipScribeBuilder:
             recursion_limit=recursion_limit,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
-            extraction_mode=extraction_mode,
-            explore_max_tokens=explore_max_tokens,
-            explore_transcript_topics_num=explore_transcript_topics_num,
-            explore_transcript_key_claims_num=explore_transcript_key_claims_num,
-            explore_overview_summary_sentence_num=explore_overview_summary_sentence_num,
-            explore_overview_summary_chapters_num=explore_overview_summary_chapters_num,
-            explore_on_screen_text_cards_num=explore_on_screen_text_cards_num,
-            explore_visuals_subjects_num=explore_visuals_subjects_num,
         )
 
         return info_parser

@@ -280,7 +280,7 @@ class VideoExplorer:
                     # Cards the LLM wasn't sent (or skipped) keep their raw
                     # reading.
                     clean_text=labels[i].clean_text if i in labels else card.text,
-                    category=labels[i].category if i in labels else "other",
+                    category=labels[i].category if i in labels else TextCategory.OTHER,
                 )
                 for i, card in enumerate(cards)
             ],
