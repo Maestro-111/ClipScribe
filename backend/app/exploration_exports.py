@@ -8,7 +8,8 @@ in, so it is unit-testable without a database.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
@@ -28,15 +29,34 @@ _HEADER_FONT = Font(bold=True)
 # Prose columns wrap and are capped so one long summary can't blow out a sheet.
 _WRAP = Alignment(wrap_text=True, vertical="top")
 _PROSE_WIDTH = 90
+# Excel's hard limit on characters in one cell.
+_MAX_CELL_CHARS = 32767
 
 
 def run_json(response: ExplorationResponse) -> bytes:
     return response.model_dump_json(indent=2).encode("utf-8")
 
 
-def run_xlsx(video_name: str, response: ExplorationResponse) -> bytes:
+def full_transcript(segments: Iterable[Mapping[str, Any]]) -> str:
+    """All speech segments joined into one string, cut to fit an Excel cell."""
+    text = " ".join(s["text"].strip() for s in segments if s["text"].strip())
+    if len(text) > _MAX_CELL_CHARS:
+        marker = " [truncated]"
+        text = text[: _MAX_CELL_CHARS - len(marker)] + marker
+    return text
+
+
+def run_xlsx(
+    video_name: str,
+    response: ExplorationResponse,
+    audio_segments: Sequence[Mapping[str, Any]] = (),
+) -> bytes:
     """One run: Overview, Chapters, Transcript, On-screen text, Visuals, and
-    Findings (only when the findings stage produced any)."""
+    Findings (only when the findings stage produced any).
+
+    ``audio_segments`` are the run's raw speech segments; their text is joined
+    into the Overview's full-transcript row (omitted when there is no speech).
+    """
     report = response.report
     if report is None:
         raise ValueError("run has no exploration report to export")
@@ -45,7 +65,9 @@ def run_xlsx(video_name: str, response: ExplorationResponse) -> bytes:
     overview = wb.active
     assert overview is not None
     overview.title = "Overview"
-    _write_overview(overview, video_name, response, report)
+    _write_overview(
+        overview, video_name, response, report, full_transcript(audio_segments)
+    )
     _write_chapters(wb.create_sheet("Chapters"), report)
     _write_transcript(wb.create_sheet("Transcript"), report)
     _write_on_screen_text(wb.create_sheet("On-screen text"), report)
@@ -90,7 +112,11 @@ def _percent(fraction: float | None) -> str | None:
 
 
 def _write_overview(
-    ws: Worksheet, video_name: str, response: ExplorationResponse, report: ExploreReport
+    ws: Worksheet,
+    video_name: str,
+    response: ExplorationResponse,
+    report: ExploreReport,
+    transcript: str,
 ) -> None:
     m = report.metrics
     rows: list[tuple[str, object]] = [
@@ -98,6 +124,7 @@ def _write_overview(
         ("Run ID", response.run_id),
         ("Model", response.model),
         ("Created", response.created_at),
+        *([("Transcript", transcript)] if transcript else []),
         ("Summary", report.summary),
         ("Duration (s)", m.duration_sec),
         ("Shots", m.shot_count),

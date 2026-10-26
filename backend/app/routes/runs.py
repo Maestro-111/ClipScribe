@@ -195,8 +195,11 @@ async def export_exploration(
     if fmt == "json":
         content = await run_in_threadpool(exploration_exports.run_json, response)
     else:
+        # The report only holds the transcript digest; the XLSX also carries
+        # the full speech, read from the extraction data.
+        segments = await reader.get_audio_segments(run_id)
         content = await run_in_threadpool(
-            exploration_exports.run_xlsx, video_name, response
+            exploration_exports.run_xlsx, video_name, response, segments
         )
     filename = exports.export_filename(f"{video_name}_exploration", fmt)
     return Response(

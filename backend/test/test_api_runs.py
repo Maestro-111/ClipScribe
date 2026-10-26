@@ -332,6 +332,8 @@ def test_exploration_export(client, tmp_path):
         row[0].value: row[1].value for row in wb["Overview"].iter_rows(min_row=2)
     }
     assert overview["Summary"] == "an ad"
+    # Full speech from the extraction data, not just the digest.
+    assert overview["Transcript"] == "hi"
     assert overview["Duration (s)"] == 3.0
     # Objects weren't tracked: faces were not collected, not "0%".
     assert overview["Face coverage"] == "Not collected"

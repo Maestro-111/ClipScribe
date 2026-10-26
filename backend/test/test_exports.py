@@ -368,3 +368,14 @@ def test_job_abcd_export_409_on_exploratory_job(ctx, tmp_path, async_db_adapters
     app.dependency_overrides[get_reader] = lambda: async_reader
     assert ctx.get("/jobs/p3/abcd/export").status_code == 409
     assert ctx.post("/jobs/p3/chat", json={"message": "hi"}).status_code == 409
+
+
+def test_full_transcript_joins_segments_and_fits_an_excel_cell():
+    from app.exploration_exports import full_transcript
+
+    assert full_transcript([{"text": " hello "}, {"text": ""}, {"text": "world"}]) == (
+        "hello world"
+    )
+    assert full_transcript([]) == ""
+    long = full_transcript([{"text": "x" * 40000}])
+    assert len(long) == 32767 and long.endswith("[truncated]")
