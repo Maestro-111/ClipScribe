@@ -2,8 +2,8 @@
 
 from unittest import mock
 
-from clip_scribe.parser.evaluator_base import BaseEvaluator
-from clip_scribe.parser.youtube.criteria import get_feature_configs
+from clip_scribe.parser.abcd.evaluator_base import BaseEvaluator
+from clip_scribe.parser.abcd.youtube.criteria import get_feature_configs
 
 
 class _Evaluator(BaseEvaluator):

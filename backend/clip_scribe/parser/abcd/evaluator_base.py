@@ -1,13 +1,16 @@
 """Base evaluator with generic orchestration for platform-specific evaluators."""
 
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from clip_scribe.db import ClipScribeReaderDB
-from clip_scribe.parser.tools import build_tools, TOOL_GROUP_TABLES
-from clip_scribe.parser.agent import build_agent, run_agent
-from clip_scribe.parser.models import BaseFeatureResult, BaseAgentEvaluation
+from clip_scribe.parser.abcd.tools import build_tools, TOOL_GROUP_TABLES
+
+from clip_scribe.parser.agent_factory import AgentRunner, AgentBuilder
+from clip_scribe.parser.abcd.models import BaseFeatureResult, BaseAgentEvaluation
 
 from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
@@ -15,6 +18,11 @@ from clip_scribe.utils.clip_scribe_cancel import (
     JobCanceled,
     NullCancellationToken,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger("clip_scribe")
 
@@ -25,7 +33,7 @@ class BaseEvaluator(ABC):
     def __init__(
         self,
         reader_db: ClipScribeReaderDB,
-        model,
+        model: ChatOpenAI,
         platform_config: BasePlatformConf,
         agentic_eval: type[BaseAgentEvaluation],
         max_parallel_agents: int = 5,
@@ -33,6 +41,19 @@ class BaseEvaluator(ABC):
         cancel_token: CancellationToken | None = None,
         object_data_available: bool = True,
     ):
+        """Set up an evaluator for one platform.
+
+        Args:
+            reader_db: Sync reader used by the baseline checks and agent tools.
+            model: Chat model the criterion agents run on.
+            platform_config: Platform settings (brand name, products, CTAs) that
+                fill the criteria placeholders.
+            agentic_eval: Result model the agent's JSON answer is parsed into.
+            max_parallel_agents: Concurrent LLM-judged criteria.
+            recursion_limit: Maximum reasoning steps per agent run.
+            cancel_token: Polled between criteria; never cancels when omitted.
+            object_data_available: False skips criteria that need object tracking.
+        """
         self.reader_db = reader_db
         self.model = model
         self.platform_config = platform_config
@@ -124,12 +145,18 @@ class BaseEvaluator(ABC):
         video_name: str,
         field_context: str | None = None,
     ) -> BaseFeatureResult:
+        """Judge one criterion with a ReAct agent over its tool group's data.
+
+        Any failure becomes a failed result that carries the error text, so one
+        criterion cannot abort the whole run.
+        """
         feature_id = feature["id"]
         logger.info(f"ClipScribe Parser: Evaluating agentic feature: {feature_id}")
 
         tool_group = feature["tool_group"]
+
         tools = build_tools(self.reader_db, run_id, tool_group)
-        agent = build_agent(self.model, tools)
+        agent = AgentBuilder.build_agent(model=self.model, tools=tools)
 
         criteria = feature.get("criteria", "")
         question = self._resolve_placeholders(feature["question"], criteria=criteria)
@@ -144,9 +171,10 @@ class BaseEvaluator(ABC):
 
         time_scope = 5.0 if feature.get("type") == "first_5_secs_video" else None
 
+        agent_runner = AgentRunner(agent=agent)
+
         try:
-            agent_result = run_agent(
-                agent,
+            agent_result = agent_runner.run_abcd_agent(
                 question,
                 instructions,
                 agentic_eval=self.agentic_eval,
@@ -180,6 +208,7 @@ class BaseEvaluator(ABC):
     def _evaluate_baseline_feature(
         self, feature: dict, run_id: str, video_name: str
     ) -> BaseFeatureResult:
+        """Check one rule-based criterion (no LLM); a failure counts as not passed."""
         feature_id = feature["id"]
         logger.info(f"ClipScribe Parser: Evaluating baseline feature: {feature_id}")
 
@@ -207,6 +236,13 @@ class BaseEvaluator(ABC):
             )
 
     def evaluate_all(self, run_id: str, video_name: str) -> list[BaseFeatureResult]:
+        """Evaluate every criterion for a run and return the results.
+
+        Baseline criteria run first, one by one; LLM-judged ones then run in
+        parallel (up to ``max_parallel_agents``). Criteria that need object data are
+        skipped when objects were not extracted. Raises ``JobCanceled`` if the job is
+        canceled between criteria.
+        """
         logger.info(
             f"ClipScribe Parser: Starting {self.platform} evaluation for run {run_id}"
         )

@@ -64,6 +64,8 @@ Prominence = Literal["high", "medium", "low"]
 
 
 class SummarySentencesNum(TypedDict):
+    """Maximum summary length, in sentences, for each digest (from config)."""
+
     transcript_summary_sentences_num: int
     text_summary_sentences_num: int
     visual_summary_sentences_num: int
@@ -71,6 +73,8 @@ class SummarySentencesNum(TypedDict):
 
 
 class TimeSpan(BaseModel):
+    """A time interval in seconds."""
+
     start_sec: float
     end_sec: float
 
@@ -89,6 +93,8 @@ class ObjectStats(BaseModel):
 
 
 class RunMetrics(BaseModel):
+    """Run-level numbers computed in code; none of them come from the LLM."""
+
     duration_sec: float
     shot_count: int
     avg_shot_sec: float
@@ -132,6 +138,8 @@ class ShotContext(BaseModel):
 
 
 class Chapter(BaseModel):
+    """A contiguous stretch of the video with a title and summary."""
+
     title: str
     start_sec: float
     end_sec: float
@@ -139,11 +147,15 @@ class Chapter(BaseModel):
 
 
 class TimedText(BaseModel):
+    """Text anchored to a moment in the video."""
+
     text: str
     start_sec: float
 
 
 class TranscriptDigest(BaseModel):
+    """Digest of the speech."""
+
     summary: str
     topics: list[str]
     # Each claim is anchored to the start of the speech segment it came from.
@@ -158,6 +170,8 @@ class TextCard(OcrTextCard):
 
 
 class OnScreenTextDigest(BaseModel):
+    """Digest of the on-screen text: a summary plus every text card."""
+
     summary: str
     cards: list[TextCard]
 
@@ -172,6 +186,8 @@ class VisualSubject(BaseModel):
 
 
 class VisualDigest(BaseModel):
+    """Digest of what is shown."""
+
     summary: str
     # Empty for ``no_objects`` runs: the summary then comes from scene
     # descriptions alone.
@@ -179,11 +195,15 @@ class VisualDigest(BaseModel):
 
 
 class Finding(BaseModel):
+    """A notable observation with the timestamps that support it."""
+
     observation: str
     evidence_secs: list[float]
 
 
 class ExploreReport(BaseModel):
+    """The persisted per-run exploratory report."""
+
     schema_version: int = EXPLORE_SCHEMA_VERSION
     summary: str
     chapters: list[Chapter]

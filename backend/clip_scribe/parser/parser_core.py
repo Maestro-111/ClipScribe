@@ -5,10 +5,14 @@ import re
 from pathlib import Path
 
 from clip_scribe.db import ClipScribeReaderDB, ClipScribeWriterDB
-from clip_scribe.parser.evaluator_base import BaseEvaluator
+from clip_scribe.parser.abcd.evaluator_base import BaseEvaluator
 from clip_scribe.parser.explore.explorer import VideoExplorer
 from clip_scribe.parser.explore.models import SummarySentencesNum
-from clip_scribe.parser.youtube import *  # noqa ignore
+from clip_scribe.parser.abcd.youtube import (
+    YouTubeAgentEvaluation,
+    YouTubeEvaluator,
+    YouTubeReportWriter,
+)
 from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
     CancellationToken,
@@ -22,6 +26,9 @@ logger = logging.getLogger("clip_scribe")
 
 
 def _safe_path_segment(value: str, fallback: str) -> str:
+    """Reduce ``value`` to one filesystem-safe path segment, or ``fallback`` if
+    nothing is left.
+    """
     name = Path(value).name
     segment = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
     return segment or fallback
@@ -102,10 +109,14 @@ class VideoInformationParser:
         )
 
     def __repr__(self) -> str:
+        """Model and output directory, for logs."""
         return f"VideoInformationParser(model={self.model.model_name}, output_dir={self.output_dir})"
 
     @staticmethod
-    def create_agent_model(agent: dict):
+    def create_agent_model(agent: dict) -> ChatOpenAI:
+        """Build the chat model from the parser ``agent`` config (llm, temperature,
+        max_tokens, max_retries).
+        """
         llm = agent.get("llm", "gpt-5.4")
         temperature = agent.get("temperature", 0.0)
         max_tokens = agent.get("max_tokens", 1000)
@@ -122,12 +133,14 @@ class VideoInformationParser:
         return model
 
     def create_report_name(self) -> str:
+        """Base name of the report files (``abcd`` for YouTube, empty otherwise)."""
         report_name = ""
         if self.platform_name == "youtube":
             report_name = "abcd"
         return report_name
 
     def create_evaluator(self, reader_db) -> BaseEvaluator | None:
+        """The platform's ABCD evaluator, or ``None`` if the platform has none."""
         evaluator = None
 
         if self.platform_name == "youtube" and self.platform_config is not None:
@@ -145,6 +158,7 @@ class VideoInformationParser:
         return evaluator
 
     def create_report_writer(self, output_path: Path, scores_output_path: Path):
+        """The platform's CSV report writer, or ``None`` if the platform has none."""
         report_writer = None
 
         if self.platform_name == "youtube":

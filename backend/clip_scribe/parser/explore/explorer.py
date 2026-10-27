@@ -74,38 +74,52 @@ _T = TypeVar("_T")
 
 
 class _ClaimRef(BaseModel):
+    """A key claim and the transcript segment it comes from."""
+
     text: str
     segment: int = Field(description="Index of the transcript segment.")
 
 
 class _TranscriptOutput(BaseModel):
+    """Speech digest."""
+
     summary: str
     topics: list[str]
     key_claims: list[_ClaimRef]
 
 
 class _CardLabel(BaseModel):
+    """The cleaned reading and category of one text card."""
+
     card: int = Field(description="Index of the text card.")
     clean_text: str
     category: TextCategory
 
 
 class _OnScreenTextOutput(BaseModel):
+    """On-screen text digest."""
+
     summary: str
     cards: list[_CardLabel]
 
 
 class _SubjectRating(BaseModel):
+    """The prominence of one tracked object label."""
+
     label: str = Field(description="Exact object label from the input.")
     prominence: Prominence
 
 
 class _VisualsOutput(BaseModel):
+    """Visuals digest."""
+
     summary: str
     subjects: list[_SubjectRating]
 
 
 class _ChapterRef(BaseModel):
+    """A chapter given as a range of shot indices."""
+
     title: str
     first_shot: int = Field(description="Index of the chapter's first shot.")
     last_shot: int = Field(description="Index of the chapter's last shot.")
@@ -113,6 +127,8 @@ class _ChapterRef(BaseModel):
 
 
 class _SynthesisOutput(BaseModel):
+    """Overview summary and chapters."""
+
     summary: str
     chapters: list[_ChapterRef]
 
@@ -121,6 +137,13 @@ class _SynthesisOutput(BaseModel):
 
 
 class VideoExplorer:
+    """Builds the ``ExploreReport`` for one run.
+
+    Numbers and timestamps come from the deterministic metrics; the LLM only
+    writes the prose and labels, and refers to items by index so the code can
+    attach the real values.
+    """
+
     def __init__(
         self,
         model: BaseChatModel,
@@ -128,6 +151,12 @@ class VideoExplorer:
         prompt_parametrizer: _PromptLimitsParametrizer,
         cancel_token: CancellationToken | None = None,
     ) -> None:
+        """Args:
+        model: Chat model for the digest and overview calls.
+        prompt_parametrizer: Fills the prompt limits; its params are also the
+            caps enforced on the model's answers.
+        cancel_token: Polled between stages; never cancels when omitted.
+        """
         self.model = model
         self._cancel = cancel_token or NullCancellationToken()
         self.prompt_parametrizer = prompt_parametrizer
@@ -151,6 +180,12 @@ class VideoExplorer:
     def explore(
         self, summary: ExtractionSummary, *, objects_tracked: bool
     ) -> ExploreReport:
+        """Build the report from a run's extraction summary.
+
+        Metrics, text cards and per-shot context are computed in code. The three
+        digests then run in parallel (a failed one becomes ``None``), followed by the
+        overview and chapters. Raises ``JobCanceled`` if the job is canceled.
+        """
         duration = run_duration(summary)
         metrics = compute_run_metrics(summary, objects_tracked=objects_tracked)
         cards = build_text_cards(summary["text_events"], duration)
@@ -220,6 +255,11 @@ class VideoExplorer:
             return None
 
     def _transcript(self, audio: list[AudioSegment]) -> TranscriptDigest | None:
+        """Summarize the speech; ``None`` when there is none.
+
+        Claims are anchored to their segment's start time, and topics and claims are
+        capped to the configured limits.
+        """
         if not audio:
             return None
         out = self._structured(
@@ -248,6 +288,7 @@ class VideoExplorer:
         )
 
     def _on_screen_text(self, cards: list[OcrTextCard]) -> OnScreenTextDigest | None:
+        """Clean and categorize the on-screen text cards; ``None`` when there are none."""
         if not cards:
             return None
         # The LLM cleans and categorizes only the cards visible the longest, to
@@ -289,6 +330,9 @@ class VideoExplorer:
     def _visuals(
         self, metrics: RunMetrics, shots: list[ShotContext]
     ) -> VisualDigest | None:
+        """Summarize the scenes and rate object prominence; ``None`` when there is
+        neither.
+        """
         scenes = [
             {"index": i, "description": s.description}
             for i, s in enumerate(shots)

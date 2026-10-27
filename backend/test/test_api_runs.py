@@ -222,7 +222,8 @@ def test_abcd_routes_409_on_exploratory_run(client, tmp_path):
     assert client.get(f"/runs/{RUN_ID}/abcd").status_code == 409
     assert client.get(f"/runs/{RUN_ID}/abcd/export").status_code == 409
     assert (
-        client.post(f"/runs/{RUN_ID}/chat", json={"message": "hi"}).status_code == 409
+        client.post(f"/runs/{RUN_ID}/abcd/chat", json={"message": "hi"}).status_code
+        == 409
     )
     # Extraction reads stay available for exploratory runs.
     assert client.get(f"/runs/{RUN_ID}/objects").status_code == 200
@@ -231,6 +232,12 @@ def test_abcd_routes_409_on_exploratory_run(client, tmp_path):
 def test_exploration_route(client, tmp_path):
     # ABCD run: the exploration endpoint is not available.
     assert client.get(f"/runs/{RUN_ID}/exploration").status_code == 409
+    assert (
+        client.post(
+            f"/runs/{RUN_ID}/exploration/chat", json={"message": "hi"}
+        ).status_code
+        == 409
+    )
 
     engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
     with engine.begin() as conn:

@@ -143,7 +143,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `GET /runs/{run_id}/abcd/export?format=xlsx|csv` — export one run's ABCD results (409 for exploratory runs); XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
 - `GET /runs/{run_id}/exploration/export?format=xlsx|json` — download an exploratory run's report (XLSX: Overview, Chapters, Transcript, On-screen text, Visuals, plus Findings when present; JSON: the full response); 409 for ABCD runs or when no report was written.
 - `GET /runs/{run_id}/metadata/export?format=xlsx|json` — export one run's extracted video metadata; XLSX is human-readable tables, JSON is lossless.
-- `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed ABCD run (exploratory runs 409 for now).
+- `POST /runs/{run_id}/abcd/chat` and `POST /runs/{run_id}/exploration/chat` — stream read-only Q&A over a completed run (each 409s on the other analysis type); the session list/history/delete routes are at `/runs/{run_id}/chat/...`.
 
 ### Local batch entry point (`main.py`)
 

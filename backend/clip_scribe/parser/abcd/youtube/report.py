@@ -1,13 +1,21 @@
+"""CSV report writer for YouTube ABCD results."""
+
 import csv
 from collections import Counter
 from pathlib import Path
-from clip_scribe.parser.youtube.models import YouTubeFeatureResult
+from clip_scribe.parser.abcd.youtube.models import YouTubeFeatureResult
 
 CATEGORY_ORDER = ["Attract", "Brand", "Connect", "Direct"]
 
 
 class YouTubeReportWriter:
+    """Writes the per-criterion detail CSV and the per-category score CSV."""
+
     def __init__(self, report_output_path: Path, scores_output_path: Path):
+        """Args:
+        report_output_path: Destination of the per-criterion detail CSV.
+        scores_output_path: Destination of the per-category scores CSV.
+        """
         self.report_output_path = report_output_path
         self.scores_output_path = scores_output_path
 
@@ -33,6 +41,7 @@ class YouTubeReportWriter:
     def _write_detail_report(
         output_file: Path, results: list[YouTubeFeatureResult]
     ) -> None:
+        """Write one row per criterion."""
         fieldnames = [
             "video_name",
             "platform",
@@ -64,6 +73,7 @@ class YouTubeReportWriter:
 
     @staticmethod
     def _write_scores(scores_file: Path, results: list[YouTubeFeatureResult]) -> None:
+        """Write passed/total/score for each ABCD category, then a total row."""
         total_counts: Counter = Counter()
         passed_counts: Counter = Counter()
 

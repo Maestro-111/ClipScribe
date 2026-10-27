@@ -42,10 +42,14 @@ _MIN_KEY_LEN = 2
 
 
 def _round(value: float) -> float:
+    """Round to millisecond precision."""
     return round(value, 3)
 
 
 def run_duration(summary: ExtractionSummary) -> float:
+    """Run length in seconds: the recorded video duration, else the end of the
+    last shot, else 0.
+    """
     duration = summary["global_stats"].get("video_duration")
     if duration:
         return float(duration)
@@ -74,20 +78,29 @@ def _union_length(spans: Iterable[tuple[float, float]], limit: float) -> float:
 
 
 def _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> float:
+    """Length of the overlap between two intervals (0 if they are disjoint)."""
     return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def _text_key(raw: str) -> str:
+    """Comparison key for OCR text: lowercase letters and digits only, so spacing
+    and punctuation noise still match.
+    """
     return re.sub(r"[^0-9a-z]", "", raw.casefold())
 
 
 @dataclass
 class _CardBuilder:
+    """Accumulates the variants and seconds of one distinct text while OCR lines
+    are being merged into cards.
+    """
+
     keys: list[str]
     variants: Counter[str] = field(default_factory=Counter)
     seconds: set[int] = field(default_factory=set)
 
     def matches(self, key: str) -> bool:
+        """True if ``key`` equals, or is similar enough to, a key already in this card."""
         if key in self.keys:
             return True
         if len(key) < _MIN_FUZZY_KEY_LEN:
@@ -153,6 +166,7 @@ def build_text_cards(
 
 
 def _object_stats(summary: ExtractionSummary) -> list[ObjectStats]:
+    """Aggregate tracked occurrences by label, longest screen time first."""
     # The persisted columns are nullable: an occurrence without a lifespan
     # can't be placed in time and is skipped; a missing coverage is left out
     # of the average rather than counted as zero.

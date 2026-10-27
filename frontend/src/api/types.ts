@@ -503,7 +503,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/chat": {
+    "/runs/{run_id}/abcd/chat": {
         parameters: {
             query?: never;
             header?: never;
@@ -512,8 +512,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the agent about the run (SSE stream) */
-        post: operations["post_run_chat_runs__run_id__chat_post"];
+        /** Ask the agent about the abcd run (SSE stream) */
+        post: operations["post_run_abcd_chat_runs__run_id__abcd_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/exploration/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the agent about the exploration run (SSE stream) */
+        post: operations["post_run_exploration_chat_runs__run_id__exploration_chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -713,7 +730,10 @@ export interface components {
             /** Files */
             files: string[];
         };
-        /** Chapter */
+        /**
+         * Chapter
+         * @description A contiguous stretch of the video with a title and summary.
+         */
         Chapter: {
             /** Title */
             title: string;
@@ -797,7 +817,10 @@ export interface components {
             /** Created At */
             created_at?: string | null;
         };
-        /** ExploreReport */
+        /**
+         * ExploreReport
+         * @description The persisted per-run exploratory report.
+         */
         ExploreReport: {
             /**
              * Schema Version
@@ -820,7 +843,10 @@ export interface components {
          * @enum {string}
          */
         ExtractionMode: "with_objects" | "no_objects";
-        /** Finding */
+        /**
+         * Finding
+         * @description A notable observation with the timestamps that support it.
+         */
         Finding: {
             /** Observation */
             observation: string;
@@ -1086,7 +1112,10 @@ export interface components {
             /** Avg Screen Coverage */
             avg_screen_coverage: number;
         };
-        /** OnScreenTextDigest */
+        /**
+         * OnScreenTextDigest
+         * @description Digest of the on-screen text: a summary plus every text card.
+         */
         OnScreenTextDigest: {
             /** Summary */
             summary: string;
@@ -1131,7 +1160,10 @@ export interface components {
             /** Platforms */
             platforms: components["schemas"]["PlatformInfo"][];
         };
-        /** RunMetrics */
+        /**
+         * RunMetrics
+         * @description Run-level numbers computed in code; none of them come from the LLM.
+         */
         RunMetrics: {
             /** Duration Sec */
             duration_sec: number;
@@ -1251,21 +1283,30 @@ export interface components {
             /** Text */
             text?: string | null;
         };
-        /** TimeSpan */
+        /**
+         * TimeSpan
+         * @description A time interval in seconds.
+         */
         TimeSpan: {
             /** Start Sec */
             start_sec: number;
             /** End Sec */
             end_sec: number;
         };
-        /** TimedText */
+        /**
+         * TimedText
+         * @description Text anchored to a moment in the video.
+         */
         TimedText: {
             /** Text */
             text: string;
             /** Start Sec */
             start_sec: number;
         };
-        /** TranscriptDigest */
+        /**
+         * TranscriptDigest
+         * @description Digest of the speech.
+         */
         TranscriptDigest: {
             /** Summary */
             summary: string;
@@ -1319,7 +1360,10 @@ export interface components {
             /** Video Type */
             video_type?: string | null;
         };
-        /** VisualDigest */
+        /**
+         * VisualDigest
+         * @description Digest of what is shown.
+         */
         VisualDigest: {
             /** Summary */
             summary: string;
@@ -2188,7 +2232,42 @@ export interface operations {
             };
         };
     };
-    post_run_chat_runs__run_id__chat_post: {
+    post_run_abcd_chat_runs__run_id__abcd_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_run_exploration_chat_runs__run_id__exploration_chat_post: {
         parameters: {
             query?: never;
             header?: never;

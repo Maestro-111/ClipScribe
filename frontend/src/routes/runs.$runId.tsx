@@ -16,7 +16,7 @@ import type {
   FrameDetection,
   ShotBoundary,
 } from "../lib/run-types";
-import { ChatPanel } from "../components/ChatPanel";
+import { ChatPanel, EXPLORATION_SUGGESTIONS } from "../components/ChatPanel";
 import { ExplorationPanel } from "../components/ExplorationPanel";
 import {
   AnalysisTypePill,
@@ -798,18 +798,31 @@ function RunInspector({ runId }: { runId: string }) {
         )}
       </section>
 
-      {/* Exploratory runs show their report here; its chat agent comes later. */}
-      {!isAbcd &&
-        (exploration.isLoading ? (
-          <p className="text-sm text-neutral-500">Loading…</p>
-        ) : exploration.data ? (
-          <ExplorationPanel data={exploration.data} onSeek={handleSeek} />
-        ) : (
-          <p className="text-sm text-red-600">
-            {(exploration.error as Error | null)?.message ??
-              "Couldn't load the exploration report."}
-          </p>
-        ))}
+      {/* Exploratory runs show their report, then ask about it. */}
+      {!isAbcd && (
+        <>
+          {exploration.isLoading ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : exploration.data ? (
+            <ExplorationPanel data={exploration.data} onSeek={handleSeek} />
+          ) : (
+            <p className="text-sm text-red-600">
+              {(exploration.error as Error | null)?.message ??
+                "Couldn't load the exploration report."}
+            </p>
+          )}
+
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 font-medium">Ask about this video</h2>
+            <ChatPanel
+              key={runId}
+              endpoint={`/api/runs/${runId}/exploration/chat`}
+              suggestions={EXPLORATION_SUGGESTIONS}
+              intro="Ask about this video — the agent knows the exploration report and the extracted speech, scenes, objects, and on-screen text."
+            />
+          </section>
+        </>
+      )}
 
       {/* ABCD results and the advisory chat are ABCD-only for now. */}
       {isAbcd && (
@@ -835,7 +848,7 @@ function RunInspector({ runId }: { runId: string }) {
           {/* ── Advisory chat (web-app-plan §13) ── */}
           <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 font-medium">Ask about this video</h2>
-            <ChatPanel key={runId} endpoint={`/api/runs/${runId}/chat`} />
+            <ChatPanel key={runId} endpoint={`/api/runs/${runId}/abcd/chat`} />
           </section>
         </>
       )}

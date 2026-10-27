@@ -1,6 +1,6 @@
 """Advisory chat service (web-app-plan §13) — API-side glue for post-run Q&A.
 
-Builds the LLM + a ReAct agent (``backend/src/parser/advisory.py``), streams
+Builds the LLM + a ReAct agent (``clip_scribe/parser/agent_factory.py``), streams
 answers as Server-Sent Events, and persists transcripts to ``chat_messages``.
 There are two scopes: per-run inspector chat (one ``run_id``) and job-level chat
 (one ``job_id`` spanning the job's completed runs). It does no pipeline model
@@ -29,11 +29,15 @@ from langchain_core.messages import (
 )
 from langchain_openai import ChatOpenAI
 
-from clip_scribe.parser.advisory import (
-    ADVISORY_SYSTEM_PROMPT,
-    JOB_ADVISORY_SYSTEM_PROMPT,
-    build_advisory_agent,
-    build_job_advisory_agent,
+from clip_scribe.parser.agent_factory import AgentBuilder
+
+from clip_scribe.parser.abcd.prompts import (
+    JOB_SYSTEM_PROMPT as ABCD_JOB_SYSTEM_PROMPT,
+    RUN_SYSTEM_PROMPT as ABCD_RUN_SYSTEM_PROMPT,
+)
+
+from clip_scribe.parser.explore.prompts import (
+    RUN_SYSTEM_PROMPT as EXPLORE_RUN_SYSTEM_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -95,16 +99,37 @@ class ChatService:
     async def delete_session(self, run_id: str, session_id: str) -> int:
         return await self.writer.delete_chat_session(run_id, session_id)
 
-    async def stream_run(
+    async def stream_abcd_run(
         self, run_id: str, session_id: str, message: str
     ) -> AsyncIterator[str]:
-        """Stream one per-run chat turn (SSE frames) and persist the transcript."""
+        """Stream one abcd per-run chat turn (SSE frames) and persist the transcript."""
+
         history = await self.reader.get_chat_messages(run_id, session_id)
-        agent = build_advisory_agent(self.model, self.reader, run_id)
+        agent = AgentBuilder.build_abcd_run_agent(self.model, self.reader, run_id)
 
         async for event in self._stream_turn(
             history=history,
-            system_prompt=ADVISORY_SYSTEM_PROMPT,
+            system_prompt=ABCD_RUN_SYSTEM_PROMPT,
+            agent=agent,
+            session_id=session_id,
+            message=message,
+            persist_scope={"run_id": run_id},
+            log_label=f"run {run_id}",
+        ):
+            yield event
+
+    async def stream_exploration_run(
+        self, run_id: str, session_id: str, message: str
+    ) -> AsyncIterator[str]:
+        """Stream one exploration per-run chat turn (SSE frames) and persist the transcript."""
+        history = await self.reader.get_chat_messages(run_id, session_id)
+        agent = AgentBuilder.build_exploration_run_agent(
+            self.model, self.reader, run_id
+        )
+
+        async for event in self._stream_turn(
+            history=history,
+            system_prompt=EXPLORE_RUN_SYSTEM_PROMPT,
             agent=agent,
             session_id=session_id,
             message=message,
@@ -141,15 +166,17 @@ class ChatService:
             if c.get("status") == "completed" and c.get("run_id")
         ]
 
-    async def stream_job(
+    async def stream_abcd_job(
         self, job_id: str, session_id: str, message: str, runs: list[dict]
     ) -> AsyncIterator[str]:
         """Stream one job-level chat turn (SSE frames) and persist the transcript."""
+
         history = await self.reader.get_job_chat_messages(job_id, session_id)
-        agent = build_job_advisory_agent(self.model, self.reader, runs)
+        agent = AgentBuilder.build_abcd_job_agent(self.model, self.reader, runs)
+
         async for event in self._stream_turn(
             history=history,
-            system_prompt=JOB_ADVISORY_SYSTEM_PROMPT,
+            system_prompt=ABCD_JOB_SYSTEM_PROMPT,
             agent=agent,
             session_id=session_id,
             message=message,

@@ -522,16 +522,17 @@ function NewJob() {
         {/* ── Hints ───────────────────────────────────────────────── */}
         <section>
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            Taxonomy hints
+            Extraction hints
           </h2>
           <p className="mb-3 text-xs text-neutral-500">
-            Optional guidance for object detection. Hints seed the GroundingDINO
-            taxonomy so the extractor looks for things it might otherwise miss.
+            Optional visual and language tips for extraction. Hints steer which
+            objects GroundingDINO looks for and the video profile generated for
+            the run, so the extractor picks up things it might otherwise miss.
           </p>
           <div className="space-y-4">
             <Field
               label="User hints"
-              hint="Objects or concepts to prioritize. Comma-separated."
+              hint="Objects, concepts, or terms to prioritize. Comma-separated."
             >
               <input
                 value={userHints}
@@ -551,8 +552,8 @@ function NewJob() {
               <span className="text-sm">
                 <span className="font-medium">Generate hints from video name</span>
                 <span className="ml-1 text-neutral-500">
-                  — asks the LLM to infer taxonomy hints from each video filename
-                  (costs one extra OpenAI call per video).
+                  — asks the LLM to infer hints from each video filename (costs
+                  one extra OpenAI call per video).
                 </span>
               </span>
             </label>
