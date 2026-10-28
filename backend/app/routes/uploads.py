@@ -32,7 +32,7 @@ from app.settings import Settings
 from app.video_storage import VideoStorage
 from clip_scribe.db import ClipScribeAsyncWriterDB, ClipScribeAsyncReaderDB
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 router = APIRouter(tags=["uploads"])
 

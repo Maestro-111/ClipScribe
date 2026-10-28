@@ -27,7 +27,7 @@ from app.job_execution import run_job_core
 if TYPE_CHECKING:
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 _BUILDER: ClipScribeBuilder | None = None
 
@@ -42,10 +42,11 @@ def get_builder() -> ClipScribeBuilder:
     process at import, so ``os.environ`` (and thus the cached settings) already
     hold the value by the time a task runs.
     """
-    configure_logging()
+    from app.settings import get_settings
+
+    configure_logging({"api": get_settings().api_log_level})
     global _BUILDER
     if _BUILDER is None:
-        from app.settings import get_settings
         from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
         device = get_settings().clip_scribe_device

@@ -10,6 +10,7 @@ API, the CLI, and the worker all agree on where local source videos and
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -47,6 +48,19 @@ def _absolutize_gcs_credentials() -> None:
 
 
 _absolutize_gcs_credentials()
+
+
+def _log_level_env(name: str, default: int) -> int:
+    """A logging level from the environment: a number (``10``) or a name (``debug``)."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    if raw.isdecimal():
+        return int(raw)
+    level = logging.getLevelNamesMapping().get(raw.upper())
+    if level is None:
+        raise ValueError(f"{name} must be a number or a level name, got {raw!r}")
+    return level
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -118,6 +132,13 @@ class Settings:
         self.job_backend: str = (
             os.environ.get("CLIPSCRIBE_JOB_BACKEND", "inline").strip().lower()
         )
+
+        # Level of the "api" logger (everything under app/); the pipeline's
+        # "clip_scribe" logger is unaffected. Default INFO.
+        self.api_log_level: int = _log_level_env(
+            "CLIPSCRIBE_LOG_API_LEVEL", logging.INFO
+        )
+
         if self.job_backend not in ("inline", "celery"):
             raise ValueError(
                 f"CLIPSCRIBE_JOB_BACKEND must be 'inline' or 'celery', "

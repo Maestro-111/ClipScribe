@@ -40,7 +40,7 @@ from clip_scribe.utils.ids import new_ulid
 if TYPE_CHECKING:
     from google.cloud import storage
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 # How long a signed GET URL stays valid. Kept short: the browser fetches a fresh
 # one every time the run inspector mounts (the <video> points at our API route,

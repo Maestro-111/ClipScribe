@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from app.settings import Settings
     from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 _CONFIG_PATH = (
     Path(__file__).resolve().parents[1]

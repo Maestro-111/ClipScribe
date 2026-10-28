@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
     from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 _TERMINAL_JOB_STATUSES = frozenset(
     {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELED.value}

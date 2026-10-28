@@ -27,7 +27,7 @@ from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platfo
 if TYPE_CHECKING:
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 
 def now_iso() -> str:

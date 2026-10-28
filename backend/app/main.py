@@ -34,13 +34,14 @@ from clip_scribe.db import (
 from clip_scribe.db.engine import ensure_sqlite_parent_directory
 from clip_scribe.utils.clip_scribe_logging import configure_logging
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    configure_logging()
     settings = get_settings()
+    configure_logging({"api": settings.api_log_level})
+
     app.state.settings = settings
     app.state.builder = None
     app.state.executor = None

@@ -31,7 +31,7 @@ from clip_scribe.utils.clip_scribe_cancel import (
 from clip_scribe.utils.progress import NullProgressReporter, ProgressReporter
 from .settings import get_settings
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 # Set by run_job_core for the duration of a job so the log bridge can tag records
 # with their job id without threading it through every logging call site (§9.10).
@@ -332,15 +332,20 @@ class JobLogStreamHandler(logging.Handler):
 
 
 def install_job_log_bridge(redis_url: str) -> None:
-    """Attach the job-log stream handler to the ``clip_scribe`` logger once.
+    """Attach the job-log stream handler to the ``clip_scribe`` and ``api`` loggers once.
 
-    Idempotent: repeated calls (one per job) won't double-attach. A no-op if
-    Redis is unreachable — the job still runs, only its log tail is missing.
+    Both feed a job's log tail: the pipeline's own records and the web layer's
+    job lifecycle lines (canceled, failed). Idempotent: repeated calls (one per
+    job) won't double-attach. A no-op if Redis is unreachable — the job still
+    runs, only its log tail is missing.
     """
 
-    root = logging.getLogger("clip_scribe")
+    loggers = [logging.getLogger(name) for name in ("clip_scribe", "api")]
 
-    if any(isinstance(h, JobLogStreamHandler) for h in root.handlers):
+    def attached(lg: logging.Logger) -> bool:
+        return any(isinstance(h, JobLogStreamHandler) for h in lg.handlers)
+
+    if all(attached(lg) for lg in loggers):
         return
     try:
         client = redis.Redis.from_url(redis_url)
@@ -348,4 +353,7 @@ def install_job_log_bridge(redis_url: str) -> None:
     except Exception:  # noqa: BLE001 - degrade to no-op
         logger.warning("Redis unavailable at %s; job log streaming disabled", redis_url)
         return
-    root.addHandler(JobLogStreamHandler(client))
+    handler = JobLogStreamHandler(client)
+    for lg in loggers:
+        if not attached(lg):
+            lg.addHandler(handler)
