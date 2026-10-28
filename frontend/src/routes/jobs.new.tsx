@@ -158,20 +158,22 @@ function NewJob() {
         extraction_mode: extractionMode,
         parsing_mode: parsingMode,
         // Exploratory jobs carry no platform, so the backend stores none.
-        platform: isAbcd ? (platform as JobCreateRequest["platform"]) : null,
+        abcd_platform: isAbcd
+          ? (platform as JobCreateRequest["abcd_platform"])
+          : null,
         videos: resolved.map((v) => ({
           video_path: v.path!,
           video_name: v.name,
           video_type: videoType || null,
         })),
-        platform_params: (isAbcd && platform === "youtube"
+        abcd_platform_params: (isAbcd && platform === "youtube"
           ? {
               brand_name: brandName,
               branded_products: splitComma(brandedProducts),
               branded_products_categories: splitComma(brandedProductsCategories),
               call_to_actions: splitComma(callToActions),
             }
-          : {}) as JobCreateRequest["platform_params"],
+          : {}) as JobCreateRequest["abcd_platform_params"],
         user_hints: splitComma(userHints).length ? splitComma(userHints) : null,
         generate_hint_from_name: generateHintFromName,
       },

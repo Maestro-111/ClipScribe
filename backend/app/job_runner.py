@@ -180,7 +180,7 @@ class JobService:
             run_id=None,
             video_name=_batch_label(req.videos),
             device=device,
-            platform=req.platform.value if req.platform else None,
+            platform=req.abcd_platform.value if req.abcd_platform else None,
             params_json=req.model_dump(mode="json"),
             created_by=self.user_id,
         )
@@ -203,7 +203,7 @@ class JobService:
                 video_path=video.video_path,
                 video_type=video.video_type,
                 device=device,
-                platform=req.platform.value if req.platform else None,
+                platform=req.abcd_platform.value if req.abcd_platform else None,
                 params_json=child_req.model_dump(mode="json"),
                 created_by=self.user_id,
             )

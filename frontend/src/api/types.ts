@@ -972,13 +972,14 @@ export interface components {
          *
          *     A job fans out to one run per entry in ``videos`` (docs/deployment.md §2.1):
          *     the service writes a parent job row plus one child job (and ``run_id``) per
-         *     video. All videos in a job share ``platform``, ``platform_params``, and
+         *     video. All videos in a job share ``abcd_platform``, ``abcd_platform_params``, and
          *     hints.
          *
-         *     ``platform`` selects the evaluation platform; ``platform_params`` is a raw
-         *     object validated against the selected platform's schema (see
-         *     ``PLATFORM_PARAMS_MODELS``). The validated model is exposed via
-         *     ``resolved_params``.
+         *     ``abcd_platform`` selects the ABCD evaluation platform (required for ABCD
+         *     parsing, absent for exploratory); ``abcd_platform_params`` is a raw object
+         *     validated against the selected platform's schema (see
+         *     ``ABCD_PLATFORM_PARAMS_MODELS``). The validated model is exposed via
+         *     ``resolved_abcd_params``.
          */
         JobCreateRequest: {
             mode: components["schemas"]["JobMode"];
@@ -986,11 +987,11 @@ export interface components {
             extraction_mode: components["schemas"]["ExtractionMode"];
             /** @default abcd */
             parsing_mode: components["schemas"]["ParsingMode"];
-            platform?: components["schemas"]["PlatformName"] | null;
+            abcd_platform?: components["schemas"]["PlatformName"] | null;
             /** Videos */
             videos?: components["schemas"]["VideoInput"][];
-            /** Platform Params */
-            platform_params?: {
+            /** Abcd Platform Params */
+            abcd_platform_params?: {
                 [key: string]: unknown;
             };
             /** User Hints */
@@ -1139,7 +1140,7 @@ export interface components {
          * @description Supported evaluation platforms.
          *
          *     Adding a platform = a new member here, a ``BasePlatformParams`` subclass,
-         *     and an entry in ``PLATFORM_PARAMS_MODELS``. Requests for any value not in
+         *     and an entry in ``ABCD_PLATFORM_PARAMS_MODELS``. Requests for any value not in
          *     this enum are rejected at validation (422) — non-YouTube is blocked today.
          * @enum {string}
          */
@@ -1347,7 +1348,7 @@ export interface components {
          * @description One video in a job.
          *
          *     A job batches one or more videos that share the same brand/product context,
-         *     so ``platform``, ``platform_params``, and hints live on the job while the
+         *     so ``abcd_platform``, ``abcd_platform_params``, and hints live on the job while the
          *     per-video path/name/type live here. Keeping the three grouped (rather than
          *     three parallel lists) makes it impossible for them to drift out of
          *     alignment.

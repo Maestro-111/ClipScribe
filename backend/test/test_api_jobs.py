@@ -138,11 +138,11 @@ def ctx(tmp_path, async_db_adapters):
 def _full_body(videos=None, **over):
     body = {
         "mode": "full",
-        "platform": "youtube",
+        "abcd_platform": "youtube",
         "videos": videos
         if videos is not None
         else [{"video_path": "ad.mp4", "video_name": "ad.mp4", "video_type": "car ad"}],
-        "platform_params": {"brand_name": "RAM"},
+        "abcd_platform_params": {"brand_name": "RAM"},
         "user_hints": ["car"],
     }
     body.update(over)
@@ -174,7 +174,7 @@ def test_create_job_returns_202_and_queues_parent_plus_child(ctx):
     assert parent["run_id"] is None
     assert parent["parent_job_id"] is None
     # full batch request persisted on the parent for reproducibility / retry
-    assert parent["params_json"]["platform_params"]["brand_name"] == "RAM"
+    assert parent["params_json"]["abcd_platform_params"]["brand_name"] == "RAM"
     assert parent["params_json"]["extraction_mode"] == "with_objects"
 
     child = _only_child(state, data["job_id"])
@@ -290,7 +290,7 @@ def test_canceled_job_does_not_start_if_task_later_runs(ctx):
         run_id=run_id,
         video_name=video.video_name,
         video_path=video.video_path,
-        platform=req.platform.value,
+        platform=req.abcd_platform.value,
         params_json=req.model_dump(mode="json"),
     )
 
@@ -339,7 +339,7 @@ def test_canceled_running_job_is_not_marked_completed(ctx):
         run_id=run_id,
         video_name=video.video_name,
         video_path=video.video_path,
-        platform=req.platform.value,
+        platform=req.abcd_platform.value,
         params_json=req.model_dump(mode="json"),
     )
 
@@ -415,7 +415,7 @@ def test_create_job_requires_a_video_422(ctx):
 
 def test_parse_requires_run_id_422(ctx):
     client, state = ctx
-    resp = client.post("/jobs", json={"mode": "parse", "platform": "youtube"})
+    resp = client.post("/jobs", json={"mode": "parse", "abcd_platform": "youtube"})
     assert resp.status_code == 422
     assert resp.headers["content-type"] == "application/problem+json"
 
@@ -426,7 +426,8 @@ def test_parse_via_job_api_is_rejected(ctx):
     client, state = ctx
     state.install_service(run=False)
     resp = client.post(
-        "/jobs", json={"mode": "parse", "platform": "youtube", "run_id": "whatever"}
+        "/jobs",
+        json={"mode": "parse", "abcd_platform": "youtube", "run_id": "whatever"},
     )
     assert resp.status_code == 400
     assert state.reader.list_jobs("local") == []
@@ -435,7 +436,7 @@ def test_parse_via_job_api_is_rejected(ctx):
 def test_unsupported_platform_is_422(ctx):
     client, state = ctx
     # Only youtube is registered; anything else is rejected at validation.
-    resp = client.post("/jobs", json=_full_body(platform="tiktok"))
+    resp = client.post("/jobs", json=_full_body(abcd_platform="tiktok"))
     assert resp.status_code == 422
     assert resp.headers["content-type"] == "application/problem+json"
 
@@ -454,10 +455,10 @@ def test_youtube_params_map_to_build_kwargs(ctx):
 
     req = JobCreateRequest.model_validate(
         _full_body(
-            platform_params={"brand_name": "RAM", "call_to_actions": ["buy now"]}
+            abcd_platform_params={"brand_name": "RAM", "call_to_actions": ["buy now"]}
         )
     )
-    assert req.resolved_params.to_build_kwargs() == {
+    assert req.resolved_abcd_params.to_build_kwargs() == {
         "youtube_brand_name": "RAM",
         "youtube_branded_products": [],
         "youtube_branded_products_categories": [],

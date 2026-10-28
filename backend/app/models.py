@@ -42,7 +42,7 @@ class PlatformName(str, Enum):
     """Supported evaluation platforms.
 
     Adding a platform = a new member here, a ``BasePlatformParams`` subclass,
-    and an entry in ``PLATFORM_PARAMS_MODELS``. Requests for any value not in
+    and an entry in ``ABCD_PLATFORM_PARAMS_MODELS``. Requests for any value not in
     this enum are rejected at validation (422) — non-YouTube is blocked today.
     """
 
@@ -77,9 +77,9 @@ class YouTubePlatformParams(BasePlatformParams):
         }
 
 
-# platform -> its params model. The single registry the request validator, the
-# job service, and the /platforms metadata spec all key off of.
-PLATFORM_PARAMS_MODELS: dict[PlatformName, type[BasePlatformParams]] = {
+# ABCD platform -> its params model. The single registry the request validator,
+# the job service, and the /platforms metadata spec all key off of.
+ABCD_PLATFORM_PARAMS_MODELS: dict[PlatformName, type[BasePlatformParams]] = {
     PlatformName.YOUTUBE: YouTubePlatformParams,
 }
 
@@ -88,7 +88,7 @@ class VideoInput(BaseModel):
     """One video in a job.
 
     A job batches one or more videos that share the same brand/product context,
-    so ``platform``, ``platform_params``, and hints live on the job while the
+    so ``abcd_platform``, ``abcd_platform_params``, and hints live on the job while the
     per-video path/name/type live here. Keeping the three grouped (rather than
     three parallel lists) makes it impossible for them to drift out of
     alignment.
@@ -109,31 +109,32 @@ class JobCreateRequest(BaseModel):
 
     A job fans out to one run per entry in ``videos`` (docs/deployment.md §2.1):
     the service writes a parent job row plus one child job (and ``run_id``) per
-    video. All videos in a job share ``platform``, ``platform_params``, and
+    video. All videos in a job share ``abcd_platform``, ``abcd_platform_params``, and
     hints.
 
-    ``platform`` selects the evaluation platform; ``platform_params`` is a raw
-    object validated against the selected platform's schema (see
-    ``PLATFORM_PARAMS_MODELS``). The validated model is exposed via
-    ``resolved_params``.
+    ``abcd_platform`` selects the ABCD evaluation platform (required for ABCD
+    parsing, absent for exploratory); ``abcd_platform_params`` is a raw object
+    validated against the selected platform's schema (see
+    ``ABCD_PLATFORM_PARAMS_MODELS``). The validated model is exposed via
+    ``resolved_abcd_params``.
     """
 
     mode: JobMode
     extraction_mode: ExtractionMode = ExtractionMode.WITH_OBJECTS
     parsing_mode: ParsingMode = ParsingMode.ABCD
-    platform: None | PlatformName = None
+    abcd_platform: None | PlatformName = None
     # One run per video. Required (non-empty) for full/extract. Parse validates
     # here for local/dev callers but is rejected by the web job service.
     videos: list[VideoInput] = Field(default_factory=list)
     # Shape depends on `platform`; parsed into the matching BasePlatformParams
     # subclass in the validator below.
-    platform_params: dict[str, Any] = Field(default_factory=dict)
+    abcd_platform_params: dict[str, Any] = Field(default_factory=dict)
     user_hints: list[str] | None = None
     generate_hint_from_name: bool = False
     # Required for parse; must reference an existing run (checked in the service).
     run_id: str | None = None
 
-    _resolved_params: BasePlatformParams = PrivateAttr()
+    _resolved_abcd_params: BasePlatformParams = PrivateAttr()
 
     @model_validator(mode="after")
     def _validate(self) -> JobCreateRequest:
@@ -146,25 +147,27 @@ class JobCreateRequest(BaseModel):
             )
 
         if self.parsing_mode == ParsingMode.ABCD:
-            if self.platform is None:
+            if self.abcd_platform is None:
                 raise ValueError(
-                    f"platform is required for parsing mode '{self.parsing_mode.value}'"
+                    f"abcd_platform is required for parsing mode '{self.parsing_mode.value}'"
                 )
 
-            model_cls = PLATFORM_PARAMS_MODELS.get(self.platform)
+            abcd_model_cls = ABCD_PLATFORM_PARAMS_MODELS.get(self.abcd_platform)
 
-            if model_cls is None:
-                raise ValueError(f"unsupported platform: {self.platform.value}")
+            if abcd_model_cls is None:
+                raise ValueError(f"unsupported platform: {self.abcd_platform.value}")
 
             # Validate the raw params against the selected platform's schema.
-            self._resolved_params = model_cls.model_validate(self.platform_params)
+            self._resolved_abcd_params = abcd_model_cls.model_validate(
+                self.abcd_platform_params
+            )
 
         return self
 
     @property
-    def resolved_params(self) -> BasePlatformParams:
-        """The platform_params parsed into the selected platform's model."""
-        return self._resolved_params
+    def resolved_abcd_params(self) -> BasePlatformParams:
+        """The abcd_platform_params parsed into the selected platform's model."""
+        return self._resolved_abcd_params
 
 
 class JobCreatedResponse(BaseModel):

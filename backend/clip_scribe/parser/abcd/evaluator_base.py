@@ -12,7 +12,7 @@ from clip_scribe.parser.abcd.tools import build_tools, TOOL_GROUP_TABLES
 from clip_scribe.parser.agent_factory import AgentRunner, AgentBuilder
 from clip_scribe.parser.abcd.models import BaseFeatureResult, BaseAgentEvaluation
 
-from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
+from clip_scribe.clip_scribe_core.abcd_platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
     CancellationToken,
     JobCanceled,

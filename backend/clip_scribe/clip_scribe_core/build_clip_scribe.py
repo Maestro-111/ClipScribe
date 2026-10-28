@@ -39,7 +39,7 @@ from clip_scribe.utils.progress import NullProgressReporter, ProgressReporter
 from clip_scribe.utils.clip_scribe_artifacts import make_artifact_uploader
 
 from .engine import ClipScribeEngine
-from .platform_configs import BasePlatformConf
+from .abcd_platform_configs import BasePlatformConf
 
 from pathlib import Path
 import yaml  # type: ignore

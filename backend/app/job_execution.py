@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.models import JobCreateRequest, JobStatus, ParsingMode
-from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platform
+from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_abcd_platform
 
 if TYPE_CHECKING:
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
@@ -120,13 +120,13 @@ def run_job_core(builder: ClipScribeBuilder, payload: dict[str, Any]) -> None:
         token = current_job_id.set(job_id)
 
         # Only ABCD evaluates against a platform; exploratory runs carry none.
-        platform_name = req.platform.value if req.platform else None
+        platform_name = req.abcd_platform.value if req.abcd_platform else None
         platform_conf = None
         if req.parsing_mode == ParsingMode.ABCD:
             # JobCreateRequest guarantees a platform for ABCD.
             assert platform_name is not None
-            platform_conf = build_platform(
-                platform_name, **req.resolved_params.to_build_kwargs()
+            platform_conf = build_abcd_platform(
+                platform_name, **req.resolved_abcd_params.to_build_kwargs()
             )
             if platform_conf is None:
                 raise ValueError(f"unsupported platform: {platform_name}")

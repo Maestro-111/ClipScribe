@@ -1,7 +1,7 @@
-from clip_scribe.clip_scribe_core.platform_configs import *  # noqa ignore
+from clip_scribe.clip_scribe_core.abcd_platform_configs import *  # noqa ignore
 
 
-def build_platform(platform_name: str, **kwargs):
+def build_abcd_platform(platform_name: str, **kwargs):
     platform = None
 
     if platform_name == "youtube":

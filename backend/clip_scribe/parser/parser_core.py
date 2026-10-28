@@ -13,7 +13,7 @@ from clip_scribe.parser.abcd.youtube import (
     YouTubeEvaluator,
     YouTubeReportWriter,
 )
-from clip_scribe.clip_scribe_core.platform_configs import BasePlatformConf
+from clip_scribe.clip_scribe_core.abcd_platform_configs import BasePlatformConf
 from clip_scribe.utils.clip_scribe_cancel import (
     CancellationToken,
     NullCancellationToken,

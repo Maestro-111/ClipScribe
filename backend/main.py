@@ -4,7 +4,7 @@ entry point for local dev, just run with uv run main.py
 
 
 from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
-from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_platform
+from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_abcd_platform
 from dotenv import load_dotenv, find_dotenv
 import os
 from pathlib import Path
@@ -69,7 +69,9 @@ generate_hint_from_name = False
 
 
 try:
-    clib_scribe_platform_conf = build_platform(clib_scribe_platform, **platform_params)
+    clib_scribe_platform_conf = build_abcd_platform(
+        clib_scribe_platform, **platform_params
+    )
 
     if clib_scribe_platform_conf is not None:
         builder = ClipScribeBuilder(device=clib_scribe_device)

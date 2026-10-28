@@ -68,11 +68,11 @@ continue to hold under deployment.
 
 **Status: landed locally.** `JobService.create_job` (`app/job_runner.py`) now
 creates a parent batch row and one child job/run per video. A batch shares
-brand/product context (`platform_params`, hints), while each video is processed
+brand/product context (`abcd_platform_params`, hints), while each video is processed
 independently by the same per-video task lifecycle.
 
 ```
-POST /jobs { videos: [v1, v2, … v20], platform, platform_params }
+POST /jobs { videos: [v1, v2, … v20], abcd_platform, abcd_platform_params }
   → write ONE parent job row
   → write N child job rows (one run_id per video)
   → send N child tasks
