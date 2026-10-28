@@ -35,13 +35,44 @@ def test_levels_apply_on_every_call_and_leave_other_loggers_alone(
     assert logging.getLogger("api").level == logging.ERROR
 
 
-def test_handlers_do_not_filter_below_the_logger_level():
-    cfg = clip_scribe_logging.GENERAL_LOGGING_CONFIG
-    # Otherwise lowering a logger to DEBUG would still print nothing.
-    assert {h["level"] for h in cfg["handlers"].values()} == {"DEBUG"}
-    assert set(cfg["loggers"]) == {"clip_scribe", "api"}
-    # API records go to the console only; the log file is the pipeline's.
-    assert cfg["loggers"]["api"]["handlers"] == ["console"]
+@pytest.fixture
+def isolated_logging(monkeypatch, restore_levels):
+    """Let ``configure_logging`` run its one-time setup, then undo it."""
+    names = ("api", "clip_scribe")
+    saved = {n: list(logging.getLogger(n).handlers) for n in names}
+    monkeypatch.setattr(clip_scribe_logging, "_CONFIGURED", False)
+    yield
+    for n in names:
+        lg = logging.getLogger(n)
+        for h in lg.handlers:
+            if h not in saved[n]:
+                h.close()
+        lg.handlers[:] = saved[n]
+
+
+def test_api_debug_records_reach_the_console_tagged_as_api(
+    capsys, monkeypatch, tmp_path, isolated_logging
+):
+    monkeypatch.setitem(
+        clip_scribe_logging.GENERAL_LOGGING_CONFIG["handlers"]["file_main"],
+        "filename",
+        str(tmp_path / "core.log"),
+    )
+    monkeypatch.setattr(clip_scribe_logging, "LOG_DIR", str(tmp_path))
+
+    clip_scribe_logging.configure_logging({"api": logging.DEBUG})
+    logging.getLogger("api").debug("api-debug-line")
+    logging.getLogger("clip_scribe").debug("core-hidden-line")
+    logging.getLogger("clip_scribe").info("core-info-line")
+
+    out = capsys.readouterr().out
+    assert any("| api |" in ln and "api-debug-line" in ln for ln in out.splitlines())
+    assert any("| core |" in ln and "core-info-line" in ln for ln in out.splitlines())
+    assert "core-hidden-line" not in out
+    # The log file belongs to the pipeline logger only.
+    log_text = (tmp_path / "core.log").read_text(encoding="utf-8")
+    assert "core-info-line" in log_text
+    assert "api-debug-line" not in log_text
 
 
 @pytest.mark.parametrize(
@@ -81,19 +112,3 @@ def test_job_log_bridge_covers_both_loggers_once(monkeypatch):
     finally:
         for lg in loggers:
             lg.handlers[:] = before[lg]
-
-
-def test_every_handler_tags_records_with_their_source():
-    cfg = clip_scribe_logging.GENERAL_LOGGING_CONFIG
-    # The formatters print %(source)s, so a handler without the filter would
-    # raise on every record.
-    assert all("source" in h["filters"] for h in cfg["handlers"].values())
-
-    def tag(name: str) -> str:
-        record = logging.LogRecord(name, logging.INFO, "f.py", 1, "m", None, None)
-        assert clip_scribe_logging.SourceFilter().filter(record) is True
-        return record.source  # type: ignore[attr-defined]
-
-    assert tag("api") == "api"
-    assert tag("clip_scribe") == "core"
-    assert tag("something.else") == "something.else"

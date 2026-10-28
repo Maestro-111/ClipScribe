@@ -11,12 +11,16 @@ import type { ReactNode } from "react";
 //   - The YouTube parser evaluates 17 agentic criteria, each one LLM call,
 //     independent of video length (src/parser/youtube/criteria.py +
 //     evaluator_base.py). The other criteria are baseline/no-LLM.
+//   - Exploratory analysis makes up to 4 calls per video: three digests
+//     (transcript, on-screen text, visuals) plus the overview/chapters
+//     (src/parser/explore/explorer.py).
 //   - "Generate hints from name" adds one call per video (taxonomy_core.py).
 // Scene description + taxonomy add ~2 GPT calls per *detected shot*, which we
 // can't know until the video is processed — surfaced as a separate note.
 const PARSER_CALLS_PER_VIDEO = 17;
 const SHOT_CALLS_EACH = 2;
 const NO_OBJECTS_PARSER_CALLS_PER_VIDEO = 9;
+const EXPLORE_CALLS_PER_VIDEO = 4;
 const NO_OBJECTS_SHOT_CALLS_EACH = 1;
 
 interface JobSummaryProps {
@@ -42,9 +46,8 @@ export function JobSummary({
 }: JobSummaryProps) {
   const hintCalls = generateHintFromName ? videoCount : 0;
   const isAbcd = parsingMode === "abcd";
-  // Exploratory analysis isn't implemented yet, so it adds no parser calls.
   const parserCallsPerVideo = !isAbcd
-    ? 0
+    ? EXPLORE_CALLS_PER_VIDEO
     : extractionMode === "with_objects"
       ? PARSER_CALLS_PER_VIDEO
       : NO_OBJECTS_PARSER_CALLS_PER_VIDEO;
@@ -111,7 +114,7 @@ export function JobSummary({
             <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
               {isAbcd
                 ? `${videoCount} × ${parserCallsPerVideo} parser criteria`
-                : "No parser criteria"}
+                : `${videoCount} × ${parserCallsPerVideo} exploration summaries`}
               {hintCalls > 0 && ` + ${hintCalls} filename hint`}, plus about{" "}
               {sceneCallsEach} scene call{sceneCallsEach === 1 ? "" : "s"} per
               detected shot as each video is processed.
