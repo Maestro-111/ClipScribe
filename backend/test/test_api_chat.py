@@ -21,11 +21,11 @@ from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.schema import (
     jobs_table,
     metadata_obj,
-    parser_results_table,
+    abcd_results_table,
     runs_table,
 )
 from clip_scribe.db.writer import ClipScribeWriterDB
-from clip_scribe.parser.tools import build_async_tools, build_tools
+from clip_scribe.parser.abcd.tools import build_run_tools, build_tools
 
 RUN_ID = "r1"
 
@@ -55,7 +55,7 @@ def ctx(tmp_path, async_db_adapters):
         )
         conn.execute(runs_table.insert(), {"run_id": RUN_ID, "video_name": "ad.mp4"})
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             [
                 {
                     "run_id": RUN_ID,
@@ -141,7 +141,7 @@ def test_query_parser_results_tool_filters(ctx):
 
 def test_async_query_parser_results_tool_filters(ctx):
     _, _, _, async_reader = ctx
-    tools = build_async_tools(async_reader, RUN_ID, tool_group="advisory")
+    tools = build_run_tools(async_reader, RUN_ID, tool_group="advisory")
     tool = next(t for t in tools if t.name == "query_parser_results")
 
     failed = json.loads(asyncio.run(tool.ainvoke({"only_failed": True})))
@@ -153,7 +153,7 @@ def test_advisory_tool_group_includes_all_query_tools(ctx):
     _, reader, _, async_reader = ctx
     sync_names = {t.name for t in build_tools(reader, RUN_ID, tool_group="advisory")}
     async_names = {
-        t.name for t in build_async_tools(async_reader, RUN_ID, tool_group="advisory")
+        t.name for t in build_run_tools(async_reader, RUN_ID, tool_group="advisory")
     }
     expected = {
         "query_audio_segments",
@@ -198,10 +198,12 @@ def test_delete_session_endpoint(ctx):
 def test_chat_endpoints_404_unknown_run(ctx):
     client, _, _, _ = ctx
     assert client.get("/runs/nope/chat/sessions").status_code == 404
-    assert client.post("/runs/nope/chat", json={"message": "hi"}).status_code == 404
+    assert (
+        client.post("/runs/nope/abcd/chat", json={"message": "hi"}).status_code == 404
+    )
 
 
 def test_chat_post_empty_message_422(ctx):
     client, _, _, _ = ctx
-    resp = client.post(f"/runs/{RUN_ID}/chat", json={"message": ""})
+    resp = client.post(f"/runs/{RUN_ID}/abcd/chat", json={"message": ""})
     assert resp.status_code == 422

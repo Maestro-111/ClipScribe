@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
     from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeAsyncWriterDB
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 _TERMINAL_JOB_STATUSES = frozenset(
     {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELED.value}
@@ -169,15 +169,18 @@ class JobService:
 
         device = getattr(self.builder, "device", None)
         parent_id = new_ulid()
+
         await self.writer.create_job(
             job_id=parent_id,
             mode=req.mode.value,
+            extraction_mode=req.extraction_mode.value,
+            parsing_mode=req.parsing_mode.value,
             status=JobStatus.QUEUED.value,
             parent_job_id=None,
             run_id=None,
             video_name=_batch_label(req.videos),
             device=device,
-            platform=req.platform.value,
+            platform=req.platform.value if req.platform else None,
             params_json=req.model_dump(mode="json"),
             created_by=self.user_id,
         )
@@ -191,6 +194,8 @@ class JobService:
             await self.writer.create_job(
                 job_id=child_id,
                 mode=req.mode.value,
+                extraction_mode=req.extraction_mode.value,
+                parsing_mode=req.parsing_mode.value,
                 status=JobStatus.QUEUED.value,
                 parent_job_id=parent_id,
                 run_id=run_id,
@@ -198,7 +203,7 @@ class JobService:
                 video_path=video.video_path,
                 video_type=video.video_type,
                 device=device,
-                platform=req.platform.value,
+                platform=req.platform.value if req.platform else None,
                 params_json=child_req.model_dump(mode="json"),
                 created_by=self.user_id,
             )

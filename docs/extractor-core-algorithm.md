@@ -1,7 +1,7 @@
 # Core Extractor Algorithm
 
 > Scope: this document describes the end-to-end control flow of the core
-> extraction algorithm in `backend/src/extractor/extractor_core.py`
+> extraction algorithm in `backend/clip_scribe/extractor/extractor_core.py`
 > (`VideoInformationExtractor.extract`). It covers how a video is turned into a
 > structured `ExtractionSummary` — scene detection, audio, the per-shot
 > detection/tracking/OCR loop, and finalization.
@@ -206,7 +206,7 @@ After all shots:
 5. Text events are flattened from `text_registry`, and everything is assembled
    into the `ExtractionSummary` and written to `extraction_summary.json`.
 
-The returned summary is what the persistence layer (`backend/src/db/`) writes
+The returned summary is what the persistence layer (`backend/clip_scribe/db/`) writes
 to the database and what the parser later evaluates.
 
 ---
@@ -234,5 +234,5 @@ These constructor parameters shape the algorithm's cost/accuracy trade-offs:
 - [`sam2-tracking-and-identity.md`](./sam2-tracking-and-identity.md) — SAM2
   propagation, `_save_metadata`, DINOv2 re-ID, and `_resolve_identities` in
   depth.
-- `backend/src/extractor/CLAUDE.md` — module ownership and where to make
+- `backend/clip_scribe/extractor/CLAUDE.md` — module ownership and where to make
   specific kinds of changes.

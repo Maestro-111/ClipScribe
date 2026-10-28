@@ -30,6 +30,7 @@ clib_scribe_device = "mps"
 clib_scribe_platform = "youtube"
 clib_scribe_mode = "full"
 extraction_mode = "no_objects"
+parsing_mode = "exploratory"
 
 
 platform_params = {
@@ -79,6 +80,7 @@ try:
             video_type=video_type,
             clib_scribe_mode=clib_scribe_mode,
             extraction_mode=extraction_mode,
+            parsing_mode=parsing_mode,
             clib_scribe_platform_name=clib_scribe_platform,
             user_hints=user_hints,
             generate_hint_from_name=generate_hint_from_name,

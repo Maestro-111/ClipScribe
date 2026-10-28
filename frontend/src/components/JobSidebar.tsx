@@ -11,16 +11,21 @@ import type { ReactNode } from "react";
 //   - The YouTube parser evaluates 17 agentic criteria, each one LLM call,
 //     independent of video length (src/parser/youtube/criteria.py +
 //     evaluator_base.py). The other criteria are baseline/no-LLM.
+//   - Exploratory analysis makes up to 4 calls per video: three digests
+//     (transcript, on-screen text, visuals) plus the overview/chapters
+//     (src/parser/explore/explorer.py).
 //   - "Generate hints from name" adds one call per video (taxonomy_core.py).
 // Scene description + taxonomy add ~2 GPT calls per *detected shot*, which we
 // can't know until the video is processed — surfaced as a separate note.
 const PARSER_CALLS_PER_VIDEO = 17;
 const SHOT_CALLS_EACH = 2;
 const NO_OBJECTS_PARSER_CALLS_PER_VIDEO = 9;
+const EXPLORE_CALLS_PER_VIDEO = 4;
 const NO_OBJECTS_SHOT_CALLS_EACH = 1;
 
 interface JobSummaryProps {
   videoCount: number;
+  parsingMode: "abcd" | "exploratory";
   platform: string;
   brandName: string;
   videoType: string;
@@ -31,6 +36,7 @@ interface JobSummaryProps {
 
 export function JobSummary({
   videoCount,
+  parsingMode,
   platform,
   brandName,
   videoType,
@@ -39,8 +45,10 @@ export function JobSummary({
   generateHintFromName,
 }: JobSummaryProps) {
   const hintCalls = generateHintFromName ? videoCount : 0;
-  const parserCallsPerVideo =
-    extractionMode === "with_objects"
+  const isAbcd = parsingMode === "abcd";
+  const parserCallsPerVideo = !isAbcd
+    ? EXPLORE_CALLS_PER_VIDEO
+    : extractionMode === "with_objects"
       ? PARSER_CALLS_PER_VIDEO
       : NO_OBJECTS_PARSER_CALLS_PER_VIDEO;
   const sceneCallsEach =
@@ -75,8 +83,13 @@ export function JobSummary({
             <Row label="Videos">
               {videoCount} → {videoCount} run{videoCount === 1 ? "" : "s"}
             </Row>
-            <Row label="Platform">{platform}</Row>
-            <Row label="Brand">{brandName.trim() || "—"}</Row>
+            <Row label="Analysis">{isAbcd ? "ABCD" : "Exploratory"}</Row>
+            {isAbcd && (
+              <>
+                <Row label="Platform">{platform}</Row>
+                <Row label="Brand">{brandName.trim() || "—"}</Row>
+              </>
+            )}
             <Row label="Video type">{videoType.trim() || "—"}</Row>
             <Row label="Extraction">
               {extractionMode === "with_objects"
@@ -99,7 +112,9 @@ export function JobSummary({
               </span>
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-              {videoCount} × {parserCallsPerVideo} parser criteria
+              {isAbcd
+                ? `${videoCount} × ${parserCallsPerVideo} parser criteria`
+                : `${videoCount} × ${parserCallsPerVideo} exploration summaries`}
               {hintCalls > 0 && ` + ${hintCalls} filename hint`}, plus about{" "}
               {sceneCallsEach} scene call{sceneCallsEach === 1 ? "" : "s"} per
               detected shot as each video is processed.
@@ -129,6 +144,8 @@ interface Output {
   detail: string;
   icon: ReactNode;
   requiresObjects?: boolean;
+  // ABCD-only for now; exploratory runs get their own report and chat later.
+  requiresAbcd?: boolean;
 }
 
 function OutIcon({ children }: { children: ReactNode }) {
@@ -151,6 +168,7 @@ const OUTPUTS: Output[] = [
   {
     title: "ABCD scorecard",
     detail: "Pass/fail per criterion — export to Excel or CSV",
+    requiresAbcd: true,
     icon: (
       <OutIcon>
         <rect x="3.5" y="2.5" width="13" height="15" rx="1.5" />
@@ -191,6 +209,7 @@ const OUTPUTS: Output[] = [
   {
     title: "Advisory chat",
     detail: "Ask questions about the results",
+    requiresAbcd: true,
     icon: (
       <OutIcon>
         <path d="M4 4.5h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8l-4 3v-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" />
@@ -201,11 +220,15 @@ const OUTPUTS: Output[] = [
 
 export function RunOutputs({
   includeObjects = true,
+  includeAbcd = true,
 }: {
   includeObjects?: boolean;
+  includeAbcd?: boolean;
 }) {
   const outputs = OUTPUTS.filter(
-    (output) => includeObjects || !output.requiresObjects,
+    (output) =>
+      (includeObjects || !output.requiresObjects) &&
+      (includeAbcd || !output.requiresAbcd),
   );
 
   return (

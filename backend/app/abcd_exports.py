@@ -1,9 +1,9 @@
 """ABCD report exporters (web-app-plan §6 extension).
 
-Builds CSV / XLSX bytes from persisted ``parser_results`` rows so the frontend
+Builds CSV / XLSX bytes from persisted ``abcd_results`` rows so the frontend
 can download a run's or a whole job's evaluation as a spreadsheet. Platform
 agnostic: it reads whatever columns the reader returns (mirrors
-``writer.save_parser_results``), so non-YouTube platforms export the common
+``writer.save_abcd_results``), so non-YouTube platforms export the common
 fields too.
 
 Pure over already-fetched data — routes do the DB reads and hand the rows in,

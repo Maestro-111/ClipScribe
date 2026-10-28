@@ -14,7 +14,15 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
-from app.deps import get_reader, get_writer, require_owned_job, require_owned_run
+from app.deps import (
+    get_reader,
+    get_writer,
+    require_abcd_job,
+    require_abcd_run,
+    require_exploratory_run,
+    require_owned_job,
+    require_owned_run,
+)
 from app.errors import ProblemException
 from app.models import (
     ChatHistoryResponse,
@@ -34,7 +42,7 @@ router = APIRouter(prefix="/runs", tags=["chat"])
 job_router = APIRouter(prefix="/jobs", tags=["chat"])
 
 
-def get_chat_service(request: Request) -> "ChatService":
+def get_chat_service(request: Request) -> ChatService:
     # Lazy import: app.chat pulls the LLM client (langchain/langgraph), which
     # transitively imports torch. Deferring it here keeps `import app.main`
     # light (fast startup, OpenAPI gen, tests) — torch loads only on the first
@@ -45,16 +53,36 @@ def get_chat_service(request: Request) -> "ChatService":
     return ChatService(get_reader(request), get_writer(request), state.settings)
 
 
-@router.post("/{run_id}/chat", summary="Ask the agent about the run (SSE stream)")
-async def post_run_chat(
+@router.post(
+    "/{run_id}/abcd/chat", summary="Ask the agent about the abcd run (SSE stream)"
+)
+async def post_run_abcd_chat(
     run_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
-    _run: dict = Depends(require_owned_run),
+    _run: dict = Depends(require_abcd_run),
 ) -> StreamingResponse:
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
-        service.stream_run(run_id, session_id, req.message),
+        service.stream_abcd_run(run_id, session_id, req.message),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post(
+    "/{run_id}/exploration/chat",
+    summary="Ask the agent about the exploration run (SSE stream)",
+)
+async def post_run_exploration_chat(
+    run_id: str,
+    req: ChatRequest,
+    service: ChatService = Depends(get_chat_service),
+    _run: dict = Depends(require_exploratory_run),
+) -> StreamingResponse:
+    session_id = req.session_id or new_ulid()
+    return StreamingResponse(
+        service.stream_exploration_run(run_id, session_id, req.message),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -111,7 +139,8 @@ async def post_job_chat(
     job_id: str,
     req: ChatRequest,
     service: ChatService = Depends(get_chat_service),
-    _job: dict = Depends(require_owned_job),
+    # Exploratory jobs get their own chat agent later; blocked until then.
+    _job: dict = Depends(require_abcd_job),
 ) -> StreamingResponse:
     runs = await service.resolve_job_runs(job_id)
     if not runs:
@@ -122,7 +151,7 @@ async def post_job_chat(
         )
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
-        service.stream_job(job_id, session_id, req.message, runs),
+        service.stream_abcd_job(job_id, session_id, req.message, runs),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

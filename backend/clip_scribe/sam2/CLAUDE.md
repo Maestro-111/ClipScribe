@@ -9,6 +9,6 @@ This directory contains the official, third-party implementation of Meta's Segme
 * `image/`, `mask/`, `memory/`, `prompt/`: The core neural network components of the SAM 2 architecture (image encoders, memory attention mechanisms, etc.).
 
 ## ⚠️ CRITICAL RULES FOR AI AGENTS ⚠️
-1. **Third-Party Black Box:** This entire directory is external, third-party code. **DO NOT** attempt to refactor, format, or optimize any files within `src/sam2/`.
-2. **Debugging Protocol:** If a tracking issue arises, assume the bug is in the way `backend/src/extractor/extractor_core.py` formats the inputs (points, boxes, masks) or handles the `inference_state`, rather than a bug in the SAM 2 source code itself.
+1. **Third-Party Black Box:** This entire directory is external, third-party code. **DO NOT** attempt to refactor, format, or optimize any files within `backend/clip_scribe/sam2/`.
+2. **Debugging Protocol:** If a tracking issue arises, assume the bug is in the way `backend/clip_scribe/extractor/extractor_core.py` formats the inputs (points, boxes, masks) or handles the `inference_state`, rather than a bug in the SAM 2 source code itself.
 3. **Read-Only:** Only read these files if you specifically need to understand the exact expected shape, type, or format of arguments passed to functions like `propagate_in_video` or `add_new_points_or_box`.

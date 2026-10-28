@@ -13,6 +13,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
+from app.models import ParsingMode
 from app.settings import Settings, get_settings
 from clip_scribe.utils.clip_scribe_artifacts import (
     ArtifactUploader,
@@ -169,3 +170,32 @@ async def require_owned_job(
             status=404, title="Not Found", detail=f"job '{job_id}' not found"
         )
     return job
+
+
+def _require_parsing_mode(row: dict, mode: ParsingMode, kind: str, row_id: str) -> None:
+    actual = row.get("parsing_mode", ParsingMode.ABCD.value)
+    if actual != mode.value:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"{kind} '{row_id}' was analyzed in {actual} mode; "
+            f"this endpoint is only available for {mode.value} {kind}s",
+        )
+
+
+async def require_abcd_run(run: dict = Depends(require_owned_run)) -> dict:
+    """``require_owned_run`` for ABCD-only routes: 409s on exploratory runs."""
+    _require_parsing_mode(run, ParsingMode.ABCD, "run", run["run_id"])
+    return run
+
+
+async def require_abcd_job(job: dict = Depends(require_owned_job)) -> dict:
+    """``require_owned_job`` for ABCD-only routes: 409s on exploratory jobs."""
+    _require_parsing_mode(job, ParsingMode.ABCD, "job", job["job_id"])
+    return job
+
+
+async def require_exploratory_run(run: dict = Depends(require_owned_run)) -> dict:
+    """``require_owned_run`` for exploration routes: 409s on ABCD runs."""
+    _require_parsing_mode(run, ParsingMode.EXPLORATORY, "run", run["run_id"])
+    return run

@@ -35,7 +35,7 @@ CSV/XLSX exports, artifact serving, health, and metadata endpoints.
 are deduplicated by SHA-256 and recorded in a new `videos` table that is the
 source of truth for the input picker, decoupling the opaque storage key from the
 filename the user picked. A `VideoStorage` seam
-(`backend/src/utils/clip_scribe_video_storage.py`, `CLIPSCRIBE_STORAGE_BACKEND`)
+(`backend/app/video_storage.py`, `CLIPSCRIBE_STORAGE_BACKEND`)
 fronts local disk or GCS; the same selector also controls artifact storage.
 The new-job page queues local files without uploading until submit, supports
 folder selection, shows real upload progress during submit, and includes the
@@ -83,7 +83,7 @@ folder selection, shows real upload progress during submit, and includes the
 - **Worker container**: big (8–15 GB), GPU/MPS-bound, one job at a time per
   GPU. Multiple machines = multiple workers, same Redis queue.
 - **Redis**: both the Celery broker/result backend and the live-progress Streams store.
-- **Postgres**: existing schema (`backend/src/db/schema.py`) plus web-app
+- **Postgres**: existing schema (`backend/clip_scribe/db/schema.py`) plus web-app
   tables (`jobs`, `frame_detections`, `parser_results`, `shot_boundaries`,
   `chat_messages`, `videos`).
 
@@ -167,7 +167,7 @@ Notes on the layout as it stands:
 ## 3. Builder refactor (load-once vs per-job)
 
 **Status: DONE.** Implemented in
-`backend/src/clip_scribe/build_clip_scribe.py`. The shape that landed is
+`backend/clip_scribe/clip_scribe_core/build_clip_scribe.py`. The shape that landed is
 simpler than the original `ModelRegistry` / `JobAssembler` proposal — a
 single `ClipScribeBuilder` class whose `__init__` loads everything heavy,
 and whose existing `build_clip_scribe(...)` method becomes the cheap
@@ -276,7 +276,7 @@ and celery paths call the same `run_job_core(...)` lifecycle.
 
 ## 4. Database changes
 
-### Existing (`backend/src/db/schema.py`) — keep
+### Existing (`backend/clip_scribe/db/schema.py`) — keep
 - `runs`, `global_stats`, `visual_object_occurrences`, `text_events`,
   `audio_segments`, `scene_descriptions`, `field_descriptions`.
 
@@ -343,7 +343,7 @@ INDEX (run_id, object_id)
 Rough volume estimate: a 15-second car ad with detections every 10 frames at
 30 fps = ~45 frames × ~10 boxes each ≈ 450 rows. Negligible.
 
-**`parser_results`** — what's currently in `abcd_report.csv`. Lets the UI render
+**`abcd_results`** (originally `parser_results`; exploratory runs store an `ExploreReport` JSON payload in `exploration_results`) — what's currently in `abcd_report.csv`. Lets the UI render
 the report without parsing CSV.
 ```
 id              INTEGER PK
@@ -397,7 +397,7 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 ### Migrations
 
 - Alembic is adopted under `backend/alembic/`. SQLite + Postgres both use the
-  same SQLAlchemy metadata from `backend/src/db/schema.py`. `env.py` resolves
+  same SQLAlchemy metadata from `backend/clip_scribe/db/schema.py`. `env.py` resolves
   the DB URL via the env-driven `resolve_database_url()`, never the static
   `alembic.ini` placeholder — so migrations always target the app's DB.
 - Current revisions, in order: a baseline migration for the existing schema; a
@@ -416,7 +416,7 @@ Hook: `extractor_core.py:850` already builds `shot_data` — write it.
 - In deployment, `upgrade head` runs **once per release** as a discrete step
   (a compose one-shot service / K8s Job / deploy command), **not** per worker
   or API replica — all replicas share one DB. It can run from the slim API
-  image (it has `src/db` + the scripts, no torch needed).
+  image (it has `clip_scribe/db` + the scripts, no torch needed).
 
 ### run_id is now minted up front
 
@@ -427,7 +427,7 @@ local extract/full call omits one; parse mode uses the provided existing
 `run_id`. This lets the extractor key its artifact directory and raw
 `frame_detections` by the same id **before** the `runs` row exists. ULIDs sort
 lexicographically by creation time, which job/run ordering relies on. Generation
-lives in `backend/src/utils/ids.py` (`new_ulid`).
+lives in `backend/clip_scribe/utils/ids.py` (`new_ulid`).
 
 ### Default backend
 
@@ -439,7 +439,7 @@ single-machine dev. `docker-compose.yml` already has Postgres scaffolding.
 ## 5. Event vocabulary (worker → UI live updates)
 
 **Status: DONE.** The core emits event type + payload through
-`backend/src/utils/progress.py`, and the web layer now publishes and serves them
+`backend/clip_scribe/utils/progress.py`, and the web layer now publishes and serves them
 (step 9). Per-criterion parser events remain reserved (no per-criterion emit is
 wired yet).
 
@@ -535,7 +535,7 @@ ABCD and metadata exports, and advisory chat.
 - `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; `extraction_mode` (`with_objects` default, `no_objects` skips detection/tracking/faces) is persisted on the `runs` row; parser-only `parse` is local/dev-only and rejected by this API.
 - `GET    /jobs`                       — paginated top-level jobs, filterable by effective status; batch parent status is aggregated from children.
 - `GET    /jobs/{id}`                  — full state. Parents include `children`; child/leaf rows return their own status and no children.
-- `GET    /jobs/{id}/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
+- `GET    /jobs/{id}/abcd/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
 - `GET    /jobs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for every child run with persisted data (409 if none). JSON is the lossless canonical `ExtractionSummary` per run, including `frame_detections`; XLSX omits raw frame detections. Builders live in `backend/app/metadata_exports.py`.
 - `GET    /jobs/{id}/events`           — SSE live progress for a leaf/child job. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
@@ -552,8 +552,9 @@ ABCD and metadata exports, and advisory chat.
 - `GET /runs/{id}/audio-segments`      — `audio_segments`.
 - `GET /runs/{id}/scenes`              — `scene_descriptions`.
 - `GET /runs/{id}/frames?from=X&to=Y`  — `frame_detections` in time window.
-- `GET /runs/{id}/parser`              — `parser_results`.
-- `GET /runs/{id}/parser/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
+- `GET /runs/{id}/abcd`                — `abcd_results` (409 for exploratory runs).
+- `GET /runs/{id}/exploration`         — the exploratory `ExploreReport` from `exploration_results` (409 for ABCD runs); `/exploration/export` and `/exploration/chat` follow the same guard.
+- `GET /runs/{id}/abcd/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
 - `GET /runs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for one run (lossless JSON or human-readable XLSX).
 
 ### Artifacts (local or signed-URL backed)
@@ -704,7 +705,7 @@ frontend/
 |---|---|---|---|
 | Role | FastAPI, REST/SSE, artifact serving, Celery dispatch, Alembic migrate | Celery worker; runs the full pipeline | Static SPA + `/api/*` nginx reverse proxy |
 | Heavy deps | none (no `torch`, `whisper`, `paddleocr`) | full CV/ML stack | Node build deps only in build stage |
-| Imports `src/clip_scribe/build_clip_scribe.py`? | no | yes | no |
+| Imports `clip_scribe/clip_scribe_core/build_clip_scribe.py`? | no | yes | no |
 | Imports `app/tasks.py`? | no — sends tasks by name | yes | no |
 | Talks to Redis | yes (broker client + stream reader) | yes (broker consumer + stream publisher) | no |
 | Talks to Postgres | yes (reader/writer + jobs) | yes (writer + reader) | no |
@@ -855,7 +856,7 @@ worker:
     - ./backend/artifacts:/app/backend/artifacts
     - ./backend/input:/app/backend/input
     - ./backend/app:/app/backend/app                   # source bind mounts for local dev
-    - ./backend/src:/app/backend/src
+    - ./backend/clip_scribe:/app/backend/clip_scribe
 ```
 
 - First `docker compose up`: the `prewarm` service downloads several GB, then
@@ -916,7 +917,7 @@ These are decisions to make before the corresponding implementation step.
 
 1. **Video ingest.** **Resolved for the sync path, now content-addressed.**
    `POST /uploads` streams browser uploads through a `VideoStorage` backend
-   (`backend/src/utils/clip_scribe_video_storage.py`), hashing each file as it stages it and
+   (`backend/app/video_storage.py`), hashing each file as it stages it and
    deduplicating on `(user_id, content_hash)` — identical bytes reuse the
    existing stored object. Every distinct video is recorded in the `videos`
    registry table (§4), which `GET /inputs` reads (reconciled against storage) as
@@ -935,7 +936,7 @@ These are decisions to make before the corresponding implementation step.
 2. **Artifact storage.** **Resolved.**
    The extractor now writes to `artifacts/<run_id>/` (keyed by the ULID, not the
    video name — no more collisions). `ArtifactUploader`
-   (`backend/src/utils/clip_scribe_artifacts.py`) follows the single
+   (`backend/clip_scribe/utils/clip_scribe_artifacts.py`) follows the single
    `CLIPSCRIBE_STORAGE_BACKEND` selector: local is a no-op with artifacts served
    from disk; GCS uploads `tracked_output.mp4` as a loose object, bundles the
    remaining debug artifacts into `artifacts.tar.gz`, signs the tracked video
@@ -1014,7 +1015,7 @@ These are decisions to make before the corresponding implementation step.
 15. **Per-job artifact directory keying.** **Resolved.**
     Artifacts are written to `artifacts/<run_id>/` (ULID). The path convention
     lives in one place: `run_artifact_dir(run_id)` in
-    `backend/src/utils/clip_scribe_artifacts.py`, used by both the extractor and the engine
+    `backend/clip_scribe/utils/clip_scribe_artifacts.py`, used by both the extractor and the engine
     (for the upload call). Old `extractor_artifacts/<video_name>/` runs are left
     as-is.
 
@@ -1145,8 +1146,8 @@ Strictly ordered; each step is shippable on its own.
     OpenAPI codegen in CI, expand tests.
 
 13. **Advisory chat agent — backend (§13).** **DONE.** `query_parser_results`
-    tool + `"advisory"` tool group in `backend/src/parser/tools.py`;
-    `build_advisory_agent(model, reader_db, run_id)` in `backend/src/parser/advisory.py`;
+    tool + `"advisory"` tool group in `backend/clip_scribe/parser/abcd/tools.py`;
+    `AgentFactory.build_abcd_run_agent` in `backend/clip_scribe/parser/agent_factory.py` (prompts in `parser/abcd/prompts.py`);
     `app/chat.py` `ChatService` (SSE streaming, DB-as-memory) + `chat_messages`
     table (migration `c1a2d3e4f5a6`) + reader/writer methods; routes in
     `app/routes/chat.py` (`POST /runs/{id}/chat` streamed, session
@@ -1154,7 +1155,7 @@ Strictly ordered; each step is shippable on its own.
     original "no torch" claim: the LLM client (`langchain_openai`/`langgraph`)
     may transitively import torch in a full local environment, so the route
     lazy-imports the service to keep `import app.main` torch-free. The slim API
-    image includes `langgraph`, `langchain-openai`, and `backend/src/parser`
+    image includes `langgraph`, `langchain-openai`, and `backend/clip_scribe/parser`
     through the `api` dependency group/source copy while still resolving without torch.
     Tested in `test/test_api_chat.py`.
 
@@ -1300,9 +1301,9 @@ steps 13–15 in §10.
 
 ### Why it's a clean fit (not a new subsystem)
 
-The evaluation agents already do the hard part. `backend/src/parser/agent.py` builds a
+The evaluation agents already do the hard part. `backend/clip_scribe/parser/agent_factory.py` builds a
 LangGraph ReAct agent via `create_react_agent(model, tools)`, and
-`backend/src/parser/tools.py` exposes read-only, run-scoped query tools
+`backend/clip_scribe/parser/shared_tools.py` exposes read-only, run-scoped query tools
 (`query_audio_segments`, `query_text_events`, `query_visual_objects`,
 `query_scene_descriptions`, `query_global_stats`, `query_field_descriptions`),
 grouped by feature type in `tool_map`. The advisory chat agents use the same
@@ -1345,7 +1346,7 @@ sends a message and optional `session_id`; it does not decide tool scope.
 ### Components
 
 - **`query_parser_results(feature_category=None, only_failed=False)`** — new
-  read tool in `backend/src/parser/tools.py`; requires a matching
+  read tool in `backend/clip_scribe/parser/abcd/tools.py`; requires a matching
   `reader_db.get_parser_results(run_id, ...)` reader method.
 - **`"advisory"` tool group** — registered in `tool_map` with all query tools
   plus `query_parser_results`.

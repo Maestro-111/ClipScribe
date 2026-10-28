@@ -5,7 +5,9 @@ from clip_scribe.extractor.taxonomy_core import (
 )
 from clip_scribe.extractor.taxonomy_config import ProfilesPile
 from clip_scribe.extractor.extractor_core import VideoInformationExtractor
+from clip_scribe.extractor.extractor_models import DetectionIntervalBin
 
+from clip_scribe.parser.explore.models import SummarySentencesNum
 from clip_scribe.parser.parser_core import VideoInformationParser
 
 from clip_scribe.dino.dino_wrapper import DinoDetector
@@ -144,8 +146,8 @@ class ClipScribeBuilder:
 
     def build_parser(
         self,
-        clib_scribe_platform_name: str,
-        clib_scribe_platform_conf: BasePlatformConf,
+        clib_scribe_platform_name: str | None,
+        clib_scribe_platform_conf: BasePlatformConf | None,
         clib_scribe_parser_params: dict,
         parser_agent_params: dict,
         progress_reporter: ProgressReporter | None = None,
@@ -159,6 +161,53 @@ class ClipScribeBuilder:
         parser_max_parallel = clib_scribe_parser_params.get("max_parallel_agents", 5)
         recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
 
+        explore_max_tokens = clib_scribe_parser_params.get("explore", {}).get(
+            "max_tokens", 4000
+        )
+
+        explore_transcript_topics_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_topics_num", 6)
+
+        explore_transcript_key_claims_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_key_claims_num", 6)
+
+        explore_overview_summary_chapters_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("overview_summary_chapters_num", 6)
+
+        explore_on_screen_text_cards_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("on_screen_text_cards_num", 20)
+
+        explore_visuals_subjects_num = clib_scribe_parser_params.get("explore", {}).get(
+            "visuals_subjects_num", 20
+        )
+
+        explore_transcript_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("transcript_summary_sentences_num", 4)
+
+        explore_text_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("text_summary_sentences_num", 4)
+
+        explore_visual_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("visual_summary_sentences_num", 4)
+
+        explore_overview_summary_sentences_num = clib_scribe_parser_params.get(
+            "explore", {}
+        ).get("overview_summary_sentences_num", 4)
+
+        explore_summary_sentences_num: SummarySentencesNum = {
+            "transcript_summary_sentences_num": explore_transcript_summary_sentences_num,
+            "text_summary_sentences_num": explore_text_summary_sentences_num,
+            "visual_summary_sentences_num": explore_visual_summary_sentences_num,
+            "overview_summary_sentences_num": explore_overview_summary_sentences_num,
+        }
+
         parser_detection_model = self.resolve_model(
             "parser.agent.llm",
             parser_agent_params.get("llm", self.DEFAULT_PARSER_MODEL),
@@ -167,6 +216,14 @@ class ClipScribeBuilder:
 
         info_parser = VideoInformationParser(
             agent=parser_agent_params,
+            extraction_mode=extraction_mode,
+            explore_max_tokens=explore_max_tokens,
+            explore_transcript_topics_num=explore_transcript_topics_num,
+            explore_transcript_key_claims_num=explore_transcript_key_claims_num,
+            explore_overview_summary_chapters_num=explore_overview_summary_chapters_num,
+            explore_summary_sentences_num=explore_summary_sentences_num,
+            explore_on_screen_text_cards_num=explore_on_screen_text_cards_num,
+            explore_visuals_subjects_num=explore_visuals_subjects_num,
             platform_name=clib_scribe_platform_name,
             platform_config=clib_scribe_platform_conf,
             output_dir=str(parser_output_dir),
@@ -174,7 +231,6 @@ class ClipScribeBuilder:
             recursion_limit=recursion_limit,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
-            extraction_mode=extraction_mode,
         )
 
         return info_parser
@@ -230,6 +286,9 @@ class ClipScribeBuilder:
         )
         detection_interval: int = clib_scribe_extractor_params.get(
             "detection_interval", 10
+        )
+        detection_interval_bins: list[DetectionIntervalBin] = (
+            clib_scribe_extractor_params.get("detection_interval_bins") or []
         )
 
         reid_model_frame_check_freq: int = clib_scribe_extractor_params.get(
@@ -295,6 +354,7 @@ class ClipScribeBuilder:
             sampling_rate,
             sam2_default_refresh_rate,
             sam2_dynamic_refresh_rate,
+            detection_interval_bins=detection_interval_bins,
             progress_reporter=progress_reporter,
             cancel_token=cancel_token,
             max_artifact_files=self.artifacts_params.get("max_artifact_files"),
@@ -429,14 +489,15 @@ class ClipScribeBuilder:
         video_path: str,
         video_type: str | None,
         clib_scribe_mode: str,
-        clib_scribe_platform_name: str,
-        clib_scribe_platform_conf: BasePlatformConf,
+        clib_scribe_platform_name: str | None,
+        clib_scribe_platform_conf: BasePlatformConf | None,
         video_key: str | None = None,
         user_hints: list[str] | None = None,
         generate_hint_from_name: bool = False,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
+        parsing_mode: str = "abcd",
     ) -> ClipScribeEngine:
         """Build a per-job engine using the builder's long-lived dependencies.
 
@@ -500,6 +561,7 @@ class ClipScribeBuilder:
             clib_scribe = ClipScribeEngine(
                 mode=clib_scribe_mode,
                 extraction_mode=extraction_mode,
+                parsing_mode=parsing_mode,
                 video_name=video_name,
                 video_path=video_path,
                 # The durable storage key; defaults to the local path for the CLI

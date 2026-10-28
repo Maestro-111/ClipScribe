@@ -1,3 +1,6 @@
+"""Criteria (features) of YouTube's ABCD framework and how each is evaluated."""
+
+
 def get_feature_configs():
     """Gets all the supported ABCD features
     Returns:

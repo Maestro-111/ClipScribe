@@ -1,6 +1,6 @@
 """YouTube-specific Pydantic models for parser module."""
 
-from clip_scribe.parser.models import BaseFeatureResult, BaseAgentEvaluation
+from clip_scribe.parser.abcd.models import BaseFeatureResult, BaseAgentEvaluation
 
 
 class YouTubeFeatureResult(BaseFeatureResult):

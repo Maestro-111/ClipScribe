@@ -1,6 +1,6 @@
 // Advisory chat panel (web-app-plan §13). Talks to an advisory agent that
 // answers as a Server-Sent Events stream. The same component serves both the
-// run-scoped chat (POST /api/runs/{runId}/chat) and the job-scoped chat
+// run-scoped chat (POST /api/runs/{runId}/abcd/chat or .../exploration/chat) and the job-scoped chat
 // (POST /api/jobs/{jobId}/chat) — the caller picks via `endpoint`.
 //
 // EventSource only does GET, so we stream the POST response body ourselves:
@@ -32,9 +32,17 @@ const RUN_SUGGESTIONS = [
   "How could we fix the failed criteria?",
 ];
 
+// Starter prompts for exploratory runs (no criteria, so nothing to "fail").
+export const EXPLORATION_SUGGESTIONS = [
+  "What is this video about?",
+  "What text appears on screen, and when?",
+  "Walk me through the video chapter by chapter.",
+];
+
 const TOOL_LABELS: Record<string, string> = {
   // per-run + shared
   query_parser_results: "read ABCD verdicts",
+  query_exploration_report: "read exploration report",
   query_scene_descriptions: "read scenes",
   query_visual_objects: "read objects",
   query_audio_segments: "read audio",

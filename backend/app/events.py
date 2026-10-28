@@ -1,7 +1,7 @@
 """Live-progress transport: Redis-Streams reporter + log bridge (web-app-plan §5, §9, §16).
 
 The pipeline core emits structured events through the abstract
-:class:`~src.utils.progress.ProgressReporter` (``src/utils/progress.py``); this
+:class:`~clip_scribe.utils.progress.ProgressReporter` (``clip_scribe/utils/progress.py``); this
 module is the web-app sink that publishes them to a per-job Redis **stream** so
 the SSE endpoint (``GET /jobs/{id}/events``) can both replay history to a late
 subscriber and tail live updates.
@@ -12,7 +12,7 @@ event emitted before they connected (§16). ``XADD`` + ``XREAD`` from id ``0``
 gives replay *and* live tail with one mechanism.
 
 This module is torch-free and safe to import in the slim API process (§8): it
-depends only on ``redis`` and ``src.utils.progress``.
+depends only on ``redis`` and ``clip_scribe.utils.progress``.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from clip_scribe.utils.clip_scribe_cancel import (
 from clip_scribe.utils.progress import NullProgressReporter, ProgressReporter
 from .settings import get_settings
 
-logger = logging.getLogger("clip_scribe")
+logger = logging.getLogger("api")
 
 # Set by run_job_core for the duration of a job so the log bridge can tag records
 # with their job id without threading it through every logging call site (§9.10).
@@ -332,15 +332,20 @@ class JobLogStreamHandler(logging.Handler):
 
 
 def install_job_log_bridge(redis_url: str) -> None:
-    """Attach the job-log stream handler to the ``clip_scribe`` logger once.
+    """Attach the job-log stream handler to the ``clip_scribe`` and ``api`` loggers once.
 
-    Idempotent: repeated calls (one per job) won't double-attach. A no-op if
-    Redis is unreachable — the job still runs, only its log tail is missing.
+    Both feed a job's log tail: the pipeline's own records and the web layer's
+    job lifecycle lines (canceled, failed). Idempotent: repeated calls (one per
+    job) won't double-attach. A no-op if Redis is unreachable — the job still
+    runs, only its log tail is missing.
     """
 
-    root = logging.getLogger("clip_scribe")
+    loggers = [logging.getLogger(name) for name in ("clip_scribe", "api")]
 
-    if any(isinstance(h, JobLogStreamHandler) for h in root.handlers):
+    def attached(lg: logging.Logger) -> bool:
+        return any(isinstance(h, JobLogStreamHandler) for h in lg.handlers)
+
+    if all(attached(lg) for lg in loggers):
         return
     try:
         client = redis.Redis.from_url(redis_url)
@@ -348,4 +353,7 @@ def install_job_log_bridge(redis_url: str) -> None:
     except Exception:  # noqa: BLE001 - degrade to no-op
         logger.warning("Redis unavailable at %s; job log streaming disabled", redis_url)
         return
-    root.addHandler(JobLogStreamHandler(client))
+    handler = JobLogStreamHandler(client)
+    for lg in loggers:
+        if not attached(lg):
+            lg.addHandler(handler)

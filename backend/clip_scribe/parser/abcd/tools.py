@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING
 
 from langchain_core.tools import tool
 
+from clip_scribe.parser.shared_tools import (
+    build_field_descriptions_tool,
+    build_run_data_tools,
+)
+
 if TYPE_CHECKING:
     from clip_scribe.db import ClipScribeAsyncReaderDB, ClipScribeReaderDB
 
@@ -32,7 +37,7 @@ TOOL_GROUP_TABLES: dict[str, list[str]] = {
 }
 
 
-def build_async_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str, tool_group: str):
+def build_run_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str, tool_group: str):
     """
     Build LangGraph tools for a specific feature evaluation.
 
@@ -45,163 +50,14 @@ def build_async_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str, tool_grou
         List of LangGraph tool functions relevant to the tool_group
     """
 
-    # Define tool closures that capture reader_db and run_id
-    @tool
-    async def query_audio_segments(max_start_time: float | None = None) -> str:
-        """
-        Query audio transcript segments from the database.
-
-        Args:
-            max_start_time: Optional maximum start time in seconds (e.g., 5.0 for first 5 seconds)
-
-        Returns:
-            JSON string containing list of audio segments with fields:
-            - id: segment ID
-            - start_time: segment start time in seconds
-            - end_time: segment end time in seconds
-            - text: transcribed text
-            - confidence: transcription confidence score
-        """
-        try:
-            segments = await reader_db.get_audio_segments(run_id, max_start_time)
-            return json.dumps(segments, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_audio_segments failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
-
-    @tool
-    async def query_text_events(max_second: int | None = None) -> str:
-        """
-        Query OCR text events (on-screen text overlays) from the database.
-
-        Args:
-            max_second: Optional maximum second (e.g., 5 for first 5 seconds)
-
-        Returns:
-            JSON string containing list of text events with fields:
-            - id: event ID
-            - second: the second when text appears
-            - line_index: line number within that second
-            - text: extracted text content
-        """
-        try:
-            events = await reader_db.get_text_events(run_id, max_second)
-            return json.dumps(events, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_text_events failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
-
-    @tool
-    async def query_visual_objects(
-        label_contains: str | None = None, max_lifespan_start: float | None = None
-    ) -> str:
-        """
-        Query visual object occurrences from the database.
-
-        Args:
-            label_contains: Optional substring to filter object labels (e.g., "person", "vehicle")
-            max_lifespan_start: Optional maximum lifespan start time in seconds (e.g., 5.0 for first 5 seconds)
-
-        Returns:
-            JSON string containing list of visual objects with fields:
-            - id: occurrence ID
-            - global_id: object tracking ID across shots
-            - label: object label/category
-            - shot_index: shot number where object appears
-            - lifespan_start: start time in seconds
-            - lifespan_end: end time in seconds
-            - screen_coverage: percentage of screen covered
-            - velocity_px_sec: movement speed in pixels per second
-            - growth_factor: size change factor
-            - direction: movement direction
-            - centrality_score: how centered the object is
-            - screen_time_ratio: proportion of shot duration
-            - quadrant: screen quadrant location
-        """
-        try:
-            objects = await reader_db.get_visual_objects(
-                run_id, label_contains, max_lifespan_start
-            )
-            return json.dumps(objects, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_visual_objects failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
-
-    @tool
-    async def query_global_stats() -> str:
-        """
-        Query global video statistics from the database.
-
-        Returns:
-            JSON string containing global stats with fields:
-            - total_shots: number of shots in video
-            - video_duration: total duration in seconds
-            - avg_shot_duration: average shot duration in seconds
-            - dynamic_start_detected: whether dynamic start was detected (0/1)
-            - dynamic_start_first_shot_dur: first shot duration
-            - qp_intro_detected: whether quick pacing in intro was detected (0/1)
-            - qp_intro_shot_count: number of shots in intro
-            - qp_general_detected: whether general quick pacing was detected (0/1)
-        """
-        try:
-            stats = await reader_db.get_global_stats(run_id)
-            if not stats:
-                return json.dumps({})
-            return json.dumps(stats, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_global_stats failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": {}})
-
-    @tool
-    async def query_scene_descriptions(
-        max_start_time: float | None = None, max_end_time: float | None = None
-    ) -> str:
-        """
-        Query GPT-generated scene descriptions for each shot from the database.
-
-        Args:
-            max_start_time: Optional maximum start time in seconds to filter scenes
-            max_end_time: Optional maximum end time in seconds to filter scenes
-
-        Returns:
-            JSON string containing list of scene descriptions with fields:
-            - shot_index: zero-based shot index
-            - start_time: shot start time in seconds
-            - end_time: shot end time in seconds
-            - description: rich narrative scene description from GPT vision analysis
-        """
-        try:
-            descriptions = await reader_db.get_scene_descriptions(
-                run_id, max_start_time, max_end_time
-            )
-            return json.dumps(descriptions, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_scene_descriptions failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
-
-    @tool
-    async def query_field_descriptions(table_name: str | None = None) -> str:
-        """
-        Query field descriptions to understand the meaning of database columns.
-        Call this before analyzing query results to understand what each field represents.
-
-        Args:
-            table_name: Optional table name to filter (e.g., "visual_object_occurrences",
-                        "audio_segments", "text_events", "scene_descriptions", "global_stats").
-                        If None, returns descriptions for all tables.
-
-        Returns:
-            JSON string containing list of field descriptions with fields:
-            - table_name: the database table
-            - column_name: the column in that table
-            - description: human-readable explanation of what this field means and how to interpret its values
-        """
-        try:
-            descriptions = await reader_db.get_field_descriptions(table_name)
-            return json.dumps(descriptions, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: query_field_descriptions failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+    # Run-bound extraction tools are shared with the exploration agent.
+    shared = build_run_data_tools(reader_db, run_id)
+    query_audio_segments = shared["query_audio_segments"]
+    query_text_events = shared["query_text_events"]
+    query_visual_objects = shared["query_visual_objects"]
+    query_global_stats = shared["query_global_stats"]
+    query_scene_descriptions = shared["query_scene_descriptions"]
+    query_field_descriptions = shared["query_field_descriptions"]
 
     @tool
     async def query_parser_results(
@@ -225,7 +81,7 @@ def build_async_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str, tool_grou
             - llm_explanation: the evaluator's reasoning for the verdict
         """
         try:
-            results = await reader_db.get_parser_results(run_id)
+            results = await reader_db.get_abcd_results(run_id)
             filtered = []
             for r in results:
                 if only_failed and r.get("evaluation"):
@@ -495,7 +351,7 @@ def build_tools(reader_db: ClipScribeReaderDB, run_id: str, tool_group: str) -> 
             - llm_explanation: the evaluator's reasoning for the verdict
         """
         try:
-            results = reader_db.get_parser_results(run_id)
+            results = reader_db.get_abcd_results(run_id)
             filtered = []
             for r in results:
                 if only_failed and r.get("evaluation"):
@@ -635,7 +491,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
             grand_passed = grand_total = 0
             for r in runs:
                 rid = r["run_id"]
-                results = await reader_db.get_parser_results(rid)
+                results = await reader_db.get_abcd_results(rid)
                 passed = sum(1 for x in results if x.get("evaluation"))
                 total = len(results)
                 grand_passed += passed
@@ -710,7 +566,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         try:
             out = []
             for rid in target_ids:
-                for r in await reader_db.get_parser_results(rid):
+                for r in await reader_db.get_abcd_results(rid):
                     if only_failed and r.get("evaluation"):
                         continue
                     if (
@@ -735,6 +591,16 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
             logger.error("ClipScribe Parser: job query_parser_results failed: %s", e)
             return json.dumps({"error": f"Database query failed: {e}", "data": []})
 
+    # One set of shared per-run tools per job run; the wrappers below only add the
+    # run_id argument and its membership check.
+    per_run = {rid: build_run_data_tools(reader_db, rid) for rid in valid_ids}
+
+    async def _per_run(run_id: str, tool_name: str, **kwargs: object) -> str:
+        """Run a shared per-run tool for a run that belongs to this job."""
+        if err := _resolve(run_id):
+            return json.dumps({"error": err})
+        return await per_run[run_id][tool_name].ainvoke(kwargs)
+
     @tool
     async def query_scene_descriptions(run_id: str) -> str:
         """
@@ -747,15 +613,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
             JSON list of scene descriptions (shot_index, start_time, end_time,
             description).
         """
-        if err := _resolve(run_id):
-            return json.dumps({"error": err})
-        try:
-            return json.dumps(await reader_db.get_scene_descriptions(run_id), indent=2)
-        except Exception as e:
-            logger.error(
-                "ClipScribe Parser: job query_scene_descriptions failed: %s", e
-            )
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+        return await _per_run(run_id, "query_scene_descriptions")
 
     @tool
     async def query_visual_objects(
@@ -772,15 +630,9 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
             JSON list of visual objects (label, shot_index, lifespan, coverage,
             motion, quadrant, ...).
         """
-        if err := _resolve(run_id):
-            return json.dumps({"error": err})
-        try:
-            return json.dumps(
-                await reader_db.get_visual_objects(run_id, label_contains), indent=2
-            )
-        except Exception as e:
-            logger.error("ClipScribe Parser: job query_visual_objects failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+        return await _per_run(
+            run_id, "query_visual_objects", label_contains=label_contains
+        )
 
     @tool
     async def query_audio_segments(run_id: str) -> str:
@@ -793,13 +645,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         Returns:
             JSON list of audio segments (start_time, end_time, text, confidence).
         """
-        if err := _resolve(run_id):
-            return json.dumps({"error": err})
-        try:
-            return json.dumps(await reader_db.get_audio_segments(run_id), indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: job query_audio_segments failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+        return await _per_run(run_id, "query_audio_segments")
 
     @tool
     async def query_text_events(run_id: str) -> str:
@@ -812,13 +658,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         Returns:
             JSON list of text events (second, line_index, text).
         """
-        if err := _resolve(run_id):
-            return json.dumps({"error": err})
-        try:
-            return json.dumps(await reader_db.get_text_events(run_id), indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: job query_text_events failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+        return await _per_run(run_id, "query_text_events")
 
     @tool
     async def query_global_stats(run_id: str) -> str:
@@ -831,34 +671,7 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         Returns:
             JSON object of global stats, or {} if none.
         """
-        if err := _resolve(run_id):
-            return json.dumps({"error": err})
-        try:
-            return json.dumps(await reader_db.get_global_stats(run_id) or {}, indent=2)
-        except Exception as e:
-            logger.error("ClipScribe Parser: job query_global_stats failed: %s", e)
-            return json.dumps({"error": f"Database query failed: {e}", "data": {}})
-
-    @tool
-    async def query_field_descriptions(table_name: str | None = None) -> str:
-        """
-        Query field descriptions to understand what database columns mean.
-
-        Args:
-            table_name: Optional table to filter (e.g. "visual_object_occurrences").
-
-        Returns:
-            JSON list of {table_name, column_name, description}.
-        """
-        try:
-            return json.dumps(
-                await reader_db.get_field_descriptions(table_name), indent=2
-            )
-        except Exception as e:
-            logger.error(
-                "ClipScribe Parser: job query_field_descriptions failed: %s", e
-            )
-            return json.dumps({"error": f"Database query failed: {e}", "data": []})
+        return await _per_run(run_id, "query_global_stats")
 
     return [
         list_job_runs,
@@ -869,5 +682,5 @@ def build_job_tools(reader_db: ClipScribeAsyncReaderDB, runs: list[dict]) -> lis
         query_audio_segments,
         query_text_events,
         query_global_stats,
-        query_field_descriptions,
+        build_field_descriptions_tool(reader_db),
     ]

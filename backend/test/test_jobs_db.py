@@ -2,7 +2,7 @@
 
 Covers ``ClipScribeWriterDB.create_job`` / ``update_job`` and the reader
 additions backing the API (``get_job``, ``list_jobs``, ``list_runs``,
-``get_shot_boundaries``, ``get_frame_detections``, ``get_parser_results``).
+``get_shot_boundaries``, ``get_frame_detections``, ``get_abcd_results``).
 Uses metadata.create_all directly (tests own their schema; production schema
 is owned by Alembic).
 """
@@ -15,7 +15,7 @@ from clip_scribe.db.schema import (
     runs_table,
     shot_boundaries_table,
     frame_detections_table,
-    parser_results_table,
+    abcd_results_table,
 )
 from clip_scribe.db.reader import ClipScribeReaderDB
 from clip_scribe.db.writer import ClipScribeWriterDB
@@ -344,11 +344,11 @@ def test_get_frame_detections_time_window(db):
     assert [d["frame_idx"] for d in windowed] == [30]
 
 
-def test_get_parser_results(db):
+def test_get_abcd_results(db):
     _, reader, engine = db
     with engine.begin() as conn:
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             [
                 {
                     "run_id": "r1",
@@ -359,7 +359,7 @@ def test_get_parser_results(db):
                 },
             ],
         )
-    rows = reader.get_parser_results("r1")
+    rows = reader.get_abcd_results("r1")
     assert len(rows) == 1
     assert rows[0]["evaluation"] in (True, 1)
 
@@ -382,7 +382,7 @@ def test_delete_run_clears_run_keyed_tables(db):
             },
         )
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             {"run_id": "r1", "platform": "youtube", "evaluation": True},
         )
         # A second run must survive the delete.
@@ -392,7 +392,7 @@ def test_delete_run_clears_run_keyed_tables(db):
 
     assert reader.get_run("r1") is None
     assert reader.get_frame_detections("r1") == []
-    assert reader.get_parser_results("r1") == []
+    assert reader.get_abcd_results("r1") == []
     assert reader.get_run("r2") is not None
 
 

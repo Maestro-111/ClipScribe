@@ -95,6 +95,7 @@ Common environment variables:
 - `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
 - `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for limited schema/health/test startup without loading ML models; ignored in `celery` mode because the API loads only DB handles.
 - `CLIPSCRIBE_CORS_ORIGINS` - comma-separated browser origins for the API; defaults to `http://localhost:5173`.
+- `CLIPSCRIBE_LOG_API_LEVEL` - level of the console-only `api` logger used under `backend/app/` (a number such as `10` or a name such as `debug`); defaults to `INFO`. The pipeline's `clip_scribe` logger is unaffected.
 - `CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL` - defaults to `true`, mapping every request to the single-tenant `local` user. Setting it to `false` rejects unauthenticated requests, but bearer-token verification must first be implemented in `backend/app/deps.py`; the current verifier rejects every token.
 
 The main configuration file is:
@@ -128,20 +129,22 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 
 - `POST /uploads` — upload one or more video files through the configured video storage backend; files are streamed to staging, hashed, deduplicated per user by SHA-256, and registered with their original filenames.
 - `GET /inputs` — list the user's registered videos after reconciling missing storage objects; returned `path` values are valid `videos[].video_path` keys.
-- `POST /jobs` — create a batch job from one or more `videos` sharing platform params, hints, and an `extraction_mode` (`with_objects` default or `no_objects`); parser-only `parse` is local/dev-only and rejected by the job API.
+- `POST /jobs` — create a batch job from one or more `videos` sharing hints, an `extraction_mode` (`with_objects` default or `no_objects`), and a `parsing_mode` (`abcd` default, which requires a `platform` and its params, or `exploratory`, which takes none); parser-only `parse` is local/dev-only and rejected by the job API.
 - `GET /jobs?status=&limit=&offset=` and `GET /jobs/{job_id}` — poll parent jobs with child summaries and read-time aggregated status.
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
-- `GET /jobs/{job_id}/export?format=xlsx|csv` — export all completed runs' ABCD results; XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
+- `GET /jobs/{job_id}/abcd/export?format=xlsx|csv` — export all completed runs' ABCD results (409 for exploratory jobs); XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
 - `GET /jobs/{job_id}/metadata/export?format=xlsx|json` — export extracted video metadata for every child run that has persisted data; JSON is the lossless canonical extraction summary (including frame detections), XLSX omits raw frame detections.
-- `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in a job.
+- `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in an ABCD job (exploratory jobs 409 until their chat agent exists).
 - `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
 - `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
 - `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data, chat transcripts, and artifacts.
-- `GET /runs/{run_id}/...` — inspect persisted run data, sibling runs, frame detections, parser results, and artifacts.
-- `GET /runs/{run_id}/parser/export?format=xlsx|csv` — export one run's ABCD results; XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
+- `GET /runs/{run_id}/...` — inspect persisted run data (including its `parsing_mode`), sibling runs, frame detections, ABCD results (`/abcd`), and artifacts.
+- `GET /runs/{run_id}/exploration` — an exploratory run's report (summary, chapters, transcript / on-screen text / visuals digests) whose `metrics` (run-level numbers computed during analysis) are stored with it; 409 for ABCD runs, `report: null` if none was written.
+- `GET /runs/{run_id}/abcd/export?format=xlsx|csv` — export one run's ABCD results (409 for exploratory runs); XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
+- `GET /runs/{run_id}/exploration/export?format=xlsx|json` — download an exploratory run's report (XLSX: Overview, Chapters, Transcript, On-screen text, Visuals, plus Findings when present; JSON: the full response); 409 for ABCD runs or when no report was written.
 - `GET /runs/{run_id}/metadata/export?format=xlsx|json` — export one run's extracted video metadata; XLSX is human-readable tables, JSON is lossless.
-- `POST /runs/{run_id}/chat` and related chat routes — stream read-only advisory Q&A over a completed run.
+- `POST /runs/{run_id}/abcd/chat` and `POST /runs/{run_id}/exploration/chat` — stream read-only Q&A over a completed run (each 409s on the other analysis type); the session list/history/delete routes are at `/runs/{run_id}/chat/...`.
 
 ### Local batch entry point (`main.py`)
 
@@ -297,7 +300,7 @@ clipscribe/
 │   ├── clip_scribe/
 │   │   ├── clip_scribe_core/   Engine, builder, platform configs, clip_scribe.yaml
 │   │   ├── extractor/          Scene extraction, taxonomy, tracking, scene description
-│   │   ├── parser/             LangGraph parser agents, query tools, evaluators, reports
+│   │   ├── parser/             `abcd/` (platform evaluators, reports) and `explore/` (exploratory report) parser agents, plus shared query tools
 │   │   ├── ocr/                PaddleOCR wrapper and box consolidation
 │   │   ├── db/                 SQLAlchemy schema, engine, reader, writer
 │   │   ├── dino/               GroundingDINO wrapper (+ vendored groundingdino, third-party)

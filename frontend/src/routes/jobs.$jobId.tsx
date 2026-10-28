@@ -11,6 +11,7 @@ import { ChatPanel } from "../components/ChatPanel";
 import { FloatingScribe } from "../components/FloatingScribe";
 import { type ScribeMood } from "../components/Scribe";
 import {
+  AnalysisTypePill,
   ExportMenu,
   Pagination,
   Spinner,
@@ -82,6 +83,8 @@ const PHASE_NARRATION: Record<PhaseName, string> = {
   finalize: "Tidying everything up…",
   parse: "Scoring against the platform…",
 };
+// Exploratory jobs run the same parse phase, but there's nothing to score.
+const EXPLORE_PARSE_NARRATION = "Exploring what's in the video…";
 
 // Weights approximate observed wall-clock share (web-app-plan §7); normalized
 // over whatever phases the current mode actually runs.
@@ -320,9 +323,11 @@ function LeafJob() {
       ? "Hit a snag on this one."
       : status === "completed"
         ? "All done — go take a look!"
-        : runningPhase
-          ? PHASE_NARRATION[runningPhase]
-          : "Warming up…";
+        : runningPhase === "parse" && job.data?.parsing_mode === "exploratory"
+          ? EXPLORE_PARSE_NARRATION
+          : runningPhase
+            ? PHASE_NARRATION[runningPhase]
+            : "Warming up…";
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -348,7 +353,10 @@ function LeafJob() {
             {state.videoName ?? job.data?.video_name ?? "Job"}
           </h1>
         </div>
-        <StatusPill status={status} />
+        <div className="flex items-center gap-2">
+          {job.data && <AnalysisTypePill mode={job.data.parsing_mode} />}
+          <StatusPill status={status} />
+        </div>
       </div>
 
       {/* Scribe hovers over the page (drag it anywhere), narrating the live
@@ -571,6 +579,9 @@ function BatchJob() {
   // Batch duration = merged union of the child run intervals, shown only once
   // the batch has stopped (see formatMergedDuration).
   const batchDuration = isActive ? "—" : formatMergedDuration(children);
+  // ABCD export and the advisory chat are ABCD-only for now (the API 409s on
+  // exploratory jobs); exploratory gets its own report and chat later.
+  const isAbcd = job.data?.parsing_mode !== "exploratory";
 
   // Client-side pagination over the already-loaded children. Clamp the page in
   // case the list shrinks (e.g. a run is deleted) while we're on a later page.
@@ -604,12 +615,15 @@ function BatchJob() {
                 label="Export metadata"
                 items={XLSX_JSON_EXPORT_ITEMS}
               />
-              <ExportMenu
-                baseHref={`/api/jobs/${jobId}/export`}
-                label="Export ABCD"
-              />
+              {isAbcd && (
+                <ExportMenu
+                  baseHref={`/api/jobs/${jobId}/abcd/export`}
+                  label="Export ABCD"
+                />
+              )}
             </>
           )}
+          {job.data && <AnalysisTypePill mode={job.data.parsing_mode} />}
           <StatusPill status={status} />
         </div>
       </div>
@@ -673,7 +687,7 @@ function BatchJob() {
       )}
 
       {/* ── Job-level advisory chat (analyzes every run in the batch) ── */}
-      {done > 0 && (
+      {done > 0 && isAbcd && (
         <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium">Ask about this job</h2>
           <ChatPanel

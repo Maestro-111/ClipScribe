@@ -13,5 +13,5 @@ This is the core execution module of ClipScribe. It handles video iteration, sce
 * Modifications to object tracking metrics, IoU overlap rules, or identity merging thresholds happen in `extractor_core.py`.
 * Modifications to how raw labels are filtered or categorized happen in `taxonomy_core.py`.
 * Modifications to how scenes are described or how DINO prompts are generated happen in `scene_describer.py`.
-* Progress reporting changes should use `backend/src/utils/progress.py` and keep the extractor independent of Redis or web-layer imports.
+* Progress reporting changes should use `backend/clip_scribe/utils/progress.py` and keep the extractor independent of Redis or web-layer imports.
 * Artifact changes should keep run outputs under `artifacts/<run_id>/`; `max_artifact_files` caps per-frame PNGs only.

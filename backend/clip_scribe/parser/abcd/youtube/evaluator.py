@@ -1,9 +1,11 @@
 """YouTube ABCD criteria evaluator - thin subclass of BaseEvaluator."""
 
-from clip_scribe.parser.evaluator_base import BaseEvaluator
-from clip_scribe.parser.youtube.criteria import get_feature_configs
-from clip_scribe.parser.youtube.baseline import evaluate_baseline as _evaluate_baseline
-from clip_scribe.parser.youtube.models import YouTubeFeatureResult
+from clip_scribe.parser.abcd.evaluator_base import BaseEvaluator
+from clip_scribe.parser.abcd.youtube.criteria import get_feature_configs
+from clip_scribe.parser.abcd.youtube.baseline import (
+    evaluate_baseline as _evaluate_baseline,
+)
+from clip_scribe.parser.abcd.youtube.models import YouTubeFeatureResult
 
 
 class YouTubeEvaluator(BaseEvaluator):
@@ -11,19 +13,26 @@ class YouTubeEvaluator(BaseEvaluator):
 
     @property
     def platform(self) -> str:
+        """Platform key stored with each result."""
         return "youtube"
 
     @property
     def platform_context(self) -> str:
+        """Phrase naming what is evaluated, used in the agent's system prompt."""
         return "YouTube ABCD criteria"
 
     def get_feature_configs(self) -> list[dict]:
+        """All YouTube ABCD criteria definitions."""
         return get_feature_configs()
 
     def evaluate_baseline(self, feature_id: str, run_id: str) -> bool:
+        """Check one rule-based (non-LLM) criterion; True if it passed."""
         return _evaluate_baseline(feature_id, self.reader_db, run_id)
 
     def _resolve_placeholders(self, text: str, **extra) -> str:
+        """Fill the ``{brand_name}``-style placeholders in criterion text from the
+        platform config; ``extra`` supplies any additional ones (e.g. ``criteria``).
+        """
         config_data = self.platform_config.model_dump()
 
         branded_products = ", ".join(config_data.get("branded_products", []))
@@ -48,6 +57,9 @@ class YouTubeEvaluator(BaseEvaluator):
         llm_prompt: str | None,
         llm_explanation: str | None,
     ) -> YouTubeFeatureResult:
+        """Package one criterion's verdict, with its placeholders resolved, as a
+        ``YouTubeFeatureResult``.
+        """
         return YouTubeFeatureResult(
             video_name=video_name,
             platform=self.platform,

@@ -42,7 +42,7 @@ carries over unchanged:
   every job a worker process handles. This is what makes a *warm* worker pool
   (below) worth it.
 - **Source-video storage seam already exists** (`web-app-plan` §9.1).
-  `backend/clip_scribe/utils/clip_scribe_video_storage.py` gives the API an
+  `backend/app/video_storage.py` gives the API an
   ingest contract (stage/hash/commit) and the worker a materialization contract
   (key -> local path -> release). `LocalVideoStorage` backs local dev;
   `GCSVideoStorage` stores keys under `videos/<user_id>/...`, signs source-video

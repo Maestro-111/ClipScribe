@@ -47,7 +47,7 @@ def generate_hints_from_video_name(
     combined_hints = list(generated_hints_norm | user_hints_norm)
 
     logger.info(
-        f"ClipScribe Extractor: Generated {len(combined_hints)} hints from video name: {combined_hints}"
+        f"ClipScribe Extractor: Auto generated {len(combined_hints)} hints from video name: {combined_hints}"
     )
     return combined_hints
 

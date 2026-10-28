@@ -137,7 +137,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/jobs/{job_id}/export": {
+    "/jobs/{job_id}/abcd/export": {
         parameters: {
             query?: never;
             header?: never;
@@ -151,7 +151,7 @@ export interface paths {
          *     XLSX carries a cross-run Summary sheet plus one Detail sheet per run; CSV
          *     stacks every run's criteria into one table with a leading Video column.
          */
-        get: operations["export_job_jobs__job_id__export_get"];
+        get: operations["export_abcd_jobs__job_id__abcd_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -406,15 +406,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/parser": {
+    "/runs/{run_id}/abcd": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Parser results */
-        get: operations["get_parser_runs__run_id__parser_get"];
+        /** ABCD results */
+        get: operations["get_abcd_runs__run_id__abcd_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -423,7 +423,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/parser/export": {
+    "/runs/{run_id}/exploration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Exploratory report */
+        get: operations["get_exploration_runs__run_id__exploration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/exploration/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download this run's exploratory report
+         * @description Export the exploratory report as XLSX (readable) or JSON (lossless).
+         */
+        get: operations["export_exploration_runs__run_id__exploration_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/abcd/export": {
         parameters: {
             query?: never;
             header?: never;
@@ -432,12 +469,12 @@ export interface paths {
         };
         /**
          * Download this run's ABCD report
-         * @description Export one run's parser results as a CSV or XLSX download.
+         * @description Export one run's ABCD results as a CSV or XLSX download.
          *
          *     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
          *     flat Detail table (still opens in Excel, just without the extra tab).
          */
-        get: operations["export_parser_runs__run_id__parser_export_get"];
+        get: operations["export_abcd_runs__run_id__abcd_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -466,7 +503,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{run_id}/chat": {
+    "/runs/{run_id}/abcd/chat": {
         parameters: {
             query?: never;
             header?: never;
@@ -475,8 +512,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the agent about the run (SSE stream) */
-        post: operations["post_run_chat_runs__run_id__chat_post"];
+        /** Ask the agent about the abcd run (SSE stream) */
+        post: operations["post_run_abcd_chat_runs__run_id__abcd_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/exploration/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the agent about the exploration run (SSE stream) */
+        post: operations["post_run_exploration_chat_runs__run_id__exploration_chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -626,6 +680,34 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AbcdResult
+         * @description Persisted per-criterion ABCD evaluation from the parser.
+         */
+        AbcdResult: {
+            /** Id */
+            id: number;
+            /** Run Id */
+            run_id: string;
+            /** Platform */
+            platform?: string | null;
+            /** Feature Category */
+            feature_category?: string | null;
+            /** Feature Name */
+            feature_name?: string | null;
+            /** Feature Criteria */
+            feature_criteria?: string | null;
+            /** Evaluation */
+            evaluation?: boolean | null;
+            /** Llm Prompt */
+            llm_prompt?: string | null;
+            /** Llm Explanation */
+            llm_explanation?: string | null;
+            /** Langsmith Run Id */
+            langsmith_run_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
          * AudioSegment
          * @description Whisper transcript segment.
          */
@@ -647,6 +729,20 @@ export interface components {
         Body_upload_videos_uploads_post: {
             /** Files */
             files: string[];
+        };
+        /**
+         * Chapter
+         * @description A contiguous stretch of the video with a title and summary.
+         */
+        Chapter: {
+            /** Title */
+            title: string;
+            /** Start Sec */
+            start_sec: number;
+            /** End Sec */
+            end_sec: number;
+            /** Summary */
+            summary: string;
         };
         /** ChatHistoryResponse */
         ChatHistoryResponse: {
@@ -707,10 +803,56 @@ export interface components {
             sessions: components["schemas"]["ChatSession"][];
         };
         /**
+         * ExplorationResponse
+         * @description An exploratory run's persisted report (which carries its own metrics).
+         *
+         *     ``report`` is null if it hasn't been written (e.g. the parse phase failed).
+         */
+        ExplorationResponse: {
+            /** Run Id */
+            run_id: string;
+            report?: components["schemas"]["ExploreReport"] | null;
+            /** Model */
+            model?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
+         * ExploreReport
+         * @description The persisted per-run exploratory report.
+         */
+        ExploreReport: {
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** Summary */
+            summary: string;
+            /** Chapters */
+            chapters: components["schemas"]["Chapter"][];
+            transcript: components["schemas"]["TranscriptDigest"] | null;
+            on_screen_text: components["schemas"]["OnScreenTextDigest"] | null;
+            visuals: components["schemas"]["VisualDigest"] | null;
+            /** Findings */
+            findings?: components["schemas"]["Finding"][];
+            metrics: components["schemas"]["RunMetrics"];
+        };
+        /**
          * ExtractionMode
          * @enum {string}
          */
         ExtractionMode: "with_objects" | "no_objects";
+        /**
+         * Finding
+         * @description A notable observation with the timestamps that support it.
+         */
+        Finding: {
+            /** Observation */
+            observation: string;
+            /** Evidence Secs */
+            evidence_secs: number[];
+        };
         /**
          * FrameDetection
          * @description A single bounding-box detection in one video frame.
@@ -842,8 +984,9 @@ export interface components {
             mode: components["schemas"]["JobMode"];
             /** @default with_objects */
             extraction_mode: components["schemas"]["ExtractionMode"];
-            /** @default youtube */
-            platform: components["schemas"]["PlatformName"];
+            /** @default abcd */
+            parsing_mode: components["schemas"]["ParsingMode"];
+            platform?: components["schemas"]["PlatformName"] | null;
             /** Videos */
             videos?: components["schemas"]["VideoInput"][];
             /** Platform Params */
@@ -921,6 +1064,8 @@ export interface components {
             parent_job_id?: string | null;
             /** Run Id */
             run_id?: string | null;
+            extraction_mode: components["schemas"]["ExtractionMode"];
+            parsing_mode: components["schemas"]["ParsingMode"];
             /** Status */
             status: string;
             /** Mode */
@@ -952,33 +1097,36 @@ export interface components {
          */
         JobStatus: "queued" | "running" | "completed" | "failed" | "canceled";
         /**
-         * ParserResult
-         * @description Persisted per-criterion evaluation from the parser.
+         * ObjectStats
+         * @description One resolved object label aggregated across the run.
          */
-        ParserResult: {
-            /** Id */
-            id: number;
-            /** Run Id */
-            run_id: string;
-            /** Platform */
-            platform?: string | null;
-            /** Feature Category */
-            feature_category?: string | null;
-            /** Feature Name */
-            feature_name?: string | null;
-            /** Feature Criteria */
-            feature_criteria?: string | null;
-            /** Evaluation */
-            evaluation?: boolean | null;
-            /** Llm Prompt */
-            llm_prompt?: string | null;
-            /** Llm Explanation */
-            llm_explanation?: string | null;
-            /** Langsmith Run Id */
-            langsmith_run_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
+        ObjectStats: {
+            /** Label */
+            label: string;
+            /** Instance Count */
+            instance_count: number;
+            /** Screen Time Sec */
+            screen_time_sec: number;
+            /** First Seen Sec */
+            first_seen_sec: number;
+            /** Avg Screen Coverage */
+            avg_screen_coverage: number;
         };
+        /**
+         * OnScreenTextDigest
+         * @description Digest of the on-screen text: a summary plus every text card.
+         */
+        OnScreenTextDigest: {
+            /** Summary */
+            summary: string;
+            /** Cards */
+            cards: components["schemas"]["TextCard"][];
+        };
+        /**
+         * ParsingMode
+         * @enum {string}
+         */
+        ParsingMode: "abcd" | "exploratory";
         /** PlatformInfo */
         PlatformInfo: {
             /** Name */
@@ -1013,6 +1161,32 @@ export interface components {
             platforms: components["schemas"]["PlatformInfo"][];
         };
         /**
+         * RunMetrics
+         * @description Run-level numbers computed in code; none of them come from the LLM.
+         */
+        RunMetrics: {
+            /** Duration Sec */
+            duration_sec: number;
+            /** Shot Count */
+            shot_count: number;
+            /** Avg Shot Sec */
+            avg_shot_sec: number;
+            /** Cuts Per Minute */
+            cuts_per_minute: number;
+            /** Speech Coverage */
+            speech_coverage: number;
+            /** Text Coverage */
+            text_coverage: number;
+            /** Words Per Minute */
+            words_per_minute: number | null;
+            /** Face Coverage */
+            face_coverage: number | null;
+            /** Objects Tracked */
+            objects_tracked: boolean;
+            /** Objects */
+            objects: components["schemas"]["ObjectStats"][];
+        };
+        /**
          * RunResponse
          * @description A completed extraction run.
          */
@@ -1027,6 +1201,8 @@ export interface components {
             video_type?: string | null;
             /** @default with_objects */
             extraction_mode: components["schemas"]["ExtractionMode"];
+            /** @default abcd */
+            parsing_mode: components["schemas"]["ParsingMode"];
             /** Created At */
             created_at?: string | null;
         };
@@ -1065,6 +1241,33 @@ export interface components {
             duration_sec?: number | null;
         };
         /**
+         * TextCard
+         * @description An OCR text card plus the LLM's cleaned reading and category.
+         */
+        TextCard: {
+            /** Text */
+            text: string;
+            /** Spans */
+            spans: components["schemas"]["TimeSpan"][];
+            /** Total Sec */
+            total_sec: number;
+            /** Clean Text */
+            clean_text: string;
+            category: components["schemas"]["TextCategory"];
+        };
+        /**
+         * TextCategory
+         * @description What an on-screen text card is for.
+         *
+         *     The single source of truth for the categories: the on-screen text prompt, the
+         *     API schema, and the frontend types are all derived from this enum, and
+         *     ``TEXT_CATEGORY_DESCRIPTIONS`` must describe every member (tested). To add
+         *     or rename one, edit here, then update ``CATEGORY_STYLE`` in the frontend
+         *     (the typecheck fails until every category has a style).
+         * @enum {string}
+         */
+        TextCategory: "brand" | "product" | "slogan" | "cta" | "price" | "promo" | "url" | "social" | "legal" | "caption" | "other";
+        /**
          * TextEvent
          * @description OCR text event at a specific second.
          */
@@ -1079,6 +1282,38 @@ export interface components {
             line_index?: number | null;
             /** Text */
             text?: string | null;
+        };
+        /**
+         * TimeSpan
+         * @description A time interval in seconds.
+         */
+        TimeSpan: {
+            /** Start Sec */
+            start_sec: number;
+            /** End Sec */
+            end_sec: number;
+        };
+        /**
+         * TimedText
+         * @description Text anchored to a moment in the video.
+         */
+        TimedText: {
+            /** Text */
+            text: string;
+            /** Start Sec */
+            start_sec: number;
+        };
+        /**
+         * TranscriptDigest
+         * @description Digest of the speech.
+         */
+        TranscriptDigest: {
+            /** Summary */
+            summary: string;
+            /** Topics */
+            topics: string[];
+            /** Key Claims */
+            key_claims: components["schemas"]["TimedText"][];
         };
         /** UploadResponse */
         UploadResponse: {
@@ -1124,6 +1359,33 @@ export interface components {
             video_name: string;
             /** Video Type */
             video_type?: string | null;
+        };
+        /**
+         * VisualDigest
+         * @description Digest of what is shown.
+         */
+        VisualDigest: {
+            /** Summary */
+            summary: string;
+            /** Subjects */
+            subjects: components["schemas"]["VisualSubject"][];
+        };
+        /**
+         * VisualSubject
+         * @description A tracked object label; numbers from metrics, prominence from the LLM.
+         */
+        VisualSubject: {
+            /** Label */
+            label: string;
+            /** Screen Time Sec */
+            screen_time_sec: number;
+            /** First Seen Sec */
+            first_seen_sec: number;
+            /**
+             * Prominence
+             * @enum {string}
+             */
+            prominence: "high" | "medium" | "low";
         };
     };
     responses: never;
@@ -1366,7 +1628,7 @@ export interface operations {
             };
         };
     };
-    export_job_jobs__job_id__export_get: {
+    export_abcd_jobs__job_id__abcd_export_get: {
         parameters: {
             query?: {
                 format?: string;
@@ -1809,7 +2071,7 @@ export interface operations {
             };
         };
     };
-    get_parser_runs__run_id__parser_get: {
+    get_abcd_runs__run_id__abcd_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1826,7 +2088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ParserResult"][];
+                    "application/json": components["schemas"]["AbcdResult"][];
                 };
             };
             /** @description Validation Error */
@@ -1840,7 +2102,71 @@ export interface operations {
             };
         };
     };
-    export_parser_runs__run_id__parser_export_get: {
+    get_exploration_runs__run_id__exploration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_exploration_runs__run_id__exploration_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_abcd_runs__run_id__abcd_export_get: {
         parameters: {
             query?: {
                 format?: string;
@@ -1906,7 +2232,42 @@ export interface operations {
             };
         };
     };
-    post_run_chat_runs__run_id__chat_post: {
+    post_run_abcd_chat_runs__run_id__abcd_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_run_exploration_chat_runs__run_id__exploration_chat_post: {
         parameters: {
             query?: never;
             header?: never;

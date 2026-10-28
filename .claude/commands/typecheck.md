@@ -13,7 +13,7 @@ Use this workflow for mypy and typing cleanup. Run the commands below from the `
 4. Run:
 
 ```bash
-uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser
+uv run mypy --config-file=pyproject.toml --explicit-package-bases clip_scribe/clip_scribe_core clip_scribe/extractor clip_scribe/ocr clip_scribe/parser
 ```
 
 5. Fix only issues connected to `$ARGUMENTS` unless the user asked for a full typing pass.

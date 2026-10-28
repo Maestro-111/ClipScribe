@@ -22,6 +22,7 @@ from app.deps import (
     current_user_id,
     get_reader,
     get_writer,
+    require_abcd_job,
     require_owned_job,
     settings_dep,
 )
@@ -120,7 +121,7 @@ async def get_job(
     return await build_job_response(reader, job)
 
 
-async def _job_run_reports(
+async def _job_run_abcd_reports(
     reader: ClipScribeAsyncReaderDB, job: dict
 ) -> list[abcd_exports.RunReport]:
     """Completed runs of a job, oldest first, each with its parser results.
@@ -140,7 +141,7 @@ async def _job_run_reports(
             abcd_exports.RunReport(
                 run_id=run_id,
                 video_name=child.get("video_name") or run_id,
-                rows=await reader.get_parser_results(run_id),
+                rows=await reader.get_abcd_results(run_id),
             )
         )
     return reports
@@ -184,6 +185,7 @@ async def _job_metadata_envelope(
             status=child.get("status") or "unknown",
             report=report,
         )
+
     # sequential instead of gather, concurrency on all might get out of db connection pool
     # maybe add a semaphore and preserve gather?
 
@@ -196,12 +198,12 @@ async def _job_metadata_envelope(
     )
 
 
-@router.get("/{job_id}/export", summary="Download every run's ABCD report")
-async def export_job(
+@router.get("/{job_id}/abcd/export", summary="Download every run's ABCD report")
+async def export_abcd(
     job_id: str,
     fmt: str = Query(default="xlsx", alias="format"),
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    job: dict = Depends(require_owned_job),
+    job: dict = Depends(require_abcd_job),
 ) -> Response:
     """Export all completed runs in a job as one CSV or XLSX download.
 
@@ -212,7 +214,7 @@ async def export_job(
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
-    reports = await _job_run_reports(reader, job)
+    reports = await _job_run_abcd_reports(reader, job)
 
     if not reports:
         raise ProblemException(

@@ -14,7 +14,7 @@ Scope:
 - `.claude/commands/`
 - `.claude/agents/`
 - module-level `CLAUDE.md` files
-- doc comments in `backend/app/` and editable `backend/src/` modules
+- doc comments in `backend/app/` and editable `backend/clip_scribe/` modules
 
 Rules:
 - Keep `CLAUDE.md` and `AGENTS.md` aligned unless the user asks them to diverge.

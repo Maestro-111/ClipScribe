@@ -25,7 +25,7 @@ class ExtractorSam2Mixin:
     device: str
     sam2_dynamic_refresh_rate: bool
     sam2_default_refresh_rate: int
-    detection_interval: int
+    active_detection_interval: int
     cap: Any
     video_writer: Any
     id_to_label: dict[int, str]
@@ -196,7 +196,7 @@ class ExtractorSam2Mixin:
 
         minimum_rate = min(
             default_rate,
-            max(self.detection_interval, 20),
+            max(self.active_detection_interval, 20),
         )
         return max(minimum_rate, round(default_rate * factor))
 

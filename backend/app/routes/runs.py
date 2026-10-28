@@ -14,14 +14,21 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app import exports, abcd_exports, metadata_exports
-from app.deps import current_user_id, get_reader, require_owned_run
+from app import abcd_exports, exploration_exports, exports, metadata_exports
+from app.deps import (
+    current_user_id,
+    get_reader,
+    require_abcd_run,
+    require_exploratory_run,
+    require_owned_run,
+)
 from app.errors import ProblemException
 from app.models import (
+    AbcdResult,
     AudioSegment,
+    ExplorationResponse,
     FrameDetection,
     GlobalStatsResponse,
-    ParserResult,
     RunResponse,
     RunSibling,
     ShotBoundary,
@@ -131,25 +138,85 @@ async def get_frames(
     ]
 
 
-@router.get("/{run_id}/parser", summary="Parser results")
-async def get_parser(
+@router.get("/{run_id}/abcd", summary="ABCD results")
+async def get_abcd(
     run_id: str,
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    _run: dict = Depends(require_owned_run),
-) -> list[ParserResult]:
-    return [
-        ParserResult.model_validate(r) for r in await reader.get_parser_results(run_id)
-    ]
+    _run: dict = Depends(require_abcd_run),
+) -> list[AbcdResult]:
+    return [AbcdResult.model_validate(r) for r in await reader.get_abcd_results(run_id)]
 
 
-@router.get("/{run_id}/parser/export", summary="Download this run's ABCD report")
-async def export_parser(
+async def _load_exploration(
+    reader: ClipScribeAsyncReaderDB, run_id: str
+) -> ExplorationResponse:
+    """An exploratory run's persisted report, if one was written."""
+    row = await reader.get_exploration_result(run_id)
+    return ExplorationResponse(
+        run_id=run_id,
+        report=row["payload"] if row else None,
+        model=row["model"] if row else None,
+        created_at=row["created_at"] if row else None,
+    )
+
+
+@router.get("/{run_id}/exploration", summary="Exploratory report")
+async def get_exploration(
+    run_id: str,
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    _run: dict = Depends(require_exploratory_run),
+) -> ExplorationResponse:
+    return await _load_exploration(reader, run_id)
+
+
+@router.get(
+    "/{run_id}/exploration/export",
+    summary="Download this run's exploratory report",
+)
+async def export_exploration(
     run_id: str,
     fmt: str = Query(default="xlsx", alias="format"),
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
-    run: dict = Depends(require_owned_run),
+    run: dict = Depends(require_exploratory_run),
 ) -> Response:
-    """Export one run's parser results as a CSV or XLSX download.
+    """Export the exploratory report as XLSX (readable) or JSON (lossless)."""
+    if fmt not in exploration_exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+    response = await _load_exploration(reader, run_id)
+    if response.report is None:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"run '{run_id}' has no exploration report to export",
+        )
+    video_name = run.get("video_name") or run_id
+    if fmt == "json":
+        content = await run_in_threadpool(exploration_exports.run_json, response)
+    else:
+        # The report only holds the transcript digest; the XLSX also carries
+        # the full speech, read from the extraction data.
+        segments = await reader.get_audio_segments(run_id)
+        content = await run_in_threadpool(
+            exploration_exports.run_xlsx, video_name, response, segments
+        )
+    filename = exports.export_filename(f"{video_name}_exploration", fmt)
+    return Response(
+        content=content,
+        media_type=exploration_exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{run_id}/abcd/export", summary="Download this run's ABCD report")
+async def export_abcd(
+    run_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    run: dict = Depends(require_abcd_run),
+) -> Response:
+    """Export one run's ABCD results as a CSV or XLSX download.
 
     XLSX carries a per-criterion Detail sheet plus a Scores summary; CSV is the
     flat Detail table (still opens in Excel, just without the extra tab).
@@ -158,7 +225,7 @@ async def export_parser(
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
-    rows = await reader.get_parser_results(run_id)
+    rows = await reader.get_abcd_results(run_id)
     video_name = run.get("video_name") or run_id
     if fmt == "csv":
         content = await run_in_threadpool(abcd_exports.run_csv, rows)

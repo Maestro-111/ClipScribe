@@ -38,6 +38,7 @@ from clip_scribe.extractor.extractor_mixins import ExtractorSam2Mixin
 from clip_scribe.extractor.extractor_models import (
     AudioSegment,
     Box,
+    DetectionIntervalBin,
     DetectionResult,
     Embedding,
     ExtractionSummary,
@@ -348,6 +349,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
         sampling_rate: float = 2.0,
         sam2_default_refresh_rate: int = 100,
         sam2_dynamic_refresh_rate: bool = False,
+        detection_interval_bins: Sequence[DetectionIntervalBin] | None = None,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         max_artifact_files: int | None = None,
@@ -366,6 +368,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
 
         self.face_detection = face_detection
         self.detection_interval = detection_interval
+        self.detection_interval_bins = list(detection_interval_bins or [])
+        # Re-resolved per shot from ``detection_interval`` and the bins.
+        self.active_detection_interval = detection_interval
 
         # OpenCV and SAM2 create these per input video.  Their types are
         # runtime-library objects, so keep the boundary untyped while ensuring
@@ -1311,6 +1316,31 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             f"ClipScribe Extractor: Audio transcription complete. Kept {len(self.audio_registry)} segments."
         )
 
+    def _resolve_detection_interval(self, shot_idx: int, shot_frames: int) -> int:
+        """Pick this shot's detection interval from the first bin that fits it.
+
+        Falls back to ``detection_interval`` when no bin matches. The result is
+        capped at the SAM2 window size, since a batch never spans windows.
+        """
+        interval = self.detection_interval
+
+        for interval_bin in self.detection_interval_bins:
+            max_frames = interval_bin["max_frames"]
+
+            if max_frames is None or shot_frames <= max_frames:
+                interval = interval_bin["interval"]
+                break
+
+        interval = max(1, min(interval, self.sam2_default_refresh_rate))
+        self.active_detection_interval = interval
+
+        logger.info(
+            f"ClipScribe Extractor: Shot {shot_idx} has {shot_frames} frames -> "
+            f"detection interval {interval}"
+        )
+
+        return interval
+
     def _describe_shot(self, start_f: int, end_f: int) -> tuple[str, str]:
         """Sample and describe one shot, returning DINO and narrative contexts."""
         shot_duration = (end_f - start_f) / self.fps
@@ -1441,6 +1471,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             )
 
             self.current_frame = start_f
+            self._resolve_detection_interval(shot_idx, end_f - start_f)
 
             logger.info(
                 f"ClipScribe Extractor: Processing Shot {shot_idx}: Frames {start_f} to {end_f}"
@@ -1515,7 +1546,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 )
 
                 frames_left_in_window = end_f - self.current_frame
-                frames_in_batch = min(self.detection_interval, frames_left_in_window)
+                frames_in_batch = min(
+                    self.active_detection_interval, frames_left_in_window
+                )
 
                 if frames_in_batch <= 0:
                     break
@@ -1580,6 +1613,7 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
             self.active_trackers = {}
             self._sam_registered_tracker_ids = set()
             self.current_frame = start_f
+            self._resolve_detection_interval(shot_idx, end_f - start_f)
 
             logger.info(
                 f"ClipScribe Extractor: Processing Shot {shot_idx}: Frames {start_f} to {end_f}"
@@ -1844,7 +1878,9 @@ class VideoInformationExtractor(ExtractorSam2Mixin):
                 )
 
                 frames_left_in_window = sam_window_end - self.current_frame
-                frames_in_batch = min(self.detection_interval, frames_left_in_window)
+                frames_in_batch = min(
+                    self.active_detection_interval, frames_left_in_window
+                )
 
                 if frames_in_batch <= 0:
                     break

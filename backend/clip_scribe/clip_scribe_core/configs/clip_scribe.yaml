@@ -39,8 +39,25 @@ clip_scribe:
 
     # Number of frames to track detected objects before running detection again
     # Higher = faster processing but may miss new objects appearing mid-shot
-    # Range: 1-30 frames. Default: 10
-    detection_interval: 15
+    # Fallback used when detection_interval_bins is empty or no bin matches. Default: 10
+    detection_interval: 10
+
+    # Per-shot detection interval by the shot's frame count: shorter shots are
+    # detected more densely, longer shots more sparsely (faster).
+    # The first bin where shot_frames <= max_frames applies (null = catch-all).
+    # Intervals are capped at sam2.default_refresh_rate (the SAM2 window).
+    detection_interval_bins:
+      - {max_frames: 100, interval: 10}
+      - {max_frames: 200, interval: 20}
+      - {max_frames: 300, interval: 30}
+      - {max_frames: 400, interval: 40}
+      - {max_frames: 500, interval: 50}
+      - {max_frames: 600, interval: 60}
+      - {max_frames: 700, interval: 70}
+      - {max_frames: 800, interval: 80}
+      - {max_frames: 900, interval: 90}
+      - { max_frames: 1000, interval: 99}
+      - {max_frames: null, interval: 100}
 
     # How often (in frames) to capture DINOv2 embeddings for cross-shot re-identification
     # Lower = more viewpoints captured but slower. Higher = faster but may miss appearance changes
@@ -69,7 +86,7 @@ clip_scribe:
   # Parser Settings
   # --------------------------------------------------------------------------
   parser:
-    # LLM model for agentic feature evaluation
+    # LLM model for agentic feature evaluation/metadata exploration
     agent:
       llm: "gpt-5.4"
       temperature: 0.2
@@ -84,6 +101,24 @@ clip_scribe:
 
     # agent max reasoning steps
     recursion_limit: 50
+
+    # Exploratory report (parsing_mode=exploratory). Uses the agent's llm and
+    # temperature; only the per-call output budget differs, since the report
+    # sections are longer structured outputs than an ABCD verdict.
+    explore:
+      max_tokens: 4000
+      transcript_topics_num: 6
+      transcript_key_claims_num: 7
+      overview_summary_chapters_num: 6
+      transcript_summary_sentences_num: 4
+      text_summary_sentences_num: 4
+      visual_summary_sentences_num: 4
+      overview_summary_sentences_num: 4
+      # How many on-screen text cards / tracked objects the LLM cleans and rates
+      # (longest on screen first). The rest stay in the report unrated.
+      on_screen_text_cards_num: 20
+      visuals_subjects_num: 20
+
 
 # ============================================================================
 # GroundingDINO Object Detection
@@ -146,7 +181,7 @@ sam2:
   # Larger models produce better masks but are slower and require more VRAM
   # 'tiny' is recommended for real-time or resource-constrained environments
   size: tiny
-  default_refresh_rate: 50
+  default_refresh_rate: 100
   dynamic_refresh_rate: true
 
 # ============================================================================
@@ -196,4 +231,4 @@ artifacts:
 #   SQLITE_URL / POSTGRESQL_URL  the connection URL
 #   CLIPSCRIBE_DB_POOL_SIZE      pooled connections (postgresql only; default 5)
 #   CLIPSCRIBE_DB_MAX_OVERFLOW   burst connections above the pool (default 10)
-# See src/db/engine.py::resolve_database_url / resolve_pool_settings.
+# See clip_scribe/db/engine.py::resolve_database_url / resolve_pool_settings.

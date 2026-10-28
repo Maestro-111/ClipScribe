@@ -7,8 +7,11 @@ export interface Run {
   video_name: string | null;
   video_path: string | null;
   video_type: string | null;
+  parsing_mode: ParsingMode;
   created_at: string | null;
 }
+
+export type ParsingMode = "abcd" | "exploratory";
 
 export type DetectionSource = "dino" | "ocr" | "mtcnn" | "sam_mask";
 
@@ -43,7 +46,7 @@ export interface GlobalStatsResponse {
   shot_boundaries: ShotBoundary[];
 }
 
-export interface ParserResult {
+export interface AbcdResult {
   id: number;
   run_id: string;
   platform: string | null;

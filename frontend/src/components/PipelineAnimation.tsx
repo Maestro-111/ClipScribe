@@ -124,7 +124,7 @@ const STAGES: Stage[] = [
   },
   {
     key: "parse",
-    title: "Parser layer",
+    title: "ABCD layer",
     detail: "Score against platform",
     long: "A LangGraph parser queries the persisted run and evaluates it against the selected platform's criteria (e.g. YouTube ABCD), producing the final report.",
     icon: (
@@ -136,21 +136,41 @@ const STAGES: Stage[] = [
   },
 ];
 
+// Exploratory jobs replace the platform-scoring step with open-ended analysis.
+const EXPLORE_STAGE: Stage = {
+  key: "parse",
+  title: "Exploration layer",
+  detail: "Surface what's in the video",
+  long: "An LLM layer reads the persisted run and summarizes the transcript, on-screen text, and visuals into an exploratory report — no platform criteria or domain knowledge required.",
+  icon: (
+    <Glyph>
+      <circle cx="8.5" cy="8.5" r="5" />
+      <path d="M12.5 12.5L17 17" />
+    </Glyph>
+  ),
+};
+
 // ms each stage stays "active" before the pulse advances. Tuned so a full loop
 // stays lively but not distracting next to a form the user is filling in.
 const STEP_MS = 1150;
 
 export function PipelineAnimation({
   includeObjects = true,
+  exploratory = false,
 }: {
   includeObjects?: boolean;
+  exploratory?: boolean;
 }) {
   const [active, setActive] = useState(0);
-  const stages = includeObjects
-    ? STAGES
-    : STAGES.filter(
-        (stage) => !["targets", "detect", "track"].includes(stage.key),
-      );
+  const stages = (
+    includeObjects
+      ? STAGES
+      : STAGES.filter(
+          (stage) => !["targets", "detect", "track"].includes(stage.key),
+        )
+  ).map((stage) =>
+    exploratory && stage.key === "parse" ? EXPLORE_STAGE : stage,
+  );
   const activeIndex = active % stages.length;
 
   useEffect(() => {

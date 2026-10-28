@@ -17,9 +17,9 @@ from app.deps import get_reader, get_writer
 from app.main import app
 from app.routes.chat import get_chat_service
 from clip_scribe.db.reader import ClipScribeReaderDB
-from clip_scribe.db.schema import metadata_obj, parser_results_table, runs_table
+from clip_scribe.db.schema import metadata_obj, abcd_results_table, runs_table
 from clip_scribe.db.writer import ClipScribeWriterDB
-from clip_scribe.parser.tools import build_job_tools
+from clip_scribe.parser.abcd.tools import build_job_tools
 
 PARENT = "job-p"
 CHILD1 = "job-c1"
@@ -74,7 +74,7 @@ def ctx(tmp_path, async_db_adapters):
             ],
         )
         conn.execute(
-            parser_results_table.insert(),
+            abcd_results_table.insert(),
             [*_parser_rows(RUN1, True), *_parser_rows(RUN2, False)],
         )
 
@@ -119,8 +119,8 @@ def ctx(tmp_path, async_db_adapters):
                 if c.get("status") == "completed" and c.get("run_id")
             ]
 
-        def stream_job(self, *a, **k):  # pragma: no cover - not hit by guard tests
-            raise AssertionError("stream_job should not run in guard tests")
+        def stream_abcd_job(self, *a, **k):  # pragma: no cover - not hit by guard tests
+            raise AssertionError("stream_abcd_job should not run in guard tests")
 
     app.dependency_overrides[get_reader] = lambda: async_reader
     app.dependency_overrides[get_writer] = lambda: async_writer
@@ -208,6 +208,32 @@ def test_job_tool_rejects_foreign_run_id(ctx):
     assert "error" in res
     res2 = _invoke(async_reader, "query_global_stats", {"run_id": "other"})
     assert "error" in res2
+
+
+def test_job_per_run_tools_delegate_to_the_shared_tools(ctx):
+    _, _, _, async_reader = ctx
+    for name in (
+        "query_audio_segments",
+        "query_text_events",
+        "query_visual_objects",
+        "query_scene_descriptions",
+        "query_global_stats",
+    ):
+        for run_id in (RUN1, RUN2):
+            out = _invoke(async_reader, name, {"run_id": run_id})
+            # A list/dict of data, not the {"error": ...} a failed call returns.
+            assert not (isinstance(out, dict) and "error" in out), (name, out)
+    # Filter arguments still reach the shared tool.
+    assert (
+        _invoke(
+            async_reader,
+            "query_visual_objects",
+            {"run_id": RUN1, "label_contains": "zzz"},
+        )
+        == []
+    )
+    # Field docs need no run_id.
+    assert isinstance(_invoke(async_reader, "query_field_descriptions", {}), list)
 
 
 # ── routes ───────────────────────────────────────────────────────────────────

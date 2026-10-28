@@ -179,7 +179,7 @@ def test_parser_report_path_stays_under_output_dir(tmp_path):
     writer_db = mock.MagicMock()
 
     report_path = Path(
-        parser.parse(
+        parser.abcd(
             run_id="../outside-run",
             video_name="../outside-video",
             reader_db=mock.MagicMock(),
@@ -190,7 +190,7 @@ def test_parser_report_path_stays_under_output_dir(tmp_path):
     report_path.resolve().relative_to(output_dir.resolve())
     assert report_path.parent.name == "outside-run"
     assert not (tmp_path / "outside-video").exists()
-    writer_db.save_parser_results.assert_called_once()
+    writer_db.save_abcd_results.assert_called_once()
 
 
 def test_alembic_baseline_accepts_existing_runs_table(tmp_path, monkeypatch):

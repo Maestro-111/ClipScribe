@@ -53,11 +53,11 @@ gracefully.
 | API | `backend/app/` | Validates HTTP requests, uploads and lists videos, creates batch/child jobs, serves run data and media, provides SSE endpoints, and dispatches work. |
 | Job execution | `app/job_execution.py`, `app/job_runner.py` | Gives inline and Celery execution one common lifecycle: mark running, materialize input, build an engine, execute, then mark terminal state. |
 | Worker | `app/tasks.py`, `app/celery_app.py` | In Celery mode, owns the long-lived model-loaded `ClipScribeBuilder` and processes queued child jobs. |
-| Core orchestration | `src/clip_scribe/` | Builds durable dependencies, assembles a fresh engine per run, and coordinates extraction, persistence, parsing, artifact upload, and pipeline events. |
-| Extraction | `src/extractor/`, `src/ocr/` | Finds shots; analyzes scenes; generates/resolves taxonomies; detects, tracks, and re-identifies objects; extracts OCR, speech, and faces; calculates video metrics. |
-| Parser | `src/parser/` | Evaluates persisted run data against platform criteria, writes reports, and persists per-criterion results. YouTube is the currently implemented platform. |
-| Persistence | `src/db/`, `backend/alembic/` | SQLAlchemy reader/writer layer and Alembic-owned relational schema. |
-| Storage | `src/utils/clip_scribe_video_storage.py`, `clip_scribe_artifacts.py` | Stores uploaded sources and per-run artifacts behind local/GCS abstractions. |
+| Core orchestration | `clip_scribe/clip_scribe_core/` | Builds durable dependencies, assembles a fresh engine per run, and coordinates extraction, persistence, parsing, artifact upload, and pipeline events. |
+| Extraction | `clip_scribe/extractor/`, `clip_scribe/ocr/` | Finds shots; analyzes scenes; generates/resolves taxonomies; detects, tracks, and re-identifies objects; extracts OCR, speech, and faces; calculates video metrics. |
+| Parser | `clip_scribe/parser/` | Runs the job's `parsing_mode` over persisted run data: `abcd` evaluates platform criteria (YouTube is the implemented platform), writes reports, and persists per-criterion results; `exploratory` builds an `ExploreReport` (metrics computed in code, LLM-written digests and overview). Both live under `clip_scribe/parser/` (`abcd/`, `explore/`, `shared_tools.py`). |
+| Persistence | `clip_scribe/db/`, `backend/alembic/` | SQLAlchemy reader/writer layer and Alembic-owned relational schema. |
+| Storage | `app/video_storage.py`, `clip_scribe/utils/clip_scribe_artifacts.py` | Stores uploaded sources and per-run artifacts behind local/GCS abstractions. |
 
 ## 3. Web application boundary
 
@@ -136,7 +136,7 @@ cancellation, source materialization, and error handling are shared.
 ## 5. Core processing pipeline
 
 `ClipScribeBuilder` is the long-lived dependency owner. It reads
-`src/clip_scribe/configs/clip_scribe.yaml`, constructs database access, and
+`clip_scribe/clip_scribe_core/configs/clip_scribe.yaml`, constructs database access, and
 loads the heavyweight model dependencies once per process. For each child job,
 it builds a fresh `ClipScribeEngine`, extractor, and parser so per-run state is
 not shared.
@@ -199,7 +199,8 @@ erDiagram
     RUNS ||--o{ TEXT_EVENTS : has
     RUNS ||--o{ AUDIO_SEGMENTS : has
     RUNS ||--o{ SCENE_DESCRIPTIONS : has
-    RUNS ||--o{ PARSER_RESULTS : has
+    RUNS ||--o{ ABCD_RESULTS : has
+    RUNS ||--o| EXPLORATION_RESULTS : has
     RUNS ||--o{ CHAT_MESSAGES : "run chat"
     JOBS ||--o{ CHAT_MESSAGES : "batch chat"
 ```
@@ -216,8 +217,10 @@ The conceptual database ownership is as follows:
   snapshot of the video name and durable source-storage key.
 - Extraction data is normalized into global stats, shots, raw frame detections,
   objects, OCR text, audio segments, and scene descriptions.
-- `parser_results` holds the persisted platform-criterion verdicts used by the
-  inspector and exports.
+- `abcd_results` holds the persisted platform-criterion verdicts used by the
+  inspector and exports; `exploration_results` holds an exploratory run's
+  `ExploreReport` as a JSON payload. `jobs` records the `extraction_mode` and
+  `parsing_mode` that decide which of the two a run gets.
 - `chat_messages` holds only the advisory conversation. The advisor obtains
   evidence through server-side, read-only queries over run or job data.
 
@@ -246,7 +249,7 @@ Source video and artifact bytes are not database blobs:
 After a run is complete, the frontend reads typed API resources rather than
 artifact files for its interactive views. It retrieves run metadata, global
 statistics and shot boundaries, visual-object occurrences, OCR, audio,
-scene descriptions, parser results, and a time-windowed slice of raw frame
+scene descriptions, ABCD results or the exploration report, and a time-windowed slice of raw frame
 detections for the video overlay. Original and tracked videos are the two media
 files directly consumed by the inspector.
 
@@ -254,7 +257,8 @@ Advisory chat is a separate server-side, streaming path:
 
 1. The browser sends a message to a run-scoped or job-scoped chat endpoint.
 2. FastAPI creates a read-only agent scoped to that run or to the completed
-   runs in that batch.
+   runs in that batch. The run agent is chosen by the run's `parsing_mode`
+   (ABCD advisory vs. exploration); job-level chat covers ABCD jobs only.
 3. The agent queries persisted evidence through tools, streams tokens and tool
    notifications as SSE, and stores the conversation transcript.
 
@@ -312,8 +316,8 @@ Use these files as the starting points when the architecture changes:
 | Dispatch and job lifecycle | `backend/app/job_runner.py`, `backend/app/job_execution.py` |
 | Redis events and cancellation | `backend/app/events.py` |
 | Worker ownership | `backend/app/celery_app.py`, `backend/app/tasks.py` |
-| Core assembly and run orchestration | `backend/src/clip_scribe/build_clip_scribe.py`, `engine.py` |
-| Extraction and parser | `backend/src/extractor/extractor_core.py`, `backend/src/parser/parser_core.py` |
-| Persistence | `backend/src/db/schema.py`, `reader.py`, `writer.py`, `backend/alembic/` |
-| Source/artifact storage | `backend/src/utils/clip_scribe_video_storage.py`, `clip_scribe_artifacts.py` |
+| Core assembly and run orchestration | `backend/clip_scribe/clip_scribe_core/build_clip_scribe.py`, `engine.py` |
+| Extraction and parser | `backend/clip_scribe/extractor/extractor_core.py`, `backend/clip_scribe/parser/parser_core.py` |
+| Persistence | `backend/clip_scribe/db/schema.py`, `reader.py`, `writer.py`, `backend/alembic/` |
+| Source/artifact storage | `backend/app/video_storage.py`, `clip_scribe/utils/clip_scribe_artifacts.py` |
 | Web dashboard | `frontend/src/routes/`, `frontend/src/api/`, `frontend/src/components/` |
