@@ -343,7 +343,7 @@ INDEX (run_id, object_id)
 Rough volume estimate: a 15-second car ad with detections every 10 frames at
 30 fps = ~45 frames × ~10 boxes each ≈ 450 rows. Negligible.
 
-**`parser_results`** — what's currently in `abcd_report.csv`. Lets the UI render
+**`abcd_results`** (originally `parser_results`; exploratory runs store an `ExploreReport` JSON payload in `exploration_results`) — what's currently in `abcd_report.csv`. Lets the UI render
 the report without parsing CSV.
 ```
 id              INTEGER PK
@@ -535,7 +535,7 @@ ABCD and metadata exports, and advisory chat.
 - `POST   /jobs`                       — create one parent batch job and submit one child run per `videos[]` entry to the configured backend (`inline` single-slot executor or `celery`). Request body mirrors the web-safe `main.py` params except device is config-owned; `extraction_mode` (`with_objects` default, `no_objects` skips detection/tracking/faces) is persisted on the `runs` row; parser-only `parse` is local/dev-only and rejected by this API.
 - `GET    /jobs`                       — paginated top-level jobs, filterable by effective status; batch parent status is aggregated from children.
 - `GET    /jobs/{id}`                  — full state. Parents include `children`; child/leaf rows return their own status and no children.
-- `GET    /jobs/{id}/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
+- `GET    /jobs/{id}/abcd/export?format=xlsx|csv` — ABCD export for every completed run in the job. XLSX contains a cross-run `Summary` sheet plus one detail sheet per run; CSV is one flat table with a leading `Video` column.
 - `GET    /jobs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for every child run with persisted data (409 if none). JSON is the lossless canonical `ExtractionSummary` per run, including `frame_detections`; XLSX omits raw frame detections. Builders live in `backend/app/metadata_exports.py`.
 - `GET    /jobs/{id}/events`           — SSE live progress for a leaf/child job. Replays the job's Redis stream from the start (events + logs interleaved), then tails; closes on a terminal event.
 - `GET    /jobs/{id}/progress`         — coarse percent summary derived from the Redis stream for jobs-list bars.
@@ -552,8 +552,9 @@ ABCD and metadata exports, and advisory chat.
 - `GET /runs/{id}/audio-segments`      — `audio_segments`.
 - `GET /runs/{id}/scenes`              — `scene_descriptions`.
 - `GET /runs/{id}/frames?from=X&to=Y`  — `frame_detections` in time window.
-- `GET /runs/{id}/parser`              — `parser_results`.
-- `GET /runs/{id}/parser/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
+- `GET /runs/{id}/abcd`                — `abcd_results` (409 for exploratory runs).
+- `GET /runs/{id}/exploration`         — the exploratory `ExploreReport` from `exploration_results` (409 for ABCD runs); `/exploration/export` and `/exploration/chat` follow the same guard.
+- `GET /runs/{id}/abcd/export?format=xlsx|csv` — ABCD export for one run. XLSX contains `Detail` and `Scores` sheets; CSV is the flat detail table.
 - `GET /runs/{id}/metadata/export?format=xlsx|json` — extracted-metadata export for one run (lossless JSON or human-readable XLSX).
 
 ### Artifacts (local or signed-URL backed)

@@ -55,7 +55,7 @@ gracefully.
 | Worker | `app/tasks.py`, `app/celery_app.py` | In Celery mode, owns the long-lived model-loaded `ClipScribeBuilder` and processes queued child jobs. |
 | Core orchestration | `src/clip_scribe/` | Builds durable dependencies, assembles a fresh engine per run, and coordinates extraction, persistence, parsing, artifact upload, and pipeline events. |
 | Extraction | `src/extractor/`, `src/ocr/` | Finds shots; analyzes scenes; generates/resolves taxonomies; detects, tracks, and re-identifies objects; extracts OCR, speech, and faces; calculates video metrics. |
-| Parser | `src/parser/` | Evaluates persisted run data against platform criteria, writes reports, and persists per-criterion results. YouTube is the currently implemented platform. |
+| Parser | `src/parser/` | Runs the job's `parsing_mode` over persisted run data: `abcd` evaluates platform criteria (YouTube is the implemented platform), writes reports, and persists per-criterion results; `exploratory` builds an `ExploreReport` (metrics computed in code, LLM-written digests and overview). Both live under `src/parser/` (`abcd/`, `explore/`, `shared_tools.py`). |
 | Persistence | `src/db/`, `backend/alembic/` | SQLAlchemy reader/writer layer and Alembic-owned relational schema. |
 | Storage | `src/utils/clip_scribe_video_storage.py`, `clip_scribe_artifacts.py` | Stores uploaded sources and per-run artifacts behind local/GCS abstractions. |
 
@@ -199,7 +199,8 @@ erDiagram
     RUNS ||--o{ TEXT_EVENTS : has
     RUNS ||--o{ AUDIO_SEGMENTS : has
     RUNS ||--o{ SCENE_DESCRIPTIONS : has
-    RUNS ||--o{ PARSER_RESULTS : has
+    RUNS ||--o{ ABCD_RESULTS : has
+    RUNS ||--o| EXPLORATION_RESULTS : has
     RUNS ||--o{ CHAT_MESSAGES : "run chat"
     JOBS ||--o{ CHAT_MESSAGES : "batch chat"
 ```
@@ -216,8 +217,10 @@ The conceptual database ownership is as follows:
   snapshot of the video name and durable source-storage key.
 - Extraction data is normalized into global stats, shots, raw frame detections,
   objects, OCR text, audio segments, and scene descriptions.
-- `parser_results` holds the persisted platform-criterion verdicts used by the
-  inspector and exports.
+- `abcd_results` holds the persisted platform-criterion verdicts used by the
+  inspector and exports; `exploration_results` holds an exploratory run's
+  `ExploreReport` as a JSON payload. `jobs` records the `extraction_mode` and
+  `parsing_mode` that decide which of the two a run gets.
 - `chat_messages` holds only the advisory conversation. The advisor obtains
   evidence through server-side, read-only queries over run or job data.
 
@@ -246,7 +249,7 @@ Source video and artifact bytes are not database blobs:
 After a run is complete, the frontend reads typed API resources rather than
 artifact files for its interactive views. It retrieves run metadata, global
 statistics and shot boundaries, visual-object occurrences, OCR, audio,
-scene descriptions, parser results, and a time-windowed slice of raw frame
+scene descriptions, ABCD results or the exploration report, and a time-windowed slice of raw frame
 detections for the video overlay. Original and tracked videos are the two media
 files directly consumed by the inspector.
 
@@ -254,7 +257,8 @@ Advisory chat is a separate server-side, streaming path:
 
 1. The browser sends a message to a run-scoped or job-scoped chat endpoint.
 2. FastAPI creates a read-only agent scoped to that run or to the completed
-   runs in that batch.
+   runs in that batch. The run agent is chosen by the run's `parsing_mode`
+   (ABCD advisory vs. exploration); job-level chat covers ABCD jobs only.
 3. The agent queries persisted evidence through tools, streams tokens and tool
    notifications as SSE, and stores the conversation transcript.
 

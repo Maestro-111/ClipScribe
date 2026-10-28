@@ -95,6 +95,7 @@ Common environment variables:
 - `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
 - `CLIPSCRIBE_API_LOAD_MODELS` - set to `false` for limited schema/health/test startup without loading ML models; ignored in `celery` mode because the API loads only DB handles.
 - `CLIPSCRIBE_CORS_ORIGINS` - comma-separated browser origins for the API; defaults to `http://localhost:5173`.
+- `CLIPSCRIBE_LOG_API_LEVEL` - level of the console-only `api` logger used under `backend/app/` (a number such as `10` or a name such as `debug`); defaults to `INFO`. The pipeline's `clip_scribe` logger is unaffected.
 - `CLIPSCRIBE_ALLOW_ANONYMOUS_LOCAL` - defaults to `true`, mapping every request to the single-tenant `local` user. Setting it to `false` rejects unauthenticated requests, but bearer-token verification must first be implemented in `backend/app/deps.py`; the current verifier rejects every token.
 
 The main configuration file is:
@@ -299,7 +300,7 @@ clipscribe/
 │   ├── clip_scribe/
 │   │   ├── clip_scribe_core/   Engine, builder, platform configs, clip_scribe.yaml
 │   │   ├── extractor/          Scene extraction, taxonomy, tracking, scene description
-│   │   ├── parser/             LangGraph parser agents, query tools, evaluators, reports
+│   │   ├── parser/             `abcd/` (platform evaluators, reports) and `explore/` (exploratory report) parser agents, plus shared query tools
 │   │   ├── ocr/                PaddleOCR wrapper and box consolidation
 │   │   ├── db/                 SQLAlchemy schema, engine, reader, writer
 │   │   ├── dino/               GroundingDINO wrapper (+ vendored groundingdino, third-party)
