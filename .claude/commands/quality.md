@@ -5,7 +5,7 @@ argument-hint: "[optional changed-file scope]"
 
 # Quality
 
-Run quality checks for the editable project code. Do not inspect or modify `backend/src/dino/groundingdino/**` or `backend/src/sam2/**`.
+Run quality checks for the editable project code. Do not inspect or modify `backend/clip_scribe/dino/groundingdino/**` or `backend/clip_scribe/sam2/**`.
 
 Run all commands below from the `backend/` directory (the Python project lives in `backend/` in this monorepo). pre-commit in particular must be invoked from `backend/`, since it discovers `backend/.pre-commit-config.yaml` from the current directory but executes hooks from the git root.
 
@@ -19,7 +19,7 @@ uv run pytest -q
 3. Run mypy on editable core modules:
 
 ```bash
-uv run mypy --config-file=pyproject.toml --explicit-package-bases src/clip_scribe src/extractor src/ocr src/parser
+uv run mypy --config-file=pyproject.toml --explicit-package-bases clip_scribe/clip_scribe_core clip_scribe/extractor clip_scribe/ocr clip_scribe/parser
 ```
 
 4. If frontend files changed, run the frontend typecheck from `frontend/`:

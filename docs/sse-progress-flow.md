@@ -33,15 +33,15 @@ expired.
 
 | Layer | File | Role |
 |-------|------|------|
-| Event vocabulary | `backend/src/utils/progress.py` | `ProgressEvent.*` string constants + the abstract `ProgressReporter` the core depends on. Torch-free, web-free. |
-| Emit sites | `backend/src/clip_scribe/engine.py`, `backend/src/extractor/extractor_core.py` | Call `self.progress.emit(...)` at fixed pipeline points. |
+| Event vocabulary | `backend/clip_scribe/utils/progress.py` | `ProgressEvent.*` string constants + the abstract `ProgressReporter` the core depends on. Torch-free, web-free. |
+| Emit sites | `backend/clip_scribe/clip_scribe_core/engine.py`, `backend/clip_scribe/extractor/extractor_core.py` | Call `self.progress.emit(...)` at fixed pipeline points. |
 | Web sink | `backend/app/events.py` | `RedisProgressReporter.emit` → `XADD` into the stream. Also the log bridge + cancel token. |
 | Wiring | `backend/app/job_execution.py` (`run_job_core`) | Builds the Redis reporter and injects it into the engine for the duration of the job. |
 | SSE endpoint | `backend/app/routes/jobs.py` (`_job_event_stream`, `job_events`) | Replays the stream, then tails it; renders each entry as an SSE frame. |
 | Browser transport | `frontend/src/routes/jobs.$jobId.tsx` (`LeafJob`, `useEffect`) | `new EventSource(...)`; dispatches each frame into the reducer. |
 | Browser state | same file (`reducer`, `LiveState`) | Folds events into phases / current shot / logs / progress %. |
 
-Notice the **dependency direction**: the core (`src/`) knows only the abstract
+Notice the **dependency direction**: the core (`clip_scribe/`) knows only the abstract
 `ProgressReporter`. Redis, FastAPI, and SSE live in `app/`. The CLI and tests
 inject `NullProgressReporter`, which drops every event — the pipeline runs
 identically with or without a live tail.
@@ -80,7 +80,7 @@ current job's stream — see §6.
 ## 4. Producer side — how an event becomes a stream entry
 
 ```
-┌─ backend/src/extractor/extractor_core.py ───────────────────────────┐
+┌─ backend/clip_scribe/extractor/extractor_core.py ───────────────────────────┐
 │  self.progress.emit(ProgressEvent.SHOT_STARTED, {"shot_idx": i})    │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │  self.progress is whatever run_job_core injected

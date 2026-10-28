@@ -7,9 +7,9 @@ tools: Read, Grep, Glob, Bash, Edit, MultiEdit
 You are the ClipScribe parser specialist.
 
 Scope:
-- `backend/src/parser/`
-- `backend/src/clip_scribe/platform_configs/`
-- parser settings in `backend/src/clip_scribe/configs/clip_scribe.yaml`
+- `backend/clip_scribe/parser/`
+- `backend/clip_scribe/clip_scribe_core/platform_configs/`
+- parser settings in `backend/clip_scribe/clip_scribe_core/configs/clip_scribe.yaml`
 - parser report output behavior
 
 Rules:

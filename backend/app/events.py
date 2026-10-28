@@ -1,7 +1,7 @@
 """Live-progress transport: Redis-Streams reporter + log bridge (web-app-plan §5, §9, §16).
 
 The pipeline core emits structured events through the abstract
-:class:`~src.utils.progress.ProgressReporter` (``src/utils/progress.py``); this
+:class:`~clip_scribe.utils.progress.ProgressReporter` (``clip_scribe/utils/progress.py``); this
 module is the web-app sink that publishes them to a per-job Redis **stream** so
 the SSE endpoint (``GET /jobs/{id}/events``) can both replay history to a late
 subscriber and tail live updates.
@@ -12,7 +12,7 @@ event emitted before they connected (§16). ``XADD`` + ``XREAD`` from id ``0``
 gives replay *and* live tail with one mechanism.
 
 This module is torch-free and safe to import in the slim API process (§8): it
-depends only on ``redis`` and ``src.utils.progress``.
+depends only on ``redis`` and ``clip_scribe.utils.progress``.
 """
 
 from __future__ import annotations

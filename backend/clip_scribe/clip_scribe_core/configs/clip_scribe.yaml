@@ -231,4 +231,4 @@ artifacts:
 #   SQLITE_URL / POSTGRESQL_URL  the connection URL
 #   CLIPSCRIBE_DB_POOL_SIZE      pooled connections (postgresql only; default 5)
 #   CLIPSCRIBE_DB_MAX_OVERFLOW   burst connections above the pool (default 10)
-# See src/db/engine.py::resolve_database_url / resolve_pool_settings.
+# See clip_scribe/db/engine.py::resolve_database_url / resolve_pool_settings.

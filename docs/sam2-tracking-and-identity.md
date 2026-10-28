@@ -1,7 +1,7 @@
 # SAM2 Tracking & Cross-Shot Identity in the Extractor
 
 > Scope: this document explains the object-tracking and identity-resolution
-> machinery in `backend/src/extractor/extractor_core.py`
+> machinery in `backend/clip_scribe/extractor/extractor_core.py`
 > (`VideoInformationExtractor`). It focuses on the SAM2 propagation loop,
 > per-frame metadata recording (`_save_metadata`), DINOv2 re-ID embedding
 > accumulation (`_extract_embedding`), and cross-shot identity merging

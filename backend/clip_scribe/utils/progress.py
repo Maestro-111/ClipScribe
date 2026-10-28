@@ -7,7 +7,7 @@ layer. The web execution paths inject ``app.events.RedisProgressReporter`` to
 publish into a per-job Redis Stream, while the CLI (``main.py``), tests, and
 Redis fallback use :class:`NullProgressReporter`, which does nothing.
 
-Keeping the interface here in ``src/utils`` (rather than in ``app/``) preserves
+Keeping the interface here in ``clip_scribe/utils`` (rather than in ``app/``) preserves
 the dependency direction: the core never imports the web layer.
 """
 
