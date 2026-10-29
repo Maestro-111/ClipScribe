@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import csv
 import io
-import re
 from collections import Counter
 from dataclasses import dataclass
 
@@ -28,6 +27,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from app.exports import (
     XLSX_CONTENT_TYPE,
     autosize,
+    safe_sheet_title,
     spreadsheet_text,
     workbook_bytes,
 )
@@ -171,25 +171,6 @@ def _write_scores_sheet(ws: Worksheet, rows: list[dict]) -> None:
     autosize(ws)
 
 
-def _safe_sheet_title(name: str, index: int, used: set[str]) -> str:
-    """A unique, Excel-legal (<=31 char, no ``[]:*?/\\``) sheet title.
-
-    Prefixed with the 1-based run number so order is obvious and collisions
-    between same-named videos are impossible.
-    """
-    cleaned = re.sub(r"[\[\]:*?/\\]", " ", name).strip() or "run"
-    prefix = f"{index}. "
-    title = (prefix + cleaned)[:31].strip()
-    base = title
-    n = 2
-    while title.lower() in used:
-        suffix = f" ({n})"
-        title = base[: 31 - len(suffix)] + suffix
-        n += 1
-    used.add(title.lower())
-    return title
-
-
 def run_xlsx(video_name: str, rows: list[dict]) -> bytes:
     """One run: a Detail sheet (per-criterion) plus a Scores summary sheet."""
     wb = Workbook()
@@ -206,7 +187,7 @@ def job_xlsx(reports: list[RunReport]) -> bytes:
     _write_job_summary(wb.active, reports)
     used: set[str] = set()
     for i, report in enumerate(reports, start=1):
-        title = _safe_sheet_title(report.video_name, i, used)
+        title = safe_sheet_title(report.video_name, i, used)
         _write_detail_sheet(wb.create_sheet(title), report.rows)
     return workbook_bytes(wb)
 

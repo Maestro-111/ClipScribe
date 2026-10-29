@@ -17,12 +17,14 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app import exports, abcd_exports, metadata_exports
+from app import exports, abcd_exports, exploration_exports, metadata_exports
 from app.deps import (
     current_user_id,
     get_reader,
     get_writer,
+    load_exploration,
     require_abcd_job,
+    require_exploratory_job,
     require_owned_job,
     settings_dep,
 )
@@ -121,10 +123,10 @@ async def get_job(
     return await build_job_response(reader, job)
 
 
-async def _job_run_abcd_reports(
+async def _completed_runs(
     reader: ClipScribeAsyncReaderDB, job: dict
-) -> list[abcd_exports.RunReport]:
-    """Completed runs of a job, oldest first, each with its parser results.
+) -> list[tuple[str, str]]:
+    """``(run_id, video_name)`` of a job's completed runs, oldest first.
 
     Works whether ``job`` is a batch parent (walk its children) or a single
     leaf/parse job (itself). Only completed children with a ``run_id`` carry
@@ -132,19 +134,46 @@ async def _job_run_abcd_reports(
     """
     children = await reader.get_child_jobs(job["job_id"])
     candidates = children if children else [job]
-    reports: list[abcd_exports.RunReport] = []
-    for child in candidates:
-        run_id = child.get("run_id")
-        if child.get("status") != "completed" or not run_id:
+    return [
+        (child["run_id"], child.get("video_name") or child["run_id"])
+        for child in candidates
+        if child.get("status") == "completed" and child.get("run_id")
+    ]
+
+
+async def _job_run_abcd_reports(
+    reader: ClipScribeAsyncReaderDB, job: dict
+) -> list[abcd_exports.RunReport]:
+    """Completed runs of a job, each with its parser results."""
+    return [
+        abcd_exports.RunReport(
+            run_id=run_id,
+            video_name=video_name,
+            rows=await reader.get_abcd_results(run_id),
+        )
+        for run_id, video_name in await _completed_runs(reader, job)
+    ]
+
+
+async def _job_run_explorations(
+    reader: ClipScribeAsyncReaderDB, job: dict, *, with_transcript: bool
+) -> list[exploration_exports.RunExploration]:
+    """Completed runs of a job that have an exploration report.
+
+    ``with_transcript`` also loads each run's raw speech (the XLSX shows it).
+    """
+    runs: list[exploration_exports.RunExploration] = []
+    for run_id, video_name in await _completed_runs(reader, job):
+        response = await load_exploration(reader, run_id)
+        if response.report is None:
             continue
-        reports.append(
-            abcd_exports.RunReport(
-                run_id=run_id,
-                video_name=child.get("video_name") or run_id,
-                rows=await reader.get_abcd_results(run_id),
+        segments = await reader.get_audio_segments(run_id) if with_transcript else []
+        runs.append(
+            exploration_exports.RunExploration(
+                video_name=video_name, response=response, audio_segments=segments
             )
         )
-    return reports
+    return runs
 
 
 async def _job_metadata_envelope(
@@ -229,6 +258,47 @@ async def export_abcd(
     return Response(
         content=content,
         media_type=abcd_exports.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{job_id}/exploration/export",
+    summary="Download every run's exploratory report",
+)
+async def export_exploration(
+    job_id: str,
+    fmt: str = Query(default="xlsx", alias="format"),
+    reader: ClipScribeAsyncReaderDB = Depends(get_reader),
+    job: dict = Depends(require_exploratory_job),
+) -> Response:
+    """Export all completed runs of an exploratory job as one XLSX or JSON.
+
+    XLSX carries a cross-video Summary sheet plus one sheet per video (its
+    overview, chapters, transcript, on-screen text and visuals stacked); JSON
+    is the lossless per-run reports in one document.
+    """
+    if fmt not in exploration_exports.VALID_FORMATS:
+        raise ProblemException(
+            status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
+        )
+    runs = await _job_run_explorations(reader, job, with_transcript=fmt == "xlsx")
+    if not runs:
+        raise ProblemException(
+            status=409,
+            title="Conflict",
+            detail=f"job '{job_id}' has no completed runs with a report to export",
+        )
+    export = (
+        exploration_exports.job_json if fmt == "json" else exploration_exports.job_xlsx
+    )
+    content = await run_in_threadpool(export, runs)
+    filename = exports.export_filename(
+        f"{job.get('video_name') or 'job'}_exploration", fmt
+    )
+    return Response(
+        content=content,
+        media_type=exploration_exports.CONTENT_TYPES[fmt],
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

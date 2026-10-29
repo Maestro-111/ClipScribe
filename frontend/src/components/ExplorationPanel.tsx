@@ -306,9 +306,12 @@ type Tab = (typeof TABS)[number];
 export function ExplorationPanel({
   data,
   onSeek,
+  actions,
 }: {
   data: ExplorationResponse;
   onSeek: (t: number) => void;
+  // Rendered at the right of the Overview heading (e.g. the export menu).
+  actions?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("Transcript");
   const report = data.report;
@@ -316,7 +319,10 @@ export function ExplorationPanel({
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 font-medium">Overview</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-medium">Overview</h2>
+          {actions}
+        </div>
         {report ? (
           <>
             <KpiStrip m={report.metrics} />

@@ -30,6 +30,25 @@ def export_filename(stem: str, fmt: str) -> str:
     return f"{safe}.{fmt}"
 
 
+def safe_sheet_title(name: str, index: int, used: set[str]) -> str:
+    """A unique, Excel-legal (<=31 char, no ``[]:*?/\\``) sheet title.
+
+    Prefixed with the 1-based run number so order is obvious and collisions
+    between same-named videos are impossible.
+    """
+    cleaned = re.sub(r"[\[\]:*?/\\]", " ", name).strip() or "run"
+    prefix = f"{index}. "
+    title = (prefix + cleaned)[:31].strip()
+    base = title
+    n = 2
+    while title.lower() in used:
+        suffix = f" ({n})"
+        title = base[: 31 - len(suffix)] + suffix
+        n += 1
+    used.add(title.lower())
+    return title
+
+
 def spreadsheet_text(value: str) -> str:
     """Make text safe for a CSV/XLSX cell.
 

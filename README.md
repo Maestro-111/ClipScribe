@@ -134,6 +134,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `GET /jobs/{job_id}/events` — SSE stream that replays and tails a child job's Redis Stream progress/log events.
 - `GET /jobs/{job_id}/progress` — coarse percent summary for jobs-list progress bars.
 - `GET /jobs/{job_id}/abcd/export?format=xlsx|csv` — export all completed runs' ABCD results (409 for exploratory jobs); XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
+- `GET /jobs/{job_id}/exploration/export?format=xlsx|json` — export all completed runs' exploratory reports (409 for ABCD jobs or when no run has a report); XLSX has a cross-video `Summary` sheet plus one sheet per video with its overview, chapters, transcript, on-screen text and visuals stacked, JSON is every run's report in one document.
 - `GET /jobs/{job_id}/metadata/export?format=xlsx|json` — export extracted video metadata for every child run that has persisted data; JSON is the lossless canonical extraction summary (including frame detections), XLSX omits raw frame detections.
 - `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in an ABCD job (exploratory jobs 409 until their chat agent exists).
 - `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
@@ -142,7 +143,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `GET /runs/{run_id}/...` — inspect persisted run data (including its `parsing_mode`), sibling runs, frame detections, ABCD results (`/abcd`), and artifacts.
 - `GET /runs/{run_id}/exploration` — an exploratory run's report (summary, chapters, transcript / on-screen text / visuals digests) whose `metrics` (run-level numbers computed during analysis) are stored with it; 409 for ABCD runs, `report: null` if none was written.
 - `GET /runs/{run_id}/abcd/export?format=xlsx|csv` — export one run's ABCD results (409 for exploratory runs); XLSX includes `Detail` and `Scores` sheets, CSV is the flat detail table.
-- `GET /runs/{run_id}/exploration/export?format=xlsx|json` — download an exploratory run's report (XLSX: Overview, Chapters, Transcript, On-screen text, Visuals, plus Findings when present; JSON: the full response); 409 for ABCD runs or when no report was written.
+- `GET /runs/{run_id}/exploration/export?format=xlsx|json` — download an exploratory run's report (XLSX: Overview, Chapters, Transcript (full speech plus the digest), On-screen text, Visuals, plus Findings when present; JSON: the full response); 409 for ABCD runs or when no report was written.
 - `GET /runs/{run_id}/metadata/export?format=xlsx|json` — export one run's extracted video metadata; XLSX is human-readable tables, JSON is lossless.
 - `POST /runs/{run_id}/abcd/chat` and `POST /runs/{run_id}/exploration/chat` — stream read-only Q&A over a completed run (each 409s on the other analysis type); the session list/history/delete routes are at `/runs/{run_id}/chat/...`.
 

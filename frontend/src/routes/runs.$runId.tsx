@@ -630,13 +630,6 @@ function RunInspector({ runId }: { runId: string }) {
         </div>
         {runReady && (
           <div className="flex flex-wrap items-center gap-2">
-            {!isAbcd && exploration.data?.report && (
-              <ExportMenu
-                baseHref={`/api/runs/${runId}/exploration/export`}
-                label="Export report"
-                items={XLSX_JSON_EXPORT_ITEMS}
-              />
-            )}
             <ExportMenu
               baseHref={`/api/runs/${runId}/metadata/export`}
               label="Export metadata"
@@ -804,7 +797,19 @@ function RunInspector({ runId }: { runId: string }) {
           {exploration.isLoading ? (
             <p className="text-sm text-neutral-500">Loading…</p>
           ) : exploration.data ? (
-            <ExplorationPanel data={exploration.data} onSeek={handleSeek} />
+            <ExplorationPanel
+              data={exploration.data}
+              onSeek={handleSeek}
+              actions={
+                exploration.data.report && (
+                  <ExportMenu
+                    baseHref={`/api/runs/${runId}/exploration/export`}
+                    label="Export report"
+                    items={XLSX_JSON_EXPORT_ITEMS}
+                  />
+                )
+              }
+            />
           ) : (
             <p className="text-sm text-red-600">
               {(exploration.error as Error | null)?.message ??

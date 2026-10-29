@@ -13,7 +13,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.errors import ProblemException
-from app.models import ParsingMode
+from app.models import ExplorationResponse, ParsingMode
 from app.settings import Settings, get_settings
 from clip_scribe.utils.clip_scribe_artifacts import (
     ArtifactUploader,
@@ -195,7 +195,26 @@ async def require_abcd_job(job: dict = Depends(require_owned_job)) -> dict:
     return job
 
 
+async def require_exploratory_job(job: dict = Depends(require_owned_job)) -> dict:
+    """``require_owned_job`` for exploration routes: 409s on ABCD jobs."""
+    _require_parsing_mode(job, ParsingMode.EXPLORATORY, "job", job["job_id"])
+    return job
+
+
 async def require_exploratory_run(run: dict = Depends(require_owned_run)) -> dict:
     """``require_owned_run`` for exploration routes: 409s on ABCD runs."""
     _require_parsing_mode(run, ParsingMode.EXPLORATORY, "run", run["run_id"])
     return run
+
+
+async def load_exploration(
+    reader: ClipScribeAsyncReaderDB, run_id: str
+) -> ExplorationResponse:
+    """An exploratory run's persisted report, if one was written (single read)."""
+    row = await reader.get_exploration_result(run_id)
+    return ExplorationResponse(
+        run_id=run_id,
+        report=row["payload"] if row else None,
+        model=row["model"] if row else None,
+        created_at=row["created_at"] if row else None,
+    )

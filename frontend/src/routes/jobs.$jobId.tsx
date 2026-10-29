@@ -592,40 +592,48 @@ function BatchJob() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <div>
+        {/* Back link and exports share the top row, so a long video name below
+            can't push the exports onto their own line. */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <Link
             to="/"
             className="inline-flex items-center rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-neutral-400 hover:bg-neutral-50"
           >
             ← Jobs
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold">
-            {job.data?.video_name ?? "Batch job"}
-          </h1>
-          <p className="text-sm text-neutral-500">
-            {total} run{total === 1 ? "" : "s"}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          {done > 0 && (
-            <>
-              <ExportMenu
-                baseHref={`/api/jobs/${jobId}/metadata/export`}
-                label="Export metadata"
-                items={XLSX_JSON_EXPORT_ITEMS}
-              />
-              {isAbcd && (
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {done > 0 && (
+              <>
                 <ExportMenu
-                  baseHref={`/api/jobs/${jobId}/abcd/export`}
-                  label="Export ABCD"
+                  baseHref={`/api/jobs/${jobId}/metadata/export`}
+                  label="Export metadata"
+                  items={XLSX_JSON_EXPORT_ITEMS}
                 />
-              )}
-            </>
-          )}
-          {job.data && <AnalysisTypePill mode={job.data.parsing_mode} />}
-          <StatusPill status={status} />
+                {isAbcd ? (
+                  <ExportMenu
+                    baseHref={`/api/jobs/${jobId}/abcd/export`}
+                    label="Export ABCD"
+                  />
+                ) : (
+                  <ExportMenu
+                    baseHref={`/api/jobs/${jobId}/exploration/export`}
+                    label="Export report"
+                    items={XLSX_JSON_EXPORT_ITEMS}
+                  />
+                )}
+              </>
+            )}
+            {job.data && <AnalysisTypePill mode={job.data.parsing_mode} />}
+            <StatusPill status={status} />
+          </div>
         </div>
+        <h1 className="mt-1 text-2xl font-semibold">
+          {job.data?.video_name ?? "Batch job"}
+        </h1>
+        <p className="text-sm text-neutral-500">
+          {total} run{total === 1 ? "" : "s"}
+        </p>
       </div>
 
       {/* batch progress + actions */}

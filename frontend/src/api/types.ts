@@ -160,6 +160,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/{job_id}/exploration/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download every run's exploratory report
+         * @description Export all completed runs of an exploratory job as one XLSX or JSON.
+         *
+         *     XLSX carries a cross-video Summary sheet plus one sheet per video (its
+         *     overview, chapters, transcript, on-screen text and visuals stacked); JSON
+         *     is the lossless per-run reports in one document.
+         */
+        get: operations["export_exploration_jobs__job_id__exploration_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}/metadata/export": {
         parameters: {
             query?: never;
@@ -1630,6 +1654,39 @@ export interface operations {
         };
     };
     export_abcd_jobs__job_id__abcd_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_exploration_jobs__job_id__exploration_export_get: {
         parameters: {
             query?: {
                 format?: string;

@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import abcd_exports, exploration_exports, exports, metadata_exports
 from app.deps import (
+    load_exploration,
     current_user_id,
     get_reader,
     require_abcd_run,
@@ -147,26 +148,13 @@ async def get_abcd(
     return [AbcdResult.model_validate(r) for r in await reader.get_abcd_results(run_id)]
 
 
-async def _load_exploration(
-    reader: ClipScribeAsyncReaderDB, run_id: str
-) -> ExplorationResponse:
-    """An exploratory run's persisted report, if one was written."""
-    row = await reader.get_exploration_result(run_id)
-    return ExplorationResponse(
-        run_id=run_id,
-        report=row["payload"] if row else None,
-        model=row["model"] if row else None,
-        created_at=row["created_at"] if row else None,
-    )
-
-
 @router.get("/{run_id}/exploration", summary="Exploratory report")
 async def get_exploration(
     run_id: str,
     reader: ClipScribeAsyncReaderDB = Depends(get_reader),
     _run: dict = Depends(require_exploratory_run),
 ) -> ExplorationResponse:
-    return await _load_exploration(reader, run_id)
+    return await load_exploration(reader, run_id)
 
 
 @router.get(
@@ -184,7 +172,7 @@ async def export_exploration(
         raise ProblemException(
             status=400, title="Bad Request", detail=f"unsupported format '{fmt}'"
         )
-    response = await _load_exploration(reader, run_id)
+    response = await load_exploration(reader, run_id)
     if response.report is None:
         raise ProblemException(
             status=409,

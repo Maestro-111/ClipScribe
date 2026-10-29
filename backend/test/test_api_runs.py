@@ -339,8 +339,15 @@ def test_exploration_export(client, tmp_path):
         row[0].value: row[1].value for row in wb["Overview"].iter_rows(min_row=2)
     }
     assert overview["Summary"] == "an ad"
-    # Full speech from the extraction data, not just the digest.
-    assert overview["Transcript"] == "hi"
+    # The raw speech belongs on the Transcript sheet, not the overview.
+    assert "Transcript" not in overview
+    transcript = {
+        row[0]: row[2]
+        for row in wb["Transcript"].iter_rows(min_row=2, values_only=True)
+    }
+    # Full speech from the extraction data, ahead of the digest.
+    assert transcript["Full transcript"] == "hi"
+    assert transcript["Summary"] == "talks"
     assert overview["Duration (s)"] == 3.0
     # Objects weren't tracked: faces were not collected, not "0%".
     assert overview["Face coverage"] == "Not collected"
@@ -360,3 +367,71 @@ def test_exploration_export(client, tmp_path):
 
 def test_exploration_export_409_on_abcd_run(client):
     assert client.get(f"/runs/{RUN_ID}/exploration/export").status_code == 409
+
+
+def _make_exploratory(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            jobs_table.update()
+            .where(jobs_table.c.run_id == RUN_ID)
+            .values(parsing_mode="exploratory")
+        )
+    return ClipScribeWriterDB(engine=engine)
+
+
+def test_transcript_sheet_shows_full_speech_even_without_a_digest(client, tmp_path):
+    import io
+
+    from openpyxl import load_workbook
+
+    writer = _make_exploratory(tmp_path)
+    writer.save_exploration_result(
+        RUN_ID, 1, _explore_report(transcript=None), "gpt-test"
+    )
+    wb = load_workbook(
+        io.BytesIO(client.get(f"/runs/{RUN_ID}/exploration/export").content)
+    )
+    rows = list(wb["Transcript"].iter_rows(min_row=2, values_only=True))
+    assert rows == [("Full transcript", None, "hi")]
+
+
+def test_job_exploration_export(client, tmp_path):
+    import io
+
+    from openpyxl import load_workbook
+
+    # ABCD job: not available.
+    assert client.get("/jobs/j1/exploration/export").status_code == 409
+
+    writer = _make_exploratory(tmp_path)
+    # No report yet: nothing to export.
+    assert client.get("/jobs/j1/exploration/export").status_code == 409
+
+    writer.save_exploration_result(RUN_ID, 1, _explore_report(), "gpt-test")
+
+    resp = client.get("/jobs/j1/exploration/export?format=xlsx")
+    assert resp.status_code == 200
+    assert "_exploration.xlsx" in resp.headers["content-disposition"]
+    wb = load_workbook(io.BytesIO(resp.content))
+    # A cross-video summary, then one sheet per video (named after it).
+    assert wb.sheetnames == ["Summary", "1. r1"]
+    summary = list(wb["Summary"].iter_rows(min_row=2, values_only=True))
+    assert summary[0][0] == "r1"
+    assert summary[0][1:4] == (3.0, 2, 20.0)
+    assert summary[0][-1] == "an ad"
+
+    # The video sheet stacks the run's sections, transcript included.
+    sheet = [row for row in wb["1. r1"].iter_rows(values_only=True)]
+    titles = [
+        row[0]
+        for row in sheet
+        if row[0] in {"Overview", "Chapters", "Transcript", "On-screen text", "Visuals"}
+    ]
+    assert titles == ["Overview", "Chapters", "Transcript", "On-screen text", "Visuals"]
+    assert ("Full transcript", None, "hi") in [row[:3] for row in sheet]
+
+    body = client.get("/jobs/j1/exploration/export?format=json").json()
+    assert body["runs"][0]["video_name"] == "r1"
+    assert body["runs"][0]["report"]["summary"] == "an ad"
+    assert client.get("/jobs/j1/exploration/export?format=pdf").status_code == 400
