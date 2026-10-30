@@ -367,7 +367,7 @@ def test_job_abcd_export_409_on_exploratory_job(ctx, tmp_path, async_db_adapters
     async_reader, _ = async_db_adapters(database_url)
     app.dependency_overrides[get_reader] = lambda: async_reader
     assert ctx.get("/jobs/p3/abcd/export").status_code == 409
-    assert ctx.post("/jobs/p3/chat", json={"message": "hi"}).status_code == 409
+    assert ctx.post("/jobs/p3/abcd/chat", json={"message": "hi"}).status_code == 409
 
 
 def test_full_transcript_joins_segments_and_fits_an_excel_cell():

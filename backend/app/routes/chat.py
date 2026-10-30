@@ -1,7 +1,8 @@
 """Advisory chat endpoints (web-app-plan §6, §13).
 
-``POST /runs/{id}/chat`` streams per-run Q&A and ``POST /jobs/{id}/chat``
-streams job-level Q&A across completed runs. The GET/DELETE routes manage
+``POST /runs/{id}/abcd/chat`` and ``/runs/{id}/exploration/chat`` stream per-run
+Q&A; ``POST /jobs/{id}/abcd/chat`` and ``/jobs/{id}/exploration/chat`` stream
+job-level Q&A across completed runs. Each 409s on the other analysis type. The GET/DELETE routes manage
 persisted session transcripts. Run routes 404 if the run does not exist; job
 routes 404 if the job does not exist and 409 until at least one run is complete.
 Agents are read-only and server-side scoped to ``run_id`` or ``job_id``.
@@ -9,6 +10,7 @@ Agents are read-only and server-side scoped to ``run_id`` or ``job_id``.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request, status
@@ -19,6 +21,7 @@ from app.deps import (
     get_writer,
     require_abcd_job,
     require_abcd_run,
+    require_exploratory_job,
     require_exploratory_run,
     require_owned_job,
     require_owned_run,
@@ -134,14 +137,13 @@ async def delete_session(
 # ── Job-level advisory chat (spans every completed run in a batch job) ───────
 
 
-@job_router.post("/{job_id}/chat", summary="Ask the agent about the job (SSE)")
-async def post_job_chat(
+async def _stream_job_chat(
+    service: ChatService,
     job_id: str,
     req: ChatRequest,
-    service: ChatService = Depends(get_chat_service),
-    # Exploratory jobs get their own chat agent later; blocked until then.
-    _job: dict = Depends(require_abcd_job),
+    stream: Callable[[str, str, str, list[dict]], AsyncIterator[str]],
 ) -> StreamingResponse:
+    """409 if the job has nothing completed yet, else stream one chat turn."""
     runs = await service.resolve_job_runs(job_id)
     if not runs:
         raise ProblemException(
@@ -151,10 +153,35 @@ async def post_job_chat(
         )
     session_id = req.session_id or new_ulid()
     return StreamingResponse(
-        service.stream_abcd_job(job_id, session_id, req.message, runs),
+        stream(job_id, session_id, req.message, runs),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@job_router.post(
+    "/{job_id}/abcd/chat", summary="Ask the agent about the ABCD job (SSE)"
+)
+async def post_job_abcd_chat(
+    job_id: str,
+    req: ChatRequest,
+    service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_abcd_job),
+) -> StreamingResponse:
+    return await _stream_job_chat(service, job_id, req, service.stream_abcd_job)
+
+
+@job_router.post(
+    "/{job_id}/exploration/chat",
+    summary="Ask the agent about the exploration job (SSE)",
+)
+async def post_job_exploration_chat(
+    job_id: str,
+    req: ChatRequest,
+    service: ChatService = Depends(get_chat_service),
+    _job: dict = Depends(require_exploratory_job),
+) -> StreamingResponse:
+    return await _stream_job_chat(service, job_id, req, service.stream_exploration_job)
 
 
 @job_router.get(

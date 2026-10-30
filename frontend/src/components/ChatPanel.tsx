@@ -1,7 +1,7 @@
 // Advisory chat panel (web-app-plan §13). Talks to an advisory agent that
 // answers as a Server-Sent Events stream. The same component serves both the
 // run-scoped chat (POST /api/runs/{runId}/abcd/chat or .../exploration/chat) and the job-scoped chat
-// (POST /api/jobs/{jobId}/chat) — the caller picks via `endpoint`.
+// (POST /api/jobs/{jobId}/abcd/chat or .../exploration/chat) — the caller picks via `endpoint`.
 //
 // EventSource only does GET, so we stream the POST response body ourselves:
 // read the ReadableStream, split on SSE frame boundaries ("\n\n"), and parse
@@ -52,6 +52,9 @@ const TOOL_LABELS: Record<string, string> = {
   // job-level
   list_job_runs: "list videos",
   query_job_scorecard: "read scorecard",
+  query_job_overview: "compare videos",
+  query_job_on_screen_text: "search on-screen text",
+  query_job_visual_subjects: "search visual subjects",
 };
 
 // "JARVIS"-style thinking indicator: the ClipScribe mark haloed by a spinning

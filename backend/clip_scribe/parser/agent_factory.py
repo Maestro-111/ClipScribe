@@ -22,6 +22,7 @@ from clip_scribe.parser.abcd.tools import (
 )
 from clip_scribe.parser.explore.tools import (
     build_run_tools as exploration_build_async_tools,
+    build_job_tools as exploration_build_job_tools,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +85,13 @@ class AgentBuilder:
     ) -> CompiledStateGraph:
         """Build a ReAct agent scoped to one exploratory ``run_id``."""
         tools = exploration_build_async_tools(reader_db, run_id)
+        return cls.build_agent(model, tools)
+
+    @classmethod
+    def build_exploration_job_agent(
+        cls, model: ChatOpenAI, reader_db: ClipScribeAsyncReaderDB, runs: list[dict]
+    ) -> CompiledStateGraph:
+        tools = exploration_build_job_tools(reader_db, runs)
         return cls.build_agent(model, tools)
 
 

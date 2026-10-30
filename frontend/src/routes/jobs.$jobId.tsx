@@ -32,6 +32,13 @@ const JOB_CHAT_SUGGESTIONS = [
 ];
 const JOB_CHAT_INTRO =
   "Ask about this job — the agent can compare every video's ABCD verdicts and the extracted data across the whole batch.";
+const EXPLORATION_JOB_CHAT_SUGGESTIONS = [
+  "How do these videos compare in length and pacing?",
+  "What is each video about?",
+  "Which videos show a price or call to action on screen?",
+];
+const EXPLORATION_JOB_CHAT_INTRO =
+  "Ask about this job — the agent can compare every video's exploration report and the extracted speech, scenes, objects, and on-screen text across the whole batch.";
 
 // "/jobs/{id}" — the job page (web-app-plan §7 page 3, step 9).
 //
@@ -579,8 +586,8 @@ function BatchJob() {
   // Batch duration = merged union of the child run intervals, shown only once
   // the batch has stopped (see formatMergedDuration).
   const batchDuration = isActive ? "—" : formatMergedDuration(children);
-  // ABCD export and the advisory chat are ABCD-only for now (the API 409s on
-  // exploratory jobs); exploratory gets its own report and chat later.
+  // ABCD and exploratory jobs have their own exports and chat agents (the API
+  // 409s on the wrong type).
   const isAbcd = job.data?.parsing_mode !== "exploratory";
 
   // Client-side pagination over the already-loaded children. Clamp the page in
@@ -695,14 +702,20 @@ function BatchJob() {
       )}
 
       {/* ── Job-level advisory chat (analyzes every run in the batch) ── */}
-      {done > 0 && isAbcd && (
+      {done > 0 && (
         <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium">Ask about this job</h2>
           <ChatPanel
             key={jobId}
-            endpoint={`/api/jobs/${jobId}/chat`}
-            suggestions={JOB_CHAT_SUGGESTIONS}
-            intro={JOB_CHAT_INTRO}
+            endpoint={
+              isAbcd
+                ? `/api/jobs/${jobId}/abcd/chat`
+                : `/api/jobs/${jobId}/exploration/chat`
+            }
+            suggestions={
+              isAbcd ? JOB_CHAT_SUGGESTIONS : EXPLORATION_JOB_CHAT_SUGGESTIONS
+            }
+            intro={isAbcd ? JOB_CHAT_INTRO : EXPLORATION_JOB_CHAT_INTRO}
             placeholder="Ask about these videos…"
           />
         </section>

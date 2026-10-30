@@ -260,12 +260,17 @@ def test_job_chat_session_endpoints(ctx):
 def test_job_chat_404_unknown_job(ctx):
     client, _, _, _ = ctx
     assert client.get("/jobs/nope/chat/sessions").status_code == 404
-    assert client.post("/jobs/nope/chat", json={"message": "hi"}).status_code == 404
+    assert (
+        client.post("/jobs/nope/abcd/chat", json={"message": "hi"}).status_code == 404
+    )
 
 
 def test_job_chat_post_empty_message_422(ctx):
     client, _, _, _ = ctx
-    assert client.post(f"/jobs/{PARENT}/chat", json={"message": ""}).status_code == 422
+    assert (
+        client.post(f"/jobs/{PARENT}/abcd/chat", json={"message": ""}).status_code
+        == 422
+    )
 
 
 def test_job_chat_409_when_no_completed_runs(ctx, tmp_path, async_db_adapters):
@@ -290,5 +295,59 @@ def test_job_chat_409_when_no_completed_runs(ctx, tmp_path, async_db_adapters):
         async def resolve_job_runs(self, job_id):
             return []
 
+        def stream_abcd_job(self, *a, **k):  # pragma: no cover - 409 comes first
+            raise AssertionError("no run to stream")
+
     app.dependency_overrides[get_chat_service] = lambda: Svc()
-    assert client.post("/jobs/p2/chat", json={"message": "hi"}).status_code == 409
+    assert client.post("/jobs/p2/abcd/chat", json={"message": "hi"}).status_code == 409
+
+
+def test_exploration_job_chat_is_guarded_and_streams(ctx, tmp_path, async_db_adapters):
+    client, _, _, _ = ctx
+    # The seeded PARENT job is ABCD: the exploration chat is not available.
+    assert (
+        client.post(
+            f"/jobs/{PARENT}/exploration/chat", json={"message": "hi"}
+        ).status_code
+        == 409
+    )
+
+    database_url = f"sqlite:///{tmp_path / 'explore.db'}"
+    engine = create_engine(database_url)
+    metadata_obj.create_all(engine)
+    writer = ClipScribeWriterDB(engine=engine)
+    writer.create_job(
+        job_id="p5",
+        mode="full",
+        parsing_mode="exploratory",
+        video_name="batch",
+        created_by="local",
+    )
+    async_reader, _ = async_db_adapters(database_url)
+    app.dependency_overrides[get_reader] = lambda: async_reader
+
+    class Svc:
+        def __init__(self, runs):
+            self.runs = runs
+
+        async def resolve_job_runs(self, job_id):
+            return self.runs
+
+        async def stream_exploration_job(self, job_id, session_id, message, runs):
+            yield 'data: {"type": "token", "content": "hello"}\n\n'
+
+    # Exploratory job with nothing completed yet.
+    app.dependency_overrides[get_chat_service] = lambda: Svc([])
+    assert (
+        client.post("/jobs/p5/exploration/chat", json={"message": "hi"}).status_code
+        == 409
+    )
+    # ...and the ABCD chat is the one that is blocked for it.
+    assert client.post("/jobs/p5/abcd/chat", json={"message": "hi"}).status_code == 409
+
+    runs = [{"run_id": "r9", "video_name": "a.mp4"}]
+    app.dependency_overrides[get_chat_service] = lambda: Svc(runs)
+    resp = client.post("/jobs/p5/exploration/chat", json={"message": "hi"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert '"content": "hello"' in resp.text

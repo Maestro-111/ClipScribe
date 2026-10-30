@@ -16,5 +16,5 @@ Evaluates extracted video metadata against platform-specific feature criteria. U
 ## Guidelines
 * The Extractor outputs pure factual data. The Parser's job is to apply business logic or evaluation criteria to that data.
 * When adding a new platform, subclass `BaseEvaluator`, define feature configs, and register it in `../parser_core.py`.
-* Run-scoped extraction query tools shared with the exploration agent live in `../shared_tools.py` (`build_run_data_tools`); ABCD-specific ones (`query_parser_results`, the job tools) live in `tools.py`. Add new tools in the matching place and include them in the relevant `tool_map` groups.
+* Extraction query tools shared with the exploration agents live in `../shared_tools.py` (`build_run_data_tools` for one run, `build_job_data_tools` for a job's runs, `unknown_run_error` for the job `run_id` check); ABCD-specific ones (`query_parser_results`, the job tools) live in `tools.py`. Add new tools in the matching place and include them in the relevant `tool_map` groups.
 * Keep parser progress reporting behind `backend/clip_scribe/utils/progress.py`; do not import Redis or FastAPI from parser code.

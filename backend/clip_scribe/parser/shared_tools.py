@@ -201,3 +201,139 @@ def build_run_data_tools(
             build_field_descriptions_tool(reader_db),
         )
     }
+
+
+def unknown_run_error(runs: list[dict], run_id: str) -> str | None:
+    """An error message if ``run_id`` is not one of the job's ``runs``, else None.
+
+    ``runs`` is ``[{"run_id": ..., "video_name": ...}]``. Job-level tools call
+    this on every ``run_id`` the model passes, so it cannot read outside the job.
+    """
+    names = {r["run_id"]: r.get("video_name") or r["run_id"] for r in runs}
+    if run_id not in names:
+        known = ", ".join(f"{rid} ({name})" for rid, name in names.items())
+        return f"Unknown run_id '{run_id}'. Runs in this job: {known}"
+    return None
+
+
+def build_job_data_tools(
+    reader_db: ClipScribeAsyncReaderDB, runs: list[dict]
+) -> dict[str, BaseTool]:
+    """Job-scoped extraction tools, keyed by tool name.
+
+    ``list_job_runs`` plus per-run detail tools that take an explicit ``run_id``,
+    validated against ``runs`` (``[{"run_id": ..., "video_name": ...}]``). Each
+    wrapper delegates to the run-bound tools of :func:`build_run_data_tools`, so
+    the query code exists once.
+    """
+    name_of = {r["run_id"]: r.get("video_name") or r["run_id"] for r in runs}
+
+    @tool
+    def list_job_runs() -> str:
+        """
+        List the videos (runs) in this job. Call this first to learn which runs
+        exist and their run_ids before using any per-run tool.
+
+        Returns:
+            JSON list of objects with fields:
+            - run_id: the run identifier to pass to per-run tools
+            - video_name: the video's file name
+        """
+        return json.dumps(
+            [{"run_id": r["run_id"], "video_name": name_of[r["run_id"]]} for r in runs],
+            indent=2,
+        )
+
+    # One set of run-bound tools per job run; the wrappers below only add the
+    # run_id argument and its membership check.
+    per_run = {rid: build_run_data_tools(reader_db, rid) for rid in name_of}
+
+    async def _per_run(run_id: str, tool_name: str, **kwargs: object) -> str:
+        """Run a shared per-run tool for a run that belongs to this job."""
+        if err := unknown_run_error(runs, run_id):
+            return json.dumps({"error": err})
+        return await per_run[run_id][tool_name].ainvoke(kwargs)
+
+    @tool
+    async def query_scene_descriptions(run_id: str) -> str:
+        """
+        Query GPT-generated scene descriptions for one run's shots.
+
+        Args:
+            run_id: Which run (one of the job's runs).
+
+        Returns:
+            JSON list of scene descriptions (shot_index, start_time, end_time,
+            description).
+        """
+        return await _per_run(run_id, "query_scene_descriptions")
+
+    @tool
+    async def query_visual_objects(
+        run_id: str, label_contains: str | None = None
+    ) -> str:
+        """
+        Query visual object occurrences for one run.
+
+        Args:
+            run_id: Which run (one of the job's runs).
+            label_contains: Optional substring to filter object labels.
+
+        Returns:
+            JSON list of visual objects (label, shot_index, lifespan, coverage,
+            motion, quadrant, ...).
+        """
+        return await _per_run(
+            run_id, "query_visual_objects", label_contains=label_contains
+        )
+
+    @tool
+    async def query_audio_segments(run_id: str) -> str:
+        """
+        Query audio transcript segments for one run.
+
+        Args:
+            run_id: Which run (one of the job's runs).
+
+        Returns:
+            JSON list of audio segments (start_time, end_time, text, confidence).
+        """
+        return await _per_run(run_id, "query_audio_segments")
+
+    @tool
+    async def query_text_events(run_id: str) -> str:
+        """
+        Query OCR on-screen text events for one run.
+
+        Args:
+            run_id: Which run (one of the job's runs).
+
+        Returns:
+            JSON list of text events (second, line_index, text).
+        """
+        return await _per_run(run_id, "query_text_events")
+
+    @tool
+    async def query_global_stats(run_id: str) -> str:
+        """
+        Query global video statistics (pacing, shot count, duration) for one run.
+
+        Args:
+            run_id: Which run (one of the job's runs).
+
+        Returns:
+            JSON object of global stats, or {} if none.
+        """
+        return await _per_run(run_id, "query_global_stats")
+
+    return {
+        t.name: t
+        for t in (
+            list_job_runs,
+            query_scene_descriptions,
+            query_visual_objects,
+            query_audio_segments,
+            query_text_events,
+            query_global_stats,
+        )
+    }

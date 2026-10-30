@@ -38,6 +38,7 @@ from clip_scribe.parser.abcd.prompts import (
 
 from clip_scribe.parser.explore.prompts import (
     RUN_SYSTEM_PROMPT as EXPLORE_RUN_SYSTEM_PROMPT,
+    JOB_SYSTEM_PROMPT as EXPLORE_JOB_SYSTEM_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -169,7 +170,7 @@ class ChatService:
     async def stream_abcd_job(
         self, job_id: str, session_id: str, message: str, runs: list[dict]
     ) -> AsyncIterator[str]:
-        """Stream one job-level chat turn (SSE frames) and persist the transcript."""
+        """Stream one abcd job-level chat turn (SSE frames) and persist the transcript."""
 
         history = await self.reader.get_job_chat_messages(job_id, session_id)
         agent = AgentBuilder.build_abcd_job_agent(self.model, self.reader, runs)
@@ -177,6 +178,25 @@ class ChatService:
         async for event in self._stream_turn(
             history=history,
             system_prompt=ABCD_JOB_SYSTEM_PROMPT,
+            agent=agent,
+            session_id=session_id,
+            message=message,
+            persist_scope={"job_id": job_id},
+            log_label=f"job {job_id}",
+        ):
+            yield event
+
+    async def stream_exploration_job(
+        self, job_id: str, session_id: str, message: str, runs: list[dict]
+    ) -> AsyncIterator[str]:
+        """Stream one exploration job-level chat turn (SSE frames) and persist it."""
+
+        history = await self.reader.get_job_chat_messages(job_id, session_id)
+        agent = AgentBuilder.build_exploration_job_agent(self.model, self.reader, runs)
+
+        async for event in self._stream_turn(
+            history=history,
+            system_prompt=EXPLORE_JOB_SYSTEM_PROMPT,
             agent=agent,
             session_id=session_id,
             message=message,

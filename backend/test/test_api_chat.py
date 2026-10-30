@@ -25,7 +25,7 @@ from clip_scribe.db.schema import (
     runs_table,
 )
 from clip_scribe.db.writer import ClipScribeWriterDB
-from clip_scribe.parser.abcd.tools import build_run_tools, build_tools
+from clip_scribe.parser.abcd.tools import build_run_tools, build_feature_eval_tools
 
 RUN_ID = "r1"
 
@@ -126,7 +126,7 @@ def test_chat_message_db_roundtrip(ctx):
 
 def test_query_parser_results_tool_filters(ctx):
     _, reader, _, _ = ctx
-    tools = build_tools(reader, RUN_ID, tool_group="advisory")
+    tools = build_feature_eval_tools(reader, RUN_ID, tool_group="advisory")
     tool = next(t for t in tools if t.name == "query_parser_results")
 
     all_results = json.loads(tool.invoke({}))
@@ -151,7 +151,9 @@ def test_async_query_parser_results_tool_filters(ctx):
 
 def test_advisory_tool_group_includes_all_query_tools(ctx):
     _, reader, _, async_reader = ctx
-    sync_names = {t.name for t in build_tools(reader, RUN_ID, tool_group="advisory")}
+    sync_names = {
+        t.name for t in build_feature_eval_tools(reader, RUN_ID, tool_group="advisory")
+    }
     async_names = {
         t.name for t in build_run_tools(async_reader, RUN_ID, tool_group="advisory")
     }

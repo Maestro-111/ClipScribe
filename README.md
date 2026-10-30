@@ -136,7 +136,7 @@ Useful API routes (reached from the browser under the `/api` proxy prefix):
 - `GET /jobs/{job_id}/abcd/export?format=xlsx|csv` — export all completed runs' ABCD results (409 for exploratory jobs); XLSX has a summary sheet plus one sheet per run, CSV is one flat table with a `Video` column.
 - `GET /jobs/{job_id}/exploration/export?format=xlsx|json` — export all completed runs' exploratory reports (409 for ABCD jobs or when no run has a report); XLSX has a cross-video `Summary` sheet plus one sheet per video with its overview, chapters, transcript, on-screen text and visuals stacked, JSON is every run's report in one document.
 - `GET /jobs/{job_id}/metadata/export?format=xlsx|json` — export extracted video metadata for every child run that has persisted data; JSON is the lossless canonical extraction summary (including frame detections), XLSX omits raw frame detections.
-- `POST /jobs/{job_id}/chat` and related job chat routes — stream read-only advisory Q&A across every completed run in an ABCD job (exploratory jobs 409 until their chat agent exists).
+- `POST /jobs/{job_id}/abcd/chat` and `POST /jobs/{job_id}/exploration/chat` — stream read-only Q&A across every completed run of a job (each 409s on the other analysis type, and until a run has completed); the session list/history/delete routes are at `/jobs/{job_id}/chat/...`.
 - `POST /jobs/{job_id}/cancel` — cancel a queued/running child job, or cancel every cancellable child in a batch.
 - `POST /jobs/{job_id}/retry` — retry a terminal parent as a fresh batch, or retry one child run in place with a fresh `run_id`.
 - `DELETE /jobs/{job_id}` — cancel if needed, then delete job rows plus associated run data, chat transcripts, and artifacts.

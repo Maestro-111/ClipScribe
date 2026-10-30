@@ -596,7 +596,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/jobs/{job_id}/chat": {
+    "/jobs/{job_id}/abcd/chat": {
         parameters: {
             query?: never;
             header?: never;
@@ -605,8 +605,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the agent about the job (SSE) */
-        post: operations["post_job_chat_jobs__job_id__chat_post"];
+        /** Ask the agent about the ABCD job (SSE) */
+        post: operations["post_job_abcd_chat_jobs__job_id__abcd_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/exploration/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the agent about the exploration job (SSE) */
+        post: operations["post_job_exploration_chat_jobs__job_id__exploration_chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2453,7 +2470,42 @@ export interface operations {
             };
         };
     };
-    post_job_chat_jobs__job_id__chat_post: {
+    post_job_abcd_chat_jobs__job_id__abcd_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_job_exploration_chat_jobs__job_id__exploration_chat_post: {
         parameters: {
             query?: never;
             header?: never;

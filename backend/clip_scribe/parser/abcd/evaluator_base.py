@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from clip_scribe.db import ClipScribeReaderDB
-from clip_scribe.parser.abcd.tools import build_tools, TOOL_GROUP_TABLES
+from clip_scribe.parser.abcd.tools import build_feature_eval_tools, TOOL_GROUP_TABLES
 
 from clip_scribe.parser.agent_factory import AgentRunner, AgentBuilder
 from clip_scribe.parser.abcd.models import BaseFeatureResult, BaseAgentEvaluation
@@ -155,7 +155,7 @@ class BaseEvaluator(ABC):
 
         tool_group = feature["tool_group"]
 
-        tools = build_tools(self.reader_db, run_id, tool_group)
+        tools = build_feature_eval_tools(self.reader_db, run_id, tool_group)
         agent = AgentBuilder.build_agent(model=self.model, tools=tools)
 
         criteria = feature.get("criteria", "")
