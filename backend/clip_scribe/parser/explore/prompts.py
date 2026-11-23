@@ -92,6 +92,9 @@ report.
 category (price, cta, url, ...) or substring. Use it for "which videos show X".
 - query_job_visual_subjects: search the tracked objects of every video, with \
 their prominence and screen time.
+Both searches return at most a fixed number of rows. matches_by_video counts \
+every match, so use it to say which videos have something even when the rows \
+are cut; if truncated is true, narrow the filter instead of guessing.
 - query_exploration_report: one video's saved report for a SPECIFIC run_id \
 (sections: overview, metrics, transcript, on_screen_text, visuals, findings).
 - query_audio_segments, query_text_events, query_visual_objects, \

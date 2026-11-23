@@ -86,25 +86,27 @@ clip_scribe:
   # Parser Settings
   # --------------------------------------------------------------------------
   parser:
-    # LLM model for agentic feature evaluation/metadata exploration
+    # Output directory for parser reports (relative to project root)
+    output_dir: "parser_artifacts"
+
+    # LLM for ABCD evaluation, exploration and the advisory chat
+    llm: "gpt-5.4"
+
     agent:
-      llm: "gpt-5.4"
       temperature: 0.2
       max_tokens: 1000
       max_retries: 10
 
-    # Output directory for parser reports (relative to project root)
-    output_dir: "parser_artifacts"
+    abcd:
+      # Maximum number of parallel LangGraph agents to run concurrently
+      max_parallel_agents: 5
+      # Maximum reasoning steps
+      recursion_limit: 50
 
-    # Maximum number of parallel LangGraph agents to run concurrently
-    max_parallel_agents: 5
 
-    # agent max reasoning steps
-    recursion_limit: 50
-
-    # Exploratory report (parsing_mode=exploratory). Uses the agent's llm and
-    # temperature; only the per-call output budget differs, since the report
-    # sections are longer structured outputs than an ABCD verdict.
+    # Exploratory report (parsing_mode=exploratory). Uses parser.llm and the
+    # agent temperature/retries; only the per-call output budget differs,
+    # since the report sections are longer structured outputs than an ABCD verdict.
     explore:
       max_tokens: 4000
       transcript_topics_num: 6
@@ -118,6 +120,10 @@ clip_scribe:
       # (longest on screen first). The rest stay in the report unrated.
       on_screen_text_cards_num: 20
       visuals_subjects_num: 20
+      # Exploratory job chat: most rows one cross-video search tool call returns
+      # (longest on screen / most screen time first). The result also carries the
+      # total and per-video match counts, so a cut is visible to the agent.
+      job_search_results_num: 50
 
 
 # ============================================================================

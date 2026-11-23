@@ -109,7 +109,6 @@ class ClipScribeBuilder:
         self.scene_analysis_params = _cfg["scene_analysis"]
 
         self.clib_scribe_parser_params = self.clip_scribe_params.get("parser", {})
-        self.parser_agent_params = self.clib_scribe_parser_params.get("agent", {})
 
         # Artifact handling: cap on per-frame viz PNGs. Remote upload is chosen
         # by the CLIPSCRIBE_STORAGE_BACKEND selector, not config. See §8.
@@ -149,7 +148,6 @@ class ClipScribeBuilder:
         clib_scribe_platform_name: str | None,
         clib_scribe_platform_conf: BasePlatformConf | None,
         clib_scribe_parser_params: dict,
-        parser_agent_params: dict,
         progress_reporter: ProgressReporter | None = None,
         cancel_token: CancellationToken | None = None,
         extraction_mode: str = "with_objects",
@@ -158,48 +156,46 @@ class ClipScribeBuilder:
             "output_dir", "parser_artifacts"
         )
 
-        parser_max_parallel = clib_scribe_parser_params.get("max_parallel_agents", 5)
-        recursion_limit = clib_scribe_parser_params.get("recursion_limit", 25)
+        abcd_params = clib_scribe_parser_params.get("abcd", {})
+        agent_params = clib_scribe_parser_params.get("agent", {})
+        explore_params = clib_scribe_parser_params.get("explore", {})
 
-        explore_max_tokens = clib_scribe_parser_params.get("explore", {}).get(
-            "max_tokens", 4000
+        parser_max_parallel = abcd_params.get("max_parallel_agents", 5)
+        recursion_limit = abcd_params.get("recursion_limit", 25)
+
+        explore_max_tokens = explore_params.get("max_tokens", 4000)
+
+        explore_transcript_topics_num = explore_params.get("transcript_topics_num", 6)
+
+        explore_transcript_key_claims_num = explore_params.get(
+            "transcript_key_claims_num", 6
         )
 
-        explore_transcript_topics_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("transcript_topics_num", 6)
-
-        explore_transcript_key_claims_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("transcript_key_claims_num", 6)
-
-        explore_overview_summary_chapters_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("overview_summary_chapters_num", 6)
-
-        explore_on_screen_text_cards_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("on_screen_text_cards_num", 20)
-
-        explore_visuals_subjects_num = clib_scribe_parser_params.get("explore", {}).get(
-            "visuals_subjects_num", 20
+        explore_overview_summary_chapters_num = explore_params.get(
+            "overview_summary_chapters_num", 6
         )
 
-        explore_transcript_summary_sentences_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("transcript_summary_sentences_num", 4)
+        explore_on_screen_text_cards_num = explore_params.get(
+            "on_screen_text_cards_num", 20
+        )
 
-        explore_text_summary_sentences_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("text_summary_sentences_num", 4)
+        explore_visuals_subjects_num = explore_params.get("visuals_subjects_num", 20)
 
-        explore_visual_summary_sentences_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("visual_summary_sentences_num", 4)
+        explore_transcript_summary_sentences_num = explore_params.get(
+            "transcript_summary_sentences_num", 4
+        )
 
-        explore_overview_summary_sentences_num = clib_scribe_parser_params.get(
-            "explore", {}
-        ).get("overview_summary_sentences_num", 4)
+        explore_text_summary_sentences_num = explore_params.get(
+            "text_summary_sentences_num", 4
+        )
+
+        explore_visual_summary_sentences_num = explore_params.get(
+            "visual_summary_sentences_num", 4
+        )
+
+        explore_overview_summary_sentences_num = explore_params.get(
+            "overview_summary_sentences_num", 4
+        )
 
         explore_summary_sentences_num: SummarySentencesNum = {
             "transcript_summary_sentences_num": explore_transcript_summary_sentences_num,
@@ -208,11 +204,14 @@ class ClipScribeBuilder:
             "overview_summary_sentences_num": explore_overview_summary_sentences_num,
         }
 
-        parser_detection_model = self.resolve_model(
-            "parser.agent.llm",
-            parser_agent_params.get("llm", self.DEFAULT_PARSER_MODEL),
+        parser_llm = self.resolve_model(
+            "parser.llm",
+            clib_scribe_parser_params.get("llm", self.DEFAULT_PARSER_MODEL),
         )
-        parser_agent_params["llm"] = parser_detection_model
+        # One model config for both analysis types: the shared llm plus the
+        # agent's sampling/retry settings (exploration reuses them, overriding
+        # only max_tokens).
+        parser_agent_params = {**agent_params, "llm": parser_llm}
 
         info_parser = VideoInformationParser(
             agent=parser_agent_params,
@@ -542,7 +541,6 @@ class ClipScribeBuilder:
                     clib_scribe_platform_name,
                     clib_scribe_platform_conf,
                     self.clib_scribe_parser_params,
-                    self.parser_agent_params,
                     progress_reporter=reporter,
                     cancel_token=canceller,
                     extraction_mode=extraction_mode,

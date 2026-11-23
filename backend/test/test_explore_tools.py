@@ -119,6 +119,7 @@ def test_chat_service_job_chat_picks_agent_and_prompt_by_analysis_type(monkeypat
 
     built: list[str] = []
     turns: list[str] = []
+    limits: list[int] = []
 
     class _Builder:
         @staticmethod
@@ -127,8 +128,9 @@ def test_chat_service_job_chat_picks_agent_and_prompt_by_analysis_type(monkeypat
             return "agent"
 
         @staticmethod
-        def build_exploration_job_agent(model, reader, runs):
+        def build_exploration_job_agent(model, reader, runs, *, search_results_num):
             built.append("exploration")
+            limits.append(search_results_num)
             return "agent"
 
     class _Reader:
@@ -138,6 +140,7 @@ def test_chat_service_job_chat_picks_agent_and_prompt_by_analysis_type(monkeypat
     service = chat.ChatService.__new__(chat.ChatService)
     service.reader = _Reader()  # type: ignore[assignment]
     service.model = None  # type: ignore[assignment]
+    service.job_search_results_num = 7
 
     async def fake_turn(**kw):
         turns.append(kw["system_prompt"])
@@ -156,6 +159,8 @@ def test_chat_service_job_chat_picks_agent_and_prompt_by_analysis_type(monkeypat
 
     assert built == ["exploration", "abcd"]
     assert turns == [JOB_SYSTEM_PROMPT, ABCD_JOB_PROMPT]
+    # The configured search cap reaches the exploration job agent.
+    assert limits == [7]
 
 
 # ── job-level tools ──────────────────────────────────────────────────────────
@@ -244,10 +249,13 @@ JOB_RUNS = [
 ]
 
 
-def _job(name: str, **args):
+def _job(name: str, *, limit: int = 50, **args):
     from clip_scribe.parser.explore.tools import build_job_tools
 
-    tools = {t.name: t for t in build_job_tools(_JobReader(), JOB_RUNS)}
+    tools = {
+        t.name: t
+        for t in build_job_tools(_JobReader(), JOB_RUNS, search_results_num=limit)
+    }
     return json.loads(asyncio.run(tools[name].ainvoke(args)))
 
 
@@ -280,26 +288,45 @@ def test_job_report_tool_validates_run_id_and_picks_section():
 
 def test_job_on_screen_text_search_filters_across_videos():
     prices = _job("query_job_on_screen_text", category="price")
-    assert [(c["run_id"], c["text"]) for c in prices] == [
+    # Longest on screen first: "$99" (visible 4s) before "Sale $49" (3s).
+    assert [(c["run_id"], c["text"]) for c in prices["items"]] == [
         ("r1", "$99"),
         ("r2", "Sale $49"),
     ]
-    assert prices[0]["first_seen_sec"] == 8.0
-    assert prices[0]["video_name"] == "first.mp4"
+    assert prices["items"][0]["first_seen_sec"] == 8.0
+    assert prices["items"][0]["video_name"] == "first.mp4"
+    assert prices["total_matches"] == 2 and prices["truncated"] is False
 
     only = _job("query_job_on_screen_text", contains="SALE")
-    assert [c["run_id"] for c in only] == ["r2"]
-    assert _job("query_job_on_screen_text", category="url") == []
-    assert len(_job("query_job_on_screen_text")) == 3
+    assert [c["run_id"] for c in only["items"]] == ["r2"]
+    none = _job("query_job_on_screen_text", category="url")
+    assert none["items"] == [] and none["total_matches"] == 0
+    assert _job("query_job_on_screen_text")["total_matches"] == 3
+
+
+def test_job_search_results_are_capped_but_counts_cover_every_match():
+    # Three cards match; with a cap of 2 the longest-visible two come back.
+    out = _job("query_job_on_screen_text", limit=2)
+    assert out["total_matches"] == 3 and out["returned"] == 2
+    assert out["truncated"] is True
+    assert [c["text"] for c in out["items"]] == ["$99", "Sale $49"]
+    # Counts include the row that was cut, so "which videos" is still answerable.
+    assert out["matches_by_video"] == {"first.mp4": 2, "second.mp4": 1}
+
+    subjects = _job("query_job_visual_subjects", limit=1)
+    # Most screen time first: the car (20s) beats the person (12s).
+    assert [s["label"] for s in subjects["items"]] == ["car"]
+    assert subjects["truncated"] is True
+    assert subjects["matches_by_video"] == {"first.mp4": 1, "second.mp4": 1}
 
 
 def test_job_visual_subjects_search_is_case_insensitive():
-    both = _job("query_job_visual_subjects")
+    both = _job("query_job_visual_subjects")["items"]
     assert {(s["run_id"], s["label"]) for s in both} == {
         ("r1", "car"),
         ("r2", "Person"),
     }
-    one = _job("query_job_visual_subjects", label_contains="person")
+    one = _job("query_job_visual_subjects", label_contains="person")["items"]
     assert [(s["run_id"], s["prominence"]) for s in one] == [("r2", "medium")]
 
 
@@ -313,5 +340,38 @@ def test_job_prompt_names_every_job_tool():
     from clip_scribe.parser.explore.prompts import JOB_SYSTEM_PROMPT
     from clip_scribe.parser.explore.tools import build_job_tools
 
-    for tool in build_job_tools(_JobReader(), JOB_RUNS):
+    for tool in build_job_tools(_JobReader(), JOB_RUNS, search_results_num=50):
         assert tool.name in JOB_SYSTEM_PROMPT
+
+
+def test_chat_service_reads_the_nested_parser_config(monkeypatch):
+    from types import SimpleNamespace
+
+    from app import chat
+
+    seen: dict = {}
+
+    class _Model:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+    monkeypatch.setattr(chat, "ChatOpenAI", _Model)
+    monkeypatch.setattr(
+        chat,
+        "_load_parser_config",
+        lambda: {
+            "llm": "gpt-x",
+            "agent": {"temperature": 0.7, "max_retries": 3},
+            "explore": {"job_search_results_num": 12},
+        },
+    )
+    service = chat.ChatService(None, None, SimpleNamespace(CHAT_MAX_TOKENS=99))  # type: ignore[arg-type]
+    assert seen["model"] == "gpt-x"
+    assert seen["temperature"] == 0.7 and seen["max_retries"] == 3
+    assert seen["max_completion_tokens"] == 99
+    assert service.job_search_results_num == 12
+
+    # A missing section falls back to the defaults instead of failing.
+    monkeypatch.setattr(chat, "_load_parser_config", lambda: {})
+    service = chat.ChatService(None, None, SimpleNamespace(CHAT_MAX_TOKENS=99))  # type: ignore[arg-type]
+    assert service.job_search_results_num == 50

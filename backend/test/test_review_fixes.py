@@ -232,3 +232,49 @@ def test_alembic_baseline_accepts_existing_runs_table(tmp_path, monkeypatch):
         engine.dispose()
 
     assert {"runs", "jobs", "frame_detections", "alembic_version"} <= tables
+
+
+def test_build_parser_reads_the_nested_parser_config(patched_heavy):
+    bcs = patched_heavy
+    params = {
+        "llm": "gpt-5.4",
+        "output_dir": "parser_artifacts",
+        "agent": {"temperature": 0.5, "max_tokens": 700, "max_retries": 4},
+        "abcd": {"max_parallel_agents": 3, "recursion_limit": 40},
+        "explore": {"max_tokens": 1234},
+    }
+    with mock.patch.object(
+        bcs.ClipScribeBuilder, "_assemble_heavy_extractor_utils"
+    ), mock.patch.object(bcs, "VideoInformationParser") as parser_cls:
+        bcs.ClipScribeBuilder().build_parser(None, None, params)
+
+    kwargs = parser_cls.call_args.kwargs
+    assert kwargs["max_parallel_agents"] == 3
+    assert kwargs["recursion_limit"] == 40
+    assert kwargs["explore_max_tokens"] == 1234
+    # The shared llm joins the agent's sampling settings.
+    assert kwargs["agent"] == {
+        "temperature": 0.5,
+        "max_tokens": 700,
+        "max_retries": 4,
+        "llm": "gpt-5.4",
+    }
+    # The config itself is not mutated.
+    assert "llm" not in params["agent"]
+
+
+def test_shipped_yaml_has_the_parser_keys_the_code_reads():
+    import yaml
+
+    from app.chat import _CONFIG_PATH
+
+    with open(_CONFIG_PATH) as f:
+        parser = yaml.safe_load(f)["clip_scribe"]["parser"]
+    assert isinstance(parser["llm"], str)
+    assert {"temperature", "max_tokens", "max_retries"} <= set(parser["agent"])
+    assert {"max_parallel_agents", "recursion_limit"} <= set(parser["abcd"])
+    assert parser["explore"]["job_search_results_num"] > 0
+    # ABCD-only settings live under ``abcd``; code that still read them from the
+    # parser root would silently fall back to defaults.
+    assert not {"max_parallel_agents", "recursion_limit"} & set(parser)
+    assert "agent" not in parser["abcd"]

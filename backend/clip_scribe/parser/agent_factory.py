@@ -89,9 +89,20 @@ class AgentBuilder:
 
     @classmethod
     def build_exploration_job_agent(
-        cls, model: ChatOpenAI, reader_db: ClipScribeAsyncReaderDB, runs: list[dict]
+        cls,
+        model: ChatOpenAI,
+        reader_db: ClipScribeAsyncReaderDB,
+        runs: list[dict],
+        *,
+        search_results_num: int,
     ) -> CompiledStateGraph:
-        tools = exploration_build_job_tools(reader_db, runs)
+        """Build a ReAct agent spanning every completed run of an exploratory job.
+
+        ``search_results_num`` caps the rows each cross-video search tool returns.
+        """
+        tools = exploration_build_job_tools(
+            reader_db, runs, search_results_num=search_results_num
+        )
         return cls.build_agent(model, tools)
 
 

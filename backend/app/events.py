@@ -152,7 +152,7 @@ class RedisProgressReporter(ProgressReporter):
     Redis call is wrapped and failures are logged and swallowed.
     """
 
-    def __init__(self, job_id: str, client: "redis.Redis") -> None:
+    def __init__(self, job_id: str, client: redis.Redis) -> None:
         self._job_id = job_id
         self._key = stream_key(job_id)
         self._client = client
@@ -219,7 +219,7 @@ class RedisCancellationToken(CancellationToken):
     is missed until the next check succeeds).
     """
 
-    def __init__(self, job_id: str, client: "redis.Redis") -> None:
+    def __init__(self, job_id: str, client: redis.Redis) -> None:
         self._job_id = job_id
         self._key = cancel_key(job_id)
         self._client = client

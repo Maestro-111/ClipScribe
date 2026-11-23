@@ -427,6 +427,7 @@ async def _job_event_stream(
             try:
                 resp = cast(
                     _RedisReadResult,
+                    # entries in key whose ID is strictly greater than last_id
                     await client.xread({key: last_id}, block=xread_block_ms, count=100),
                 )
             except RedisTimeoutError:

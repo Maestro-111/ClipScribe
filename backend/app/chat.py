@@ -60,11 +60,12 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-def _load_agent_config() -> dict:
+def _load_parser_config() -> dict:
+    """The ``clip_scribe.parser`` section of the yaml (empty if it is missing)."""
     try:
         with open(_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f) or {}
-        return cfg.get("clip_scribe", {}).get("parser", {}).get("agent", {})
+        return cfg.get("clip_scribe", {}).get("parser", {})
     except FileNotFoundError:
         return {}
 
@@ -79,10 +80,16 @@ class ChatService:
         self.reader = reader
         self.writer = writer
         self.settings = settings
-        agent_cfg = _load_agent_config()
+        parser_cfg = _load_parser_config()
+        # Chat shares the parser's llm and the agent's sampling/retry settings.
+        agent_cfg = parser_cfg.get("agent", {})
+        # Cap on rows a job-level search tool returns (see explore/tools.py).
+        self.job_search_results_num: int = parser_cfg.get("explore", {}).get(
+            "job_search_results_num", 50
+        )
         # Reusable across requests; scoped run/job agents are built per request.
         self.model = ChatOpenAI(
-            model=agent_cfg.get("llm", "gpt-5.4"),
+            model=parser_cfg.get("llm", "gpt-5.4"),
             temperature=agent_cfg.get("temperature", 0.2),
             timeout=60,
             max_completion_tokens=self.settings.CHAT_MAX_TOKENS,
@@ -192,7 +199,12 @@ class ChatService:
         """Stream one exploration job-level chat turn (SSE frames) and persist it."""
 
         history = await self.reader.get_job_chat_messages(job_id, session_id)
-        agent = AgentBuilder.build_exploration_job_agent(self.model, self.reader, runs)
+        agent = AgentBuilder.build_exploration_job_agent(
+            self.model,
+            self.reader,
+            runs,
+            search_results_num=self.job_search_results_num,
+        )
 
         async for event in self._stream_turn(
             history=history,

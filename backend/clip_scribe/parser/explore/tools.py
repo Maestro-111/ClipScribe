@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 from langchain_core.tools import BaseTool, tool
@@ -51,6 +53,28 @@ def _error(tool_name: str, exc: Exception) -> str:
     """JSON error payload for a failed tool call; also logs the failure."""
     logger.error("ClipScribe Explore: %s failed: %s", tool_name, exc)
     return json.dumps({"error": f"Database query failed: {exc}", "data": []})
+
+
+def _capped_search(
+    matches: list[dict], rank: Callable[[dict], float], limit: int
+) -> str:
+    """JSON for a cross-video search result, cut to the ``limit`` best rows.
+
+    Every match is counted, so the agent can still answer "which videos have X"
+    from ``matches_by_video`` when the rows are cut, and ``truncated`` tells it to
+    narrow the filter. ``rank`` orders the rows, highest first.
+    """
+    best = sorted(matches, key=rank, reverse=True)[:limit]
+    return json.dumps(
+        {
+            "total_matches": len(matches),
+            "returned": len(best),
+            "truncated": len(matches) > limit,
+            "matches_by_video": dict(Counter(m["video_name"] for m in matches)),
+            "items": best,
+        },
+        indent=2,
+    )
 
 
 def build_run_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str) -> list[BaseTool]:
@@ -106,7 +130,10 @@ def build_run_tools(reader_db: ClipScribeAsyncReaderDB, run_id: str) -> list[Bas
 
 
 def build_job_tools(
-    reader_db: ClipScribeAsyncReaderDB, runs: list[dict]
+    reader_db: ClipScribeAsyncReaderDB,
+    runs: list[dict],
+    *,
+    search_results_num: int,
 ) -> list[BaseTool]:
     """Build the read-only tools for the exploratory job-level agent.
 
@@ -115,6 +142,9 @@ def build_job_tools(
     ``[{"run_id": ..., "video_name": ...}]``; any ``run_id`` the model passes is
     validated against it, so it cannot read outside the job. Cross-video numbers
     come straight from the saved reports; nothing here calls an LLM.
+
+    ``search_results_num`` is the most rows one cross-video search call returns
+    (``parser.explore.job_search_results_num``).
     """
     name_of = {r["run_id"]: r.get("video_name") or r["run_id"] for r in runs}
 
@@ -230,8 +260,13 @@ def build_job_tools(
             contains: Optional case-insensitive substring of the cleaned text.
 
         Returns:
-            JSON list of {run_id, video_name, text (cleaned), category,
-            total_sec (seconds visible), first_seen_sec}, grouped by video.
+            JSON object with fields:
+            - items: the longest-visible matches, each {run_id, video_name, text
+              (cleaned), category, total_sec (seconds visible), first_seen_sec}
+            - total_matches: how many cards matched across the whole job
+            - matches_by_video: {video_name: match count} for ALL matches
+            - returned / truncated: rows returned, and whether more matched than
+              fit. When truncated, narrow with category/contains for the rest.
         """
         try:
             wanted = contains.casefold() if contains else None
@@ -254,7 +289,9 @@ def build_job_tools(
                             "first_seen_sec": spans[0]["start_sec"] if spans else None,
                         }
                     )
-            return json.dumps(out, indent=2)
+            return _capped_search(
+                out, lambda m: m["total_sec"] or 0.0, search_results_num
+            )
         except Exception as e:
             return _error("query_job_on_screen_text", e)
 
@@ -269,8 +306,14 @@ def build_job_tools(
             label_contains: Optional case-insensitive substring of the object label.
 
         Returns:
-            JSON list of {run_id, video_name, label, prominence (high/medium/low),
-            screen_time_sec, first_seen_sec}, grouped by video.
+            JSON object with fields:
+            - items: the matches with the most screen time, each {run_id,
+              video_name, label, prominence (high/medium/low), screen_time_sec,
+              first_seen_sec}
+            - total_matches: how many subjects matched across the whole job
+            - matches_by_video: {video_name: match count} for ALL matches
+            - returned / truncated: rows returned, and whether more matched than
+              fit. When truncated, narrow with label_contains for the rest.
         """
         try:
             wanted = label_contains.casefold() if label_contains else None
@@ -295,7 +338,9 @@ def build_job_tools(
                             },
                         }
                     )
-            return json.dumps(out, indent=2)
+            return _capped_search(
+                out, lambda m: m["screen_time_sec"] or 0.0, search_results_num
+            )
         except Exception as e:
             return _error("query_job_visual_subjects", e)
 
