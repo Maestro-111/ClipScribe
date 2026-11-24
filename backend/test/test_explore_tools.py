@@ -351,11 +351,10 @@ def test_chat_service_reads_the_nested_parser_config(monkeypatch):
 
     seen: dict = {}
 
-    class _Model:
-        def __init__(self, **kw):
-            seen.update(kw)
+    def _fake_make_chat_model(model, **kw):
+        seen.update(kw, model=model)
 
-    monkeypatch.setattr(chat, "ChatOpenAI", _Model)
+    monkeypatch.setattr(chat, "make_chat_model", _fake_make_chat_model)
     monkeypatch.setattr(
         chat,
         "_load_parser_config",

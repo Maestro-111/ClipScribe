@@ -46,7 +46,7 @@ uv run alembic upgrade head
 9. Do not run heavyweight setup without explicit user approval. `make setup`, `make prewarm`, and `make checkpoints` are valid root-level helpers, but they can download several GB into `backend/checkpoints/`.
 
 10. Check environment variables only at the level needed for the task:
-   - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work.
+   - `OPENAI_API_KEY` for OpenAI-powered scene, taxonomy, and parser work, or `CLIPSCRIBE_LLM_BASE_URL` + `CLIPSCRIBE_LLM_API_KEY` for Azure AI Foundry.
    - `CLIPSCRIBE_DB_BACKEND` when overriding the configured database backend.
    - `POSTGRESQL_URL` when the resolved database backend is `postgresql`.
    - `SQLITE_URL` only when using SQLite.

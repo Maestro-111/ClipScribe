@@ -80,7 +80,7 @@ clip_scribe:
 
     # model to guess the closes video type
     video_matcher:
-      llm: "gpt-5.4"
+      llm: "gpt-6-luna"
 
   # --------------------------------------------------------------------------
   # Parser Settings
@@ -90,10 +90,16 @@ clip_scribe:
     output_dir: "parser_artifacts"
 
     # LLM for ABCD evaluation, exploration and the advisory chat
-    llm: "gpt-5.4"
+    llm: "gpt-6-luna"
 
     agent:
-      temperature: 0.2
+      # null = don't send one. gpt-6-luna only accepts its default and rejects any other value (e.g. 0.2).
+      temperature: null
+      # none | minimal | low | medium | high. null = the model's default effort.
+      reasoning_effort: null
+      # false = Chat Completions, true = Responses API. gpt-6-luna rejects function
+      # tools + reasoning on Chat Completions, so use true, or set reasoning_effort: none.
+      use_responses_api: true
       max_tokens: 1000
       max_retries: 10
 
@@ -164,11 +170,11 @@ taxonomy:
 
   hint_generation:
     # LLM model used to infer fallback hints from the video filename when enabled
-    model: "gpt-5.4"
+    model: "gpt-6-luna"
 
   target_generation:
     # LLM model used to generate scene-specific taxonomy targets
-    model: "gpt-5.4"
+    model: "gpt-6-luna"
 
 # ============================================================================
 # Audio Transcription (Whisper)
@@ -195,7 +201,7 @@ sam2:
 # ============================================================================
 scene_analysis:
   # GPT model for vision-based scene description
-  model: "gpt-5.4"
+  model: "gpt-6-luna"
 
   # Minimum number of frames to sample per shot (ensures at least some coverage)
   min_samples: 1
@@ -213,8 +219,8 @@ scene_analysis:
   # Smaller = lower token cost but less detail. Recommended: 512-1024
   max_frame_dim: 512
 
-  # OpenAI image detail mode: "low" (85 tokens/image) or "high" (variable, higher cost)
-  image_detail: "low"
+  # Image detail mode: "low" (85 tokens/image) or "high" (variable, higher cost)
+  image_detail: "high"
 
 # ============================================================================
 # Artifacts

@@ -27,9 +27,9 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
-from langchain_openai import ChatOpenAI
 
 from clip_scribe.parser.agent_factory import AgentBuilder
+from clip_scribe.utils.clip_scribe_llm_client import DEFAULT_LLM_MODEL, make_chat_model
 
 from clip_scribe.parser.abcd.prompts import (
     JOB_SYSTEM_PROMPT as ABCD_JOB_SYSTEM_PROMPT,
@@ -88,9 +88,11 @@ class ChatService:
             "job_search_results_num", 50
         )
         # Reusable across requests; scoped run/job agents are built per request.
-        self.model = ChatOpenAI(
-            model=parser_cfg.get("llm", "gpt-5.4"),
-            temperature=agent_cfg.get("temperature", 0.2),
+        self.model = make_chat_model(
+            parser_cfg.get("llm", DEFAULT_LLM_MODEL),
+            temperature=agent_cfg.get("temperature"),
+            reasoning_effort=agent_cfg.get("reasoning_effort"),
+            use_responses_api=agent_cfg.get("use_responses_api", False),
             timeout=60,
             max_completion_tokens=self.settings.CHAT_MAX_TOKENS,
             max_retries=agent_cfg.get("max_retries", 5),
@@ -270,12 +272,10 @@ class ChatService:
                     if name and name not in seen_tools:
                         seen_tools.add(name)
                         yield _sse({"type": "tool", "name": name})
-                if chunk.content:
-                    text = (
-                        chunk.content
-                        if isinstance(chunk.content, str)
-                        else str(chunk.content)
-                    )
+                # ``.text`` is a plain string for both Chat Completions (str content)
+                # and the Responses API (list of typed blocks, reasoning dropped).
+                text = chunk.text
+                if text:
                     answer_parts.append(text)
                     yield _sse({"type": "token", "content": text})
         except Exception as exc:  # noqa: BLE001 - surfaced to the client

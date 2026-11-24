@@ -8,6 +8,7 @@ Shared helper functions, global logging configurations, and standalone scripts.
 * `progress.py`: Defines the structured progress event vocabulary, the `ProgressReporter` interface, phase helpers, and `NullProgressReporter` for CLI/tests.
 * `clip_scribe_artifacts.py`: Defines the `artifacts/<run_id>/` directory convention and the artifact storage seam. `NullArtifactUploader` (local) is a no-op; `GCSArtifactUploader` uploads `tracked_output.mp4` loose plus an `artifacts.tar.gz` bundle and signs the tracked video for serving. Backend follows `CLIPSCRIBE_STORAGE_BACKEND`.
 * `clip_scribe_cancel.py`: Defines the cooperative cancellation seam and null token used by CLI/tests.
+* `clip_scribe_llm_client.py`: Single factory for OpenAI-compatible LLM clients (`make_openai_client`, `make_chat_model`, `configure_agents_sdk`). `CLIPSCRIBE_LLM_BASE_URL` / `CLIPSCRIBE_LLM_API_KEY` redirect all calls to Azure AI Foundry; unset falls back to `OPENAI_*`.
 * `ids.py`: Generates ULID run ids for extraction jobs.
 
 ## Guidelines

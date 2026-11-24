@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
-from openai import OpenAI
+from clip_scribe.utils.clip_scribe_llm_client import make_openai_client
 from openai.types.chat import ChatCompletionMessageParam
 
 logger = logging.getLogger("clip_scribe")
@@ -45,7 +45,7 @@ class GPTSceneDescriber:
         self.model = model
         self.max_frame_dim = max_frame_dim
         self.image_detail = image_detail
-        self.client = OpenAI()
+        self.client = make_openai_client()
 
     def _resize_frame(self, frame_rgb: np.ndarray) -> Image.Image:
         """Resize frame to max_frame_dim while maintaining aspect ratio."""

@@ -80,7 +80,8 @@ make setup
 
 Common environment variables:
 
-- `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents.
+- `OPENAI_API_KEY` - required for GPT scene analysis, taxonomy generation, and parser agents, unless the two variables below are set.
+- `CLIPSCRIBE_LLM_BASE_URL`, `CLIPSCRIBE_LLM_API_KEY` - optional; route all LLM calls to an OpenAI-compatible endpoint such as Azure AI Foundry (`https://<resource>.openai.azure.com/openai/v1/`). Model names in `clip_scribe.yaml` are then deployment names.
 - `POSTGRESQL_URL` - required when the resolved database backend is `postgresql`.
 - `SQLITE_URL` - optional when the resolved database backend is `sqlite`; defaults to `sqlite:///data/clip_scribe.db`.
 - `CLIPSCRIBE_DB_BACKEND` - selects the database backend (`sqlite` | `postgresql`); defaults to `sqlite` when unset. `clip_scribe.yaml` carries no database section.

@@ -36,6 +36,10 @@ from clip_scribe.utils.clip_scribe_cancel import (
     NullCancellationToken,
 )
 from clip_scribe.utils.progress import NullProgressReporter, ProgressReporter
+from clip_scribe.utils.clip_scribe_llm_client import (
+    DEFAULT_LLM_MODEL,
+    configure_agents_sdk,
+)
 from clip_scribe.utils.clip_scribe_artifacts import make_artifact_uploader
 
 from .engine import ClipScribeEngine
@@ -55,40 +59,9 @@ load_dotenv(find_dotenv(filename=".env"))  # local .env
 
 
 class ClipScribeBuilder:
-    @property
-    def ALLOWED_MODELS(self):
-        return (
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.4-nano",
-            "gpt-4.1",
-            "gpt-4o",
-            "gpt-4o-mini",
-        )
-
-    @property
-    def DEFAULT_HINT_GENERATION_MODEL(self):
-        return "gpt-5.4-nano"
-
-    @property
-    def DEFAULT_TARGET_GENERATION_MODEL(self):
-        return "gpt-5.4-mini"
-
-    @property
-    def DEFAULT_SCENE_DETECTION_MODEL(self):
-        return "gpt-5.4-mini"
-
-    @property
-    def DEFAULT_PARSER_MODEL(self):
-        return "gpt-5.4-mini"
-
-    @property
-    def DEFAULT_VIDEO_TYPE_MATCHER_MODEL(self):
-        return "gpt-5.4-mini"
-
     def __init__(self, device: str | None = None):
         configure_logging()
+        configure_agents_sdk()
 
         with open(LOCAL_DIR / "configs" / "clip_scribe.yaml") as f:
             _cfg = yaml.safe_load(f)
@@ -206,7 +179,7 @@ class ClipScribeBuilder:
 
         parser_llm = self.resolve_model(
             "parser.llm",
-            clib_scribe_parser_params.get("llm", self.DEFAULT_PARSER_MODEL),
+            clib_scribe_parser_params.get("llm", DEFAULT_LLM_MODEL),
         )
         # One model config for both analysis types: the shared llm plus the
         # agent's sampling/retry settings (exploration reuses them, overriding
@@ -253,13 +226,11 @@ class ClipScribeBuilder:
         taxonomy_generator = taxonomy_generator or self._build_taxonomy()
         hint_generation_model = self.resolve_model(
             "taxonomy.hint_generation.model",
-            taxonomy_params["hint_generation"].get(
-                "model", self.DEFAULT_HINT_GENERATION_MODEL
-            ),
+            taxonomy_params["hint_generation"].get("model", DEFAULT_LLM_MODEL),
         )
         scene_detection_model = self.resolve_model(
             "scene_analysis.model",
-            scene_analysis_params.get("model", self.DEFAULT_SCENE_DETECTION_MODEL),
+            scene_analysis_params.get("model", DEFAULT_LLM_MODEL),
         )
 
         audio_confidence: float = audio_params.get("audio_confidence", 0.4)
@@ -386,7 +357,7 @@ class ClipScribeBuilder:
         extractor_video_matcher_model = self.resolve_model(
             "extractor.video_matcher",
             self.clib_scribe_extractor_params.get("video_matcher", {}).get(
-                "llm", self.DEFAULT_VIDEO_TYPE_MATCHER_MODEL
+                "llm", DEFAULT_LLM_MODEL
             ),
         )
 
@@ -399,7 +370,7 @@ class ClipScribeBuilder:
         target_generation_model = self.resolve_model(
             "taxonomy.target_generation.model",
             self.taxonomy_params.get("target_generation").get(
-                "model", self.DEFAULT_TARGET_GENERATION_MODEL
+                "model", DEFAULT_LLM_MODEL
             ),
         )
 
@@ -582,18 +553,15 @@ class ClipScribeBuilder:
             raise e
 
     def resolve_model(self, field_name: str, model: str) -> str:
+        # Model names are endpoint deployment names (Azure AI Foundry), so there is
+        # no fixed allowlist; the endpoint rejects unknown deployments.
         if not isinstance(model, str) or not model.strip():
             raise ValueError(
                 f"Invalid model for '{field_name}': {model!r}. "
-                f"Allowed values: {', '.join(self.ALLOWED_MODELS)}"
+                "Expected a non-empty deployment/model name."
             )
 
         normalized_model = model.strip()
-        if normalized_model not in self.ALLOWED_MODELS:
-            raise ValueError(
-                f"Invalid model for '{field_name}': {normalized_model!r}. "
-                f"Allowed values: {', '.join(self.ALLOWED_MODELS)}"
-            )
         logger.info(
             f"ClipScribe Builder: field_name -> {field_name}: model: -> {normalized_model}"
         )

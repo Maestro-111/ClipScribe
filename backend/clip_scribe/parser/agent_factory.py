@@ -213,10 +213,8 @@ class AgentRunner:
         # Find the last AI text message (skip tool calls)
         final_message = ""
         for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
-                final_message = (
-                    msg.content if isinstance(msg.content, str) else str(msg.content)
-                )
+            if isinstance(msg, AIMessage) and msg.text and not msg.tool_calls:
+                final_message = msg.text
                 break
 
         if not final_message:

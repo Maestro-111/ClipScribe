@@ -40,7 +40,7 @@ ClipScribe is a multimodal video processing pipeline that extracts and structure
 - Install project dependencies with `uv sync`.
 - Install development dependencies with `uv sync --extra dev`.
 - Required environment variables depend on the mode and database backend:
-  - `OPENAI_API_KEY` for scene analysis, taxonomy generation, and parser agents.
+  - `OPENAI_API_KEY` for scene analysis, taxonomy generation, and parser agents. To use Azure AI Foundry (or any OpenAI-compatible endpoint) instead, set `CLIPSCRIBE_LLM_BASE_URL` (e.g. `https://<resource>.openai.azure.com/openai/v1/`) and `CLIPSCRIBE_LLM_API_KEY`; model names in `clip_scribe.yaml` are then Foundry deployment names. All clients are built in `backend/clip_scribe/utils/clip_scribe_llm_client.py`.
   - `CLIPSCRIBE_DB_BACKEND` selects the database backend (`sqlite` or `postgresql`); default is `sqlite`. All DB config is env-driven — `clip_scribe.yaml` carries no database section. Connection-pool sizing is `CLIPSCRIBE_DB_POOL_SIZE` (default 5) and `CLIPSCRIBE_DB_MAX_OVERFLOW` (default 10), applied to PostgreSQL only (SQLite ignores them); see `backend/clip_scribe/db/engine.py::resolve_pool_settings`.
   - `POSTGRESQL_URL` when `CLIPSCRIBE_DB_BACKEND=postgresql`.
   - `SQLITE_URL` is optional when the backend is `sqlite`; default is `sqlite:///data/clip_scribe.db`.

@@ -20,6 +20,7 @@ from clip_scribe.utils.clip_scribe_cancel import (
 )
 from clip_scribe.utils.clip_scribe_prompts import _PromptLimitsParametrizer
 from clip_scribe.utils.progress import NullProgressReporter, Phase, ProgressReporter
+from clip_scribe.utils.clip_scribe_llm_client import DEFAULT_LLM_MODEL, make_chat_model
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger("clip_scribe")
@@ -117,14 +118,16 @@ class VideoInformationParser:
         """Build the chat model from the parser ``agent`` config (llm, temperature,
         max_tokens, max_retries).
         """
-        llm = agent.get("llm", "gpt-5.4")
-        temperature = agent.get("temperature", 0.0)
+        llm = agent.get("llm", DEFAULT_LLM_MODEL)
+        temperature = agent.get("temperature")
         max_tokens = agent.get("max_tokens", 1000)
         max_retries = agent.get("max_retries", 7)
 
-        model = ChatOpenAI(
-            model=llm,
+        model = make_chat_model(
+            llm,
             temperature=temperature,
+            reasoning_effort=agent.get("reasoning_effort"),
+            use_responses_api=agent.get("use_responses_api", False),
             timeout=30,
             max_completion_tokens=max_tokens,
             max_retries=max_retries,

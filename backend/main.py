@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 import traceback
 
-load_dotenv(find_dotenv())
+load_dotenv(find_dotenv(filename=".env"))
 
 # local dev, make absolute path to local sa at the root
 PROJECT_ROOT = Path(__file__).resolve().parents[0]
