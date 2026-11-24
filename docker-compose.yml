@@ -9,7 +9,7 @@
 #   See README "Running with Docker".
 #
 #   GCS storage (CLIPSCRIBE_STORAGE_BACKEND=gcs): layer the overlay that mounts
-#   the service-account key —
+#   the host's gcloud ADC file (see the overlay header for the login command) —
 #     docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
 #
 # Every build uses the repository root as context so the Dockerfiles can COPY

@@ -754,7 +754,7 @@ Backend vars (current):
 | `CLIPSCRIBE_DEVICE` | builder device (web app) | `cpu` default; set `mps` for native GPU | `cpu` (Mac) / `cuda` (GPU box) |
 | `CLIPSCRIBE_STORAGE_BACKEND` | source-video + run-artifact backend (`local` \| `gcs`) | `local` | `local` or `gcs` via `docker-compose.gcs.yml` |
 | `CLIPSCRIBE_GCS_BUCKET` | required when `CLIPSCRIBE_STORAGE_BACKEND=gcs` | bucket name | bucket name |
-| `GOOGLE_APPLICATION_CREDENTIALS` | dev service-account key for GCS signed URLs | `service_account.json` | `/app/service_account.json` from the GCS overlay |
+| `GOOGLE_APPLICATION_CREDENTIALS` | optional ADC file path; dev uses impersonated gcloud ADC (needed for GCS signed URLs) | unset | `/app/adc.json` from the GCS overlay |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | LLM + tracing | secret | secret |
 
 **Device precedence.** `settings.clip_scribe_device` reads `CLIPSCRIBE_DEVICE`

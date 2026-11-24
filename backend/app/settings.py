@@ -28,26 +28,6 @@ load_dotenv(find_dotenv(filename=".env"), override=False)
 
 # backend/ — app/ is a top-level package sibling of src/.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-# Repo root: where .env and the dev service_account.json live.
-REPO_ROOT = PROJECT_ROOT.parent
-
-
-def _absolutize_gcs_credentials() -> None:
-    """Anchor a relative GOOGLE_APPLICATION_CREDENTIALS at the repo root.
-
-    The google SDK resolves this env var against the process CWD, but the API
-    and worker run from ``backend/`` while the file (and the repo-root ``.env``
-    that points at it) live at the repo root. A bare ``service_account.json``
-    would therefore be looked up at ``backend/service_account.json`` and miss.
-    Rewriting a relative value to an absolute path makes it CWD-independent;
-    absolute paths (e.g. a container-mounted secret) are left untouched.
-    """
-    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if raw and not Path(raw).is_absolute():
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str((REPO_ROOT / raw).resolve())
-
-
-_absolutize_gcs_credentials()
 
 
 def _log_level_env(name: str, default: int) -> int:
@@ -181,8 +161,8 @@ class Settings:
             )
 
         # The GCS bucket for videos + artifacts. Required when the backend is
-        # gcs; unused for local. Credentials come from the environment
-        # (GOOGLE_APPLICATION_CREDENTIALS in dev; attached identity in prod).
+        # gcs; unused for local. Credentials are ADC (impersonated gcloud ADC
+        # in dev; attached identity in prod).
         self.gcs_bucket: str | None = os.environ.get("CLIPSCRIBE_GCS_BUCKET")
         if self.storage_backend == "gcs" and not self.gcs_bucket:
             raise ValueError(

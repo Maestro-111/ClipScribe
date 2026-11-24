@@ -1,34 +1,40 @@
 # GCS storage overlay for the local stack.
 #
 # Layer this on top of docker-compose.yml when CLIPSCRIBE_STORAGE_BACKEND=gcs,
-# to give the api + worker the service-account key they need to sign URLs and
-# read/write the bucket:
+# to give the api + worker the host's Application Default Credentials so they
+# can sign URLs and read/write the bucket:
 #
+#     gcloud auth application-default login --impersonate-service-account=<SA_EMAIL>
 #     docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
 #
+# The impersonation flag matters: plain user ADC has no private key and cannot
+# sign v4 URLs. Impersonated ADC signs through IAM signBlob as <SA_EMAIL>, which
+# therefore needs the bucket roles, and your account needs
+# roles/iam.serviceAccountTokenCreator on it.
+#
 # Kept separate from the base file so the default (local storage) stack never
-# requires a service_account.json — a missing bind source would otherwise be
-# silently created as an empty directory on the host.
+# requires the ADC file — a missing bind source would otherwise be silently
+# created as an empty directory on the host.
 #
-# Requires ./service_account.json at the repo root (gitignored). It is mounted
-# read-only, and GOOGLE_APPLICATION_CREDENTIALS is pinned to the absolute
-# in-container path so it resolves regardless of the process working directory
-# (this overrides the repo-root-relative value in .env). Set
-# CLIPSCRIBE_STORAGE_BACKEND=gcs and CLIPSCRIBE_GCS_BUCKET=<bucket> in .env.
+# The host's ~/.config/gcloud/application_default_credentials.json is mounted
+# read-only (it holds a refresh token — treat it as a secret) and
+# GOOGLE_APPLICATION_CREDENTIALS is pinned to the in-container path. Set
+# CLIPSCRIBE_STORAGE_BACKEND=gcs and CLIPSCRIBE_GCS_BUCKET=<bucket> in .env, and
+# leave GOOGLE_APPLICATION_CREDENTIALS unset there.
 #
-# Prod note: on GKE/Cloud Run the workload identity replaces this file entirely
-# (no key mounted); that identity needs roles/iam.serviceAccountTokenCreator to
-# sign URLs (Bucket Admin alone lacks iam.serviceAccounts.signBlob).
+# Prod note: on GKE/Cloud Run the attached workload identity replaces this file
+# entirely (no mount); that identity needs roles/iam.serviceAccountTokenCreator
+# to sign URLs (Bucket Admin alone lacks iam.serviceAccounts.signBlob).
 
 services:
   api:
     environment:
-      GOOGLE_APPLICATION_CREDENTIALS: /app/service_account.json
+      GOOGLE_APPLICATION_CREDENTIALS: /app/adc.json
     volumes:
-      - ./service_account.json:/app/service_account.json:ro
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/app/adc.json:ro
 
   worker:
     environment:
-      GOOGLE_APPLICATION_CREDENTIALS: /app/service_account.json
+      GOOGLE_APPLICATION_CREDENTIALS: /app/adc.json
     volumes:
-      - ./service_account.json:/app/service_account.json:ro
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/app/adc.json:ro

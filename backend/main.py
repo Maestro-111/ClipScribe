@@ -6,19 +6,10 @@ entry point for local dev, just run with uv run main.py
 from clip_scribe.clip_scribe_core.build_clip_scribe import ClipScribeBuilder
 from clip_scribe.clip_scribe_core.build_clip_scribe_plalform import build_abcd_platform
 from dotenv import load_dotenv, find_dotenv
-import os
-from pathlib import Path
 import sys
 import traceback
 
 load_dotenv(find_dotenv(filename=".env"))
-
-# local dev, make absolute path to local sa at the root
-PROJECT_ROOT = Path(__file__).resolve().parents[0]
-REPO_ROOT = PROJECT_ROOT.parent
-raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-if raw and not Path(raw).is_absolute():
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str((REPO_ROOT / raw).resolve())
 
 video_name = "01KXMKH0X9AH0D6H5E0JCG1ZKV.mp4"
 video_path = f"input/{video_name}"

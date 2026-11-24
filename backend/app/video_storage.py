@@ -52,8 +52,10 @@ SIGNED_URL_TTL = timedelta(minutes=15)
 def _make_gcs_client() -> storage.Client:  # pragma: no cover - thin SDK wrapper
     """Create a real GCS client. Isolated so tests can monkeypatch it.
 
-    Credentials come from ``GOOGLE_APPLICATION_CREDENTIALS`` (the local
-    ``service_account.json`` in dev) or the worker's attached identity in prod.
+    Credentials are Application Default Credentials: in dev, the gcloud ADC
+    file from ``gcloud auth application-default login
+    --impersonate-service-account=<SA_EMAIL>`` (impersonation is required —
+    plain user ADC cannot sign URLs); in prod, the worker's attached identity.
     """
     from google.cloud import storage
 

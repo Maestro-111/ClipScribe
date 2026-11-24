@@ -90,7 +90,7 @@ Common environment variables:
 - `CLIPSCRIBE_INPUT_DIR` - local source-video storage root relative to `backend/`; defaults to `input`. Backs the `local` backend, and is the staging/scratch dir the `gcs` backend downloads into.
 - `CLIPSCRIBE_STORAGE_BACKEND` - the single selector for BOTH source-video and run-artifact storage (`local` | `gcs`); defaults to `local`. `gcs` uploads videos and artifacts to one bucket and serves them to the browser via signed-URL redirects.
 - `CLIPSCRIBE_GCS_BUCKET` - required when `CLIPSCRIBE_STORAGE_BACKEND=gcs`; one bucket holds videos under the `videos/` prefix and artifacts under `artifacts/`.
-- `GOOGLE_APPLICATION_CREDENTIALS` - service-account JSON for the `gcs` backend in dev. A repo-root-relative path (e.g. `service_account.json`) is resolved against the repo root, so it works even though the API/worker run from `backend/`. In prod, omit it and rely on the workload identity attached to the API/worker — which needs `roles/iam.serviceAccountTokenCreator` to sign video/artifact URLs (Bucket Admin alone lacks `iam.serviceAccounts.signBlob`).
+- GCS credentials (no env var needed) - the `gcs` backend uses Application Default Credentials. In dev run `gcloud auth application-default login --impersonate-service-account=<SA_EMAIL>` first; impersonation is required because plain user ADC has no private key and cannot sign video/artifact URLs. Your account needs `roles/iam.serviceAccountTokenCreator` on the SA, and the SA needs the bucket roles. Leave `GOOGLE_APPLICATION_CREDENTIALS` unset (a stale path makes the SDK error instead of falling back to ADC). In prod, rely on the workload identity attached to the API/worker — which needs `roles/iam.serviceAccountTokenCreator` to sign URLs (Bucket Admin alone lacks `iam.serviceAccounts.signBlob`).
 - `CLIPSCRIBE_JOB_BACKEND` - `inline` (default single-slot in-process executor) or `celery` (Redis-backed worker dispatch).
 - `REDIS_URL` - Redis connection used for Celery broker/result backend and per-job progress streams; defaults to `redis://localhost:6379/0`.
 - `CLIPSCRIBE_DEVICE` - device used by the web API/worker builder (`cpu`, `mps`, or `cuda`); defaults to `cpu`.
@@ -225,7 +225,7 @@ Keep one repo-root `.env` with the **native-host** values. Compose feeds it to e
 | `CLIPSCRIBE_JOB_BACKEND` | `celery` | `celery` | `celery` |
 | `CLIPSCRIBE_STORAGE_BACKEND` | `local` | `local` (or `gcs` via the overlay) | `gcs` |
 | `CLIPSCRIBE_GCS_BUCKET` | unset for `local` | set when using `gcs` | bucket name |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `service_account.json` for `gcs` | mounted by `docker-compose.gcs.yml` | unset (workload identity) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | unset (impersonated gcloud ADC) | set by `docker-compose.gcs.yml` to the mounted ADC file | unset (workload identity) |
 | `OPENAI_API_KEY`, `LANGCHAIN_*` | secrets (from `.env`) | same (from `.env`) | Secret Manager |
 
 The container-column values live in each service's `environment:` block in `docker-compose.yml` and win over `env_file`.
@@ -235,18 +235,18 @@ The container-column values live in each service's `environment:` block in `dock
 Both modes above default to `local` storage (videos in `backend/input`, artifacts in `backend/artifacts`, served from disk). To run the **full Compose stack against GCS** — videos and artifacts in a bucket, served to the browser via signed-URL redirects — layer the `docker-compose.gcs.yml` overlay:
 
 ```bash
+gcloud auth application-default login --impersonate-service-account=<SA_EMAIL>
 docker compose -f docker-compose.yml -f docker-compose.gcs.yml up
 ```
 
-Set these in the repo-root `.env` first:
+Set these in the repo-root `.env` first (and leave `GOOGLE_APPLICATION_CREDENTIALS` unset):
 
 ```bash
 CLIPSCRIBE_STORAGE_BACKEND=gcs
 CLIPSCRIBE_GCS_BUCKET=your-bucket
-GOOGLE_APPLICATION_CREDENTIALS=service_account.json   # repo-root file, gitignored
 ```
 
-Passing multiple `-f` files makes Compose deep-merge them: the overlay only **adds** a read-only bind mount of the repo-root `service_account.json` into the `api` and `worker` containers (at `/app/service_account.json`) and pins `GOOGLE_APPLICATION_CREDENTIALS` to that absolute path — every other service field from the base file is left intact. It is kept out of the base `docker-compose.yml` on purpose: the default `local` stack must not require a credentials file, and an unconditional bind mount to a missing host file would be silently created by Docker as an empty directory.
+Passing multiple `-f` files makes Compose deep-merge them: the overlay only **adds** a read-only bind mount of the host's `~/.config/gcloud/application_default_credentials.json` into the `api` and `worker` containers (at `/app/adc.json`) and pins `GOOGLE_APPLICATION_CREDENTIALS` to that path — every other service field from the base file is left intact. The file holds a refresh token, so treat it as a secret (it is mounted, never copied into an image). It is kept out of the base `docker-compose.yml` on purpose: the default `local` stack must not require the ADC file, and an unconditional bind mount to a missing host file would be silently created by Docker as an empty directory.
 
 In **prod** (GKE/Cloud Run) you drop the overlay entirely — the api/worker run under an attached workload identity with no key file, which needs `roles/iam.serviceAccountTokenCreator` to sign URLs.
 
@@ -327,7 +327,7 @@ clipscribe/
 │   └── package.json
 ├── docs/                       web-app-plan.md, deployment.md, deep-dive docs
 ├── docker-compose.yml          Full local stack (postgres, redis, migrate, prewarm, api, worker, frontend)
-├── docker-compose.gcs.yml      GCS storage overlay with service-account bind mount
+├── docker-compose.gcs.yml      GCS storage overlay with gcloud ADC bind mount
 └── Makefile                    setup, migrate, revision helpers
 ```
 
